@@ -2,12 +2,14 @@
 
 A modular production tool for DaVinci Resolve featuring **beat synchronization**, **stem separation**, and **marker automation** — powered by **Essentia.js** WASM-based audio analysis.
 
+**GitHub Repository**: [https://github.com/hellonearthis/Resolver](https://github.com/hellonearthis/Resolver)
+
 ## Features
 
 - 🎵 **[Beat Extraction](readme_Beat_Detection.md)** — Detect BPM and actual beat positions using Essentia.js
 - 🎬 **[Video Sync](readme_Video_Sync.md)** — Auto-sync video clips to the beat
 - 📜 **[Script Manager](readme_Script_Manager.md)** — Manage generated Python scripts for Resolve
-- 🎚️ **Stem Separation** — Split tracks via ComfyUI (Coming Soon)
+- 🎚️ **[Stem Separation](readme_Stem_Separation.md)** — Split tracks via ComfyUI with integrated Beat Analysis
 
 ## Documentation
 

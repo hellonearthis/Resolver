@@ -28,11 +28,13 @@ This module allows you to split an audio file into 4 separate stems (Drums, Bass
 4.  **Separate Stems**:
     -   Click **"🚀 Separate Stems"**.
     -   The request is sent to ComfyUI.
-    -   Once complete (mocked in this demo version for UI feedback), the **Stem Player** will appear.
+    -   Once complete, the **Stem Player** will appear.
 
 5.  **Preview & Analyze**:
-    -   Use the **Play All** button to listen to all stems synchronized.
-    -   Click **Analyze** on a specific stem (e.g., Drums) to load it immediately into the **Beat Extraction** module for precise beat detection.
+    -   **Multi-Track Preview**: Use the **Play All** button to listen to all stems synchronized.
+    -   **Analyze Stems**: Click the colored **Analyze** buttons (e.g., "Analyze Drums", "Analyze Vocals") to detect beats for that specific stem.
+    -   **Cached Results**: If you've already analyzed a stem, the results (white beat markers) will load **instantly** without re-processing.
+    -   **Embedded View**: The beat detection UI opens directly within the Stem Separation module, allowing you to configure settings (Onsets, Loudness) and export markers without leaving the workflow.
 
 ## Output Filenames
 
