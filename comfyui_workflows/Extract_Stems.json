@@ -1,0 +1,87 @@
+{
+  "10": {
+    "inputs": {
+      "audio": "06 Madonna.mp3",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Audio"
+    }
+  },
+  "11": {
+    "inputs": {
+      "chunk_fade_shape": "linear",
+      "chunk_length": 12,
+      "chunk_overlap": 8,
+      "audio": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "AudioSeparation",
+    "_meta": {
+      "title": "AudioSeparation"
+    }
+  },
+  "25": {
+    "inputs": {
+      "filename_prefix": "Bass",
+      "quality": "V0",
+      "audioUI": "",
+      "audio": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Save Bass Audio (MP3)"
+    }
+  },
+  "26": {
+    "inputs": {
+      "filename_prefix": "Drums",
+      "quality": "V0",
+      "audioUI": "",
+      "audio": [
+        "11",
+        1
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Save Druns Audio (MP3)"
+    }
+  },
+  "27": {
+    "inputs": {
+      "filename_prefix": "Other",
+      "quality": "V0",
+      "audioUI": "",
+      "audio": [
+        "11",
+        2
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Save Other Audio (MP3)"
+    }
+  },
+  "28": {
+    "inputs": {
+      "filename_prefix": "Vocals",
+      "quality": "V0",
+      "audioUI": "",
+      "audio": [
+        "11",
+        3
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Save Vocals Audio (MP3)"
+    }
+  }
+}

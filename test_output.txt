@@ -1,0 +1,35 @@
+
+> resolver@0.0.1 test
+> vitest run src/modules/StemSeparationModule.test.tsx
+
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90mC:/Users/Desktop-Dev/Desktop/resolver[39m
+
+ [31mÔØ»[39m src/modules/StemSeparationModule.test.tsx [2m([22m[2m5 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 5094[2mms[22m[39m
+     [32mÔ£ô[39m renders and checks connection[32m 31[2mms[22m[39m
+     [32mÔ£ô[39m loads workflow on mount[32m 14[2mms[22m[39m
+     [32mÔ£ô[39m creates project on file drop if no active project[32m 16[2mms[22m[39m
+     [32mÔ£ô[39m updates output folder via IPC[32m 17[2mms[22m[39m
+[31m     [31m├ù[31m runs separation and saves stems to project[39m[33m 5015[2mms[22m[39m
+
+ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ» Failed Tests 1 ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»
+
+ FAIL  src/modules/StemSeparationModule.test.tsx > StemSeparationModule > runs separation and saves stems to project
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ÔØ» src/modules/StemSeparationModule.test.tsx:173:5
+    171|     });
+    172| 
+    173|     it('runs separation and saves stems to project', async () => {
+       |     ^
+    174|         vi.useFakeTimers();
+    175|         mockQueuePrompt.mockResolvedValue({ prompt_id: '12345' });
+
+ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»[1/1]ÔÄ»
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m4 passed[39m[22m[90m (5)[39m
+[2m   Start at [22m 17:45:37
+[2m   Duration [22m 5.96s[2m (transform 80ms, setup 79ms, import 161ms, tests 5.09s, environment 494ms)[22m
+
