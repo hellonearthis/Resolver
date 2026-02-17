@@ -1,0 +1,54 @@
+.video-assembler-container {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    height: 100%;
+}
+
+.waveform-container {
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    padding: 20px;
+    position: relative;
+}
+
+.controls-container {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    background: var(--bg-secondary);
+    padding: 10px;
+    border-radius: 8px;
+}
+
+.clip-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.clip-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-tertiary);
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+
+.clip-item.generated {
+    border-left: 4px solid var(--accent-primary);
+}
+
+.clip-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.clip-actions {
+    display: flex;
+    gap: 8px;
+}

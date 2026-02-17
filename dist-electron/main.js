@@ -33,8 +33,9 @@ const createWindow = () => {
     else {
         mainWindow.loadFile(path_1.default.join(__dirname, '../dist/index.html'));
     }
+    mainWindow.maximize();
     // Open the DevTools.
-    // mainWindow.webContents.openDevTools();
+    mainWindow.webContents.openDevTools();
 };
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
@@ -573,6 +574,27 @@ electron_1.ipcMain.handle('save-config', async (_event, newConfig) => {
     }
     catch (err) {
         console.error('Error saving config:', err);
+        return { success: false, error: String(err) };
+    }
+});
+// ---------------------------------------------------------------------------
+// Music Video Assembler - Save Manifest
+// ---------------------------------------------------------------------------
+electron_1.ipcMain.handle('save-manifest', async (_event, manifest) => {
+    try {
+        const { filePath } = await electron_1.dialog.showSaveDialog({
+            title: 'Save Music Video Manifest',
+            defaultPath: 'music_video_manifest.json',
+            filters: [{ name: 'JSON', extensions: ['json'] }]
+        });
+        if (filePath) {
+            fs_1.default.writeFileSync(filePath, JSON.stringify(manifest, null, 2));
+            return { success: true, path: filePath };
+        }
+        return { success: false, error: 'Cancelled' };
+    }
+    catch (err) {
+        console.error('Error saving manifest:', err);
         return { success: false, error: String(err) };
     }
 });

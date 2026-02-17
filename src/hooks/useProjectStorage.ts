@@ -26,7 +26,8 @@ export interface BeatProject {
     bpm?: number;
     beatCount?: number;
     stemType: string;
-    stems?: { type: string; path: string }[]; // New field for separated stems
+    stems?: { type: string; path: string; beats?: number[]; color?: string }[]; // New field for separated stems
+    outputDir?: string; // Path to save the project JSON
     algorithm?: string;
     enableOnsets?: boolean;
     enableLoudness?: boolean;
@@ -65,6 +66,29 @@ export function useProjectStorage() {
         }
     }, [projects, isLoaded]);
 
+    // Helper to save project to JSON file
+    const saveProjectFile = (project: BeatProject) => {
+        if (!project.outputDir) return;
+
+        try {
+            // @ts-ignore
+            const fs = window.require('fs');
+            // @ts-ignore
+            const path = window.require('path');
+
+            if (fs.existsSync(project.outputDir)) {
+                // Sanitize filename
+                const safeName = project.name.replace(/[^a-zA-Z0-9-_]/g, '_');
+                const filePath = path.join(project.outputDir, `${safeName}_data.json`);
+
+                fs.writeFileSync(filePath, JSON.stringify(project, null, 2));
+                console.log('Saved project backup to:', filePath);
+            }
+        } catch (e) {
+            console.error('Failed to save project JSON file:', e);
+        }
+    };
+
     const saveProject = useCallback((project: Omit<BeatProject, 'id' | 'createdAt' | 'updatedAt'>) => {
         const now = new Date().toISOString();
         const newProject: BeatProject = {
@@ -73,16 +97,28 @@ export function useProjectStorage() {
             createdAt: now,
             updatedAt: now,
         };
-        setProjects(prev => [newProject, ...prev]);
+        setProjects(prev => {
+            const updated = [newProject, ...prev];
+            return updated;
+        });
+
+        // Save to file immediately
+        saveProjectFile(newProject);
+
         return newProject;
     }, []);
 
     const updateProject = useCallback((id: string, updates: Partial<BeatProject>) => {
-        setProjects(prev => prev.map(p =>
-            p.id === id
-                ? { ...p, ...updates, updatedAt: new Date().toISOString() }
-                : p
-        ));
+        console.log(`[useProjectStorage] updateProject called for ${id}`, Object.keys(updates));
+        setProjects(prev => prev.map(p => {
+            if (p.id === id) {
+                const updatedProject = { ...p, ...updates, updatedAt: new Date().toISOString() };
+                // Save to file if outputDir is present (either in updates or existing)
+                saveProjectFile(updatedProject);
+                return updatedProject;
+            }
+            return p;
+        }));
     }, []);
 
     const deleteProject = useCallback((id: string) => {
@@ -93,6 +129,55 @@ export function useProjectStorage() {
         return projects.find(p => p.id === id);
     }, [projects]);
 
+    const exportAllProjects = useCallback(async () => {
+        let successCount = 0;
+        let failCount = 0;
+        const details: string[] = [];
+
+        try {
+            // @ts-ignore
+            const fs = window.require('fs');
+            // @ts-ignore
+            const path = window.require('path');
+
+            for (const project of projects) {
+                try {
+                    let targetDir = project.outputDir;
+
+                    // Fallback if no outputDir set
+                    if (!targetDir && project.audioPath) {
+                        const audioDir = path.dirname(project.audioPath);
+                        targetDir = path.join(audioDir, 'Stems');
+                    }
+
+                    if (targetDir) {
+                        if (!fs.existsSync(targetDir)) {
+                            fs.mkdirSync(targetDir, { recursive: true });
+                        }
+
+                        // Sanitize filename
+                        const safeName = project.name.replace(/[^a-zA-Z0-9-_]/g, '_');
+                        const filePath = path.join(targetDir, `${safeName}_data.json`);
+
+                        fs.writeFileSync(filePath, JSON.stringify(project, null, 2));
+                        successCount++;
+                    } else {
+                        failCount++;
+                        details.push(`Skipped "${project.name}": No valid output path`);
+                    }
+                } catch (e) {
+                    failCount++;
+                    details.push(`Failed "${project.name}": ${e}`);
+                }
+            }
+        } catch (e) {
+            console.error('Batch export failed:', e);
+            return { success: 0, failed: projects.length, details: ['System error'] };
+        }
+
+        return { success: successCount, failed: failCount, details };
+    }, [projects]);
+
     return {
         projects,
         isLoaded,
@@ -100,6 +185,7 @@ export function useProjectStorage() {
         updateProject,
         deleteProject,
         getProject,
+        exportAllProjects,
     };
 }
 

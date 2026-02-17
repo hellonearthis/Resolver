@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import './SettingsModule.css';
 
 
 const SettingsModule: React.FC = () => {
@@ -66,33 +65,31 @@ const SettingsModule: React.FC = () => {
                 </p>
             </div>
 
-
-
             <div className="card">
                 <div className="card-header">
                     <h3 className="card-title">ComfyUI Integration</h3>
                 </div>
 
-                <div className="settings-input-group">
-                    <label className="settings-label">
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-400 mb-2">
                         ComfyUI Output Folder (Source)
                     </label>
-                    <div className="settings-input-row">
+                    <div className="flex gap-2">
                         <input
                             type="text"
                             value={comfyOutputDir}
                             onChange={(e) => setComfyOutputDir(e.target.value)}
-                            className="settings-input"
+                            className="flex-1 w-full bg-gray-800 p-2 rounded text-sm text-gray-300 border border-gray-700 font-mono"
                             placeholder="C:\ComfyUI\output"
                         />
                         <button
                             onClick={() => handleSelectFolder(setComfyOutputDir)}
-                            className="settings-browse-btn"
+                            className="btn bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded"
                         >
                             Browse
                         </button>
                     </div>
-                    <p className="settings-help-text">
+                    <p className="text-xs text-gray-500 mt-1">
                         The folder where ComfyUI saves generated audio files (e.g. Vocals_*.mp3).
                     </p>
                 </div>
@@ -103,21 +100,21 @@ const SettingsModule: React.FC = () => {
                     <h3 className="card-title">Defaults</h3>
                 </div>
 
-                <div className="settings-input-group">
-                    <label className="settings-label">
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-400 mb-2">
                         Default Project Output Folder
                     </label>
-                    <div className="settings-input-row">
+                    <div className="flex gap-2">
                         <input
                             type="text"
                             value={projectOutputDir}
                             onChange={(e) => setProjectOutputDir(e.target.value)}
-                            className="settings-input"
+                            className="flex-1 w-full bg-gray-800 p-2 rounded text-sm text-gray-300 border border-gray-700 font-mono"
                             placeholder="Default folder for new projects"
                         />
                         <button
                             onClick={() => handleSelectFolder(setProjectOutputDir)}
-                            className="settings-browse-btn"
+                            className="btn bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded"
                         >
                             Browse
                         </button>
@@ -125,15 +122,15 @@ const SettingsModule: React.FC = () => {
                 </div>
             </div>
 
-            <div className="settings-actions">
+            <div className="mt-6 flex items-center gap-4">
                 <button
                     onClick={handleSave}
-                    className="settings-save-btn"
+                    className="btn bg-purple-600 hover:bg-purple-500 px-6 py-2 rounded font-bold text-white shadow-lg"
                 >
                     Save Settings
                 </button>
                 {statusMessage && (
-                    <span className={`settings-status ${statusMessage.includes('Error') ? 'settings-status-error' : 'settings-status-success'}`}>
+                    <span className={`text-sm ${statusMessage.includes('Error') ? 'text-red-400' : 'text-green-400'}`}>
                         {statusMessage}
                     </span>
                 )}

@@ -23,6 +23,7 @@ interface StemSeparationModuleProps {
     onSelectProject: (id: string) => void;
     onDeleteProject: (id: string) => void;
     mockProcessDuration?: number;
+    onExportAll?: () => Promise<{ success: number; failed: number }>;
 }
 
 const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
@@ -82,23 +83,30 @@ const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
         initEssentia(); // Warm up WASM in background
     }, []);
 
-    // Load markers from active project into visualization state
+    // Load markers and outputDir from active project into visualization state
     useEffect(() => {
-        if (activeProject && activeProject.markers) {
-            const loadedMarkers: Record<string, number[]> = {};
+        if (activeProject) {
+            // Sync Output Dir
+            if (activeProject.outputDir) {
+                setOutputDir(activeProject.outputDir);
+            }
 
-            activeProject.markers.forEach(m => {
-                // We use the 'note' field to store the stem type (e.g. 'vocals', 'drums')
-                // Only care about beats for the waveform visualization usually
-                if (m.type === 'beat' && m.note) {
-                    if (!loadedMarkers[m.note]) {
-                        loadedMarkers[m.note] = [];
+            if (activeProject.markers) {
+                const loadedMarkers: Record<string, number[]> = {};
+
+                activeProject.markers.forEach(m => {
+                    // We use the 'note' field to store the stem type (e.g. 'vocals', 'drums')
+                    // Only care about beats for the waveform visualization usually
+                    if (m.type === 'beat' && m.note) {
+                        if (!loadedMarkers[m.note]) {
+                            loadedMarkers[m.note] = [];
+                        }
+                        loadedMarkers[m.note].push(m.timestamp);
                     }
-                    loadedMarkers[m.note].push(m.timestamp);
-                }
-            });
-            console.log('[StemSeparation] Loaded markers from project:', Object.keys(loadedMarkers));
-            setStemMarkers(loadedMarkers);
+                });
+                console.log('[StemSeparation] Loaded markers from project:', Object.keys(loadedMarkers));
+                setStemMarkers(loadedMarkers);
+            }
         }
     }, [activeProject]);
 
@@ -320,7 +328,10 @@ const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
             setGeneratedStems(movedFiles);
 
             if (activeProject) {
-                onUpdateProject(activeProject.id, { stems: movedFiles });
+                onUpdateProject(activeProject.id, {
+                    stems: movedFiles,
+                    outputDir: outputDir || undefined
+                });
             }
 
             setStatusMessage(movedFiles.length > 0 ? 'Separation Complete!' : 'Warning: No output files found.');
@@ -720,7 +731,8 @@ const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
                                         }));
 
                                         onUpdateProject(activeProject.id, {
-                                            markers: [...otherMarkers, ...newMarkers]
+                                            markers: [...otherMarkers, ...newMarkers],
+                                            outputDir: outputDir || undefined
                                         });
                                     }
                                 }}

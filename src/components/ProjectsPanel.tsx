@@ -6,14 +6,37 @@ interface ProjectsPanelProps {
     onLoad: (project: BeatProject) => void;
     onDelete: (id: string) => void;
     currentProjectId?: string;
+    onExportAll?: () => Promise<{ success: number; failed: number }>;
 }
 
 const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
     projects,
     onLoad,
     onDelete,
-    currentProjectId
+    currentProjectId,
+    onExportAll
 }) => {
+    const [exportStatus, setExportStatus] = React.useState<string>('');
+    const [isExporting, setIsExporting] = React.useState(false);
+
+    const handleBackupAll = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!onExportAll) return;
+
+        setIsExporting(true);
+        setExportStatus('Backing up...');
+
+        try {
+            const result = await onExportAll();
+            setExportStatus(`Saved ${result.success} projects!`);
+            setTimeout(() => setExportStatus(''), 3000);
+        } catch (e) {
+            setExportStatus('Backup failed');
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
     const formatDate = (dateStr: string) => {
         const date = new Date(dateStr);
         return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {
@@ -45,8 +68,21 @@ const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
 
     return (
         <div className="card">
-            <div className="card-header">
+            <div className="card-header flex justify-between items-center">
                 <h3 className="card-title">📂 Saved Projects ({projects.length})</h3>
+                {onExportAll && (
+                    <div className="flex items-center gap-2">
+                        {exportStatus && <span className="text-xs text-green-400 fade-in">{exportStatus}</span>}
+                        <button
+                            onClick={handleBackupAll}
+                            disabled={isExporting}
+                            className="text-xs bg-[var(--bg-secondary)] hover:bg-[var(--bg-elevated)] border border-[var(--border-color)] px-2 py-1 rounded transition-colors"
+                            title="Save all projects to disk (JSON)"
+                        >
+                            {isExporting ? '⏳' : '💾 Backup All'}
+                        </button>
+                    </div>
+                )}
             </div>
             <div style={{
                 maxHeight: '300px',
@@ -102,14 +138,54 @@ const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                                 {formatDate(project.updatedAt)}
                             </div>
                         </div>
-                        {project.csvPath && (
-                            <span
-                                className="status-badge success"
-                                style={{ fontSize: '0.7rem', padding: '2px 8px' }}
-                            >
-                                CSV
-                            </span>
-                        )}
+
+                        {/* Status Badges */}
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            {/* CSV Badge */}
+                            {project.csvPath && (
+                                <span
+                                    className="status-badge success"
+                                    style={{ fontSize: '0.65rem', padding: '2px 6px' }}
+                                    title="Has exported CSV"
+                                >
+                                    CSV
+                                </span>
+                            )}
+
+                            {/* Stems Badge */}
+                            {project.stems && project.stems.length > 0 && (
+                                <span
+                                    className="status-badge"
+                                    style={{
+                                        fontSize: '0.65rem',
+                                        padding: '2px 6px',
+                                        background: 'rgba(99, 102, 241, 0.2)', // Indigo tint
+                                        color: '#818cf8',
+                                        border: '1px solid rgba(99, 102, 241, 0.3)'
+                                    }}
+                                    title={`${project.stems.length} Stems Available`}
+                                >
+                                    STEMS
+                                </span>
+                            )}
+
+                            {/* Beat Data Badge */}
+                            {(project.beatCount && project.beatCount > 0) || (project.markers && project.markers.length > 0) ? (
+                                <span
+                                    className="status-badge"
+                                    style={{
+                                        fontSize: '0.65rem',
+                                        padding: '2px 6px',
+                                        background: 'rgba(16, 185, 129, 0.15)', // Green tint
+                                        color: '#34d399', // Green text
+                                        border: '1px solid rgba(16, 185, 129, 0.2)'
+                                    }}
+                                    title="Has Beat Detection Data"
+                                >
+                                    BEATS
+                                </span>
+                            ) : null}
+                        </div>
                         <button
                             className="btn btn-secondary"
                             onClick={(e) => {
@@ -126,9 +202,10 @@ const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                             🗑️
                         </button>
                     </div>
-                ))}
-            </div>
-        </div>
+                ))
+                }
+            </div >
+        </div >
     );
 };
 

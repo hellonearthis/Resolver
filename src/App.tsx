@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import BeatExtractionModule from './modules/BeatExtractionModule';
 import ScriptManagerModule from './modules/ScriptManagerModule';
 import StemSeparationModule from './modules/StemSeparationModule';
+import MusicVideoAssemblerModule from './modules/MusicVideoAssemblerModule';
 import SettingsModule from './modules/SettingsModule';
 import DropZone from './components/DropZone';
 import BeatVisualizer from './components/BeatVisualizer';
@@ -206,10 +207,10 @@ function VideoSyncModule() {
 }
 
 function App() {
-  const [activeModule, setActiveModule] = useState('beat-extraction');
+  const [activeModule, setActiveModule] = useState('beat-extraction'); // Default updated? Maybe not.
 
   // --- Global Project State ---
-  const { projects, saveProject, updateProject, deleteProject } = useProjectStorage();
+  const { projects, saveProject, updateProject, deleteProject, exportAllProjects } = useProjectStorage();
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
   const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : undefined;
@@ -265,6 +266,7 @@ function App() {
             onCreateProject={handleCreateProject}
             onUpdateProject={handleUpdateProject}
             onDeleteProject={deleteProject}
+            onExportAll={exportAllProjects}
           />
         );
       case 'script-manager':
@@ -283,12 +285,35 @@ function App() {
             projects={projects}
             onSelectProject={handleSelectProject}
             onDeleteProject={deleteProject}
+            onExportAll={exportAllProjects}
           />
         );
       case 'settings':
         return <SettingsModule />;
+      case 'music-video-assembler':
+        return (
+          <MusicVideoAssemblerModule
+            projects={projects}
+            activeProject={activeProject}
+            onSelectProject={handleSelectProject}
+            onCreateProject={handleCreateProject}
+            onUpdateProject={handleUpdateProject}
+            onDeleteProject={deleteProject}
+          />
+        );
       default:
-        return <BeatExtractionModule initialAudioPath={triageAudioPath} initialStemType={triageStemType} />;
+        return (
+          <BeatExtractionModule
+            initialAudioPath={triageAudioPath}
+            initialStemType={triageStemType}
+            projects={projects}
+            activeProject={activeProject}
+            onSelectProject={handleSelectProject}
+            onCreateProject={handleCreateProject}
+            onUpdateProject={handleUpdateProject}
+            onDeleteProject={deleteProject}
+          />
+        );
     }
   };
 
