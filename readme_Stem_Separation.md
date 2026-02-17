@@ -35,6 +35,7 @@ This module allows you to split an audio file into 4 separate stems (Drums, Bass
     -   **Analyze Stems**: Click the colored **Analyze** buttons (e.g., "Analyze Drums", "Analyze Vocals") to detect beats for that specific stem.
     -   **Cached Results**: If you've already analyzed a stem, the results (white beat markers) will load **instantly** without re-processing.
     -   **Embedded View**: The beat detection UI opens directly within the Stem Separation module, allowing you to configure settings (Onsets, Loudness) and export markers without leaving the workflow.
+    -   **Video Assembler Integration**: Once analyzed, your project is saved. You can load it in the **Video Assembler** module to perform rhythm-synced video editing.
 
 ## Output Filenames
 

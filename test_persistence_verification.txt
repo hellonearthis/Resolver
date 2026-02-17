@@ -1,0 +1,13 @@
+// Verify File Persistence
+// 1. Check if outputDir serves as source of truth
+// 2. Check if JSON file is created on save
+
+const testProject = {
+    id: 'test-proj',
+    name: 'Test Project',
+    audioPath: 'C:/Test/audio.mp3',
+    outputDir: 'C:/Test/Output',
+    markers: []
+};
+
+// ... manual verification steps ...

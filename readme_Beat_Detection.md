@@ -14,9 +14,9 @@ flowchart LR
 
 **Key difference from simple BPM-based grids:** Essentia's `RhythmExtractor2013` returns the **actual detected beat positions** in the audio signal (not evenly-spaced ticks derived from a single BPM value). This means beats are accurate even when the tempo fluctuates slightly.
 
-> **Note:** This module operates in two modes:
 > 1.  **Standalone**: For analyzing full tracks (accessible via the sidebar).
-> 2.  **Embedded**: Integrated directly into **Stem Separation** for analyzing specific stems (Drums, Bass, etc.) with cached results.
+> 2.  **Embedded**: Integrated directly into **Stem Separation** for analyzing specific stems (Drums, Bass, etc.).
+> 3.  **Video Assembler**: Analysis results and transients are used for gated playback and **"Snap to Beat"** region selection in the rhythmic editor.
 
 ## Feature Guide
 
