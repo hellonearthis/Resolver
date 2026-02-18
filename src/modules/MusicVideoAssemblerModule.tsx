@@ -35,6 +35,21 @@ interface SelectionState {
     end: number;
 }
 
+interface AudioMarker {
+    time: number;
+    type: 'beat' | 'onset' | 'loudness' | string;
+    isDownbeat?: boolean;
+    color?: string;
+}
+
+const MARKER_COLORS = {
+    downbeat: 'rgba(6, 182, 212, 0.9)', // Cyan
+    offbeat: 'rgba(255, 255, 255, 0.5)', // Dim White
+    onset: 'rgba(245, 158, 11, 0.8)',    // Orange
+    loudness: 'rgba(139, 92, 246, 0.8)', // Purple
+    default: 'rgba(156, 163, 175, 0.8)'   // Gray
+};
+
 const STEM_COLORS: Record<string, string> = {
     'drums': '#ef4444', // Red
     'bass': '#f59e0b', // Amber/Yellow
@@ -51,7 +66,7 @@ interface StemData {
     url: string;
     path: string;
     color: string;
-    beats: number[];
+    markers: AudioMarker[];
 }
 
 const hexToRgba = (hex: string, alpha: number) => {
@@ -83,7 +98,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const wsRegions = useRef<any>(null);
     const [audioFile, setAudioFile] = useState<{ name: string; path: string } | null>(null);
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
-    const [beats, setBeats] = useState<number[]>([]);
+    const [mainMarkers, setMainMarkers] = useState<AudioMarker[]>([]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [clips, setClips] = useState<VideoClip[]>([]);
     const [workflow, setWorkflow] = useState<any>(null);
@@ -96,6 +111,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
     // Zoom & Beat Source Controls
     const [zoomLevel, setZoomLevel] = useState(50); // minPxPerSec
+    const [minZoom, setMinZoom] = useState(1);
     const [mainBeatSource, setMainBeatSource] = useState<'main' | number>('main'); // 'main' or index of stem
 
     // Load initial connection status & workflow
@@ -182,12 +198,20 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             stemsUpdated = true;
                         }
 
+                        // Convert to AudioMarkers
+                        const markers: AudioMarker[] = (stemBeats || []).map((t, i) => ({
+                            time: t,
+                            type: 'beat',
+                            isDownbeat: i % 4 === 0,
+                            color: undefined // Use default logic
+                        }));
+
                         return {
                             type: stem.type,
                             url: URL.createObjectURL(sBlob),
                             path: stem.path,
                             color: stemColor,
-                            beats: stemBeats || []
+                            markers: markers
                         };
                     } catch (err) {
                         console.error(`Failed to load stem ${stem.path}`, err);
@@ -203,23 +227,36 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 setStems([]);
             }
 
-            // 3. Load Main beats
+            // 3. Load Main Markers
             if (project.markers && project.markers.length > 0) {
-                const beatMarkers = project.markers
-                    .filter(m => m.type === 'beat')
-                    .map(m => m.timestamp);
+                // Determine downbeats if strictly beats
+                // For now, map all project markers
+                const audioMarkers: AudioMarker[] = project.markers.map(m => {
+                    // Refine isDownbeat logic if not present
+                    // Try to deduce isDownbeat if we have a sequence of beats? 
+                    // ProjectMarker doesn't strictly have isDownbeat, but we can infer or pass it.
+                    // For now, simplify: if type is beat, we might need to re-analyze or just treat as plain beats.
+                    return {
+                        time: m.timestamp,
+                        type: m.type,
+                        isDownbeat: false, // Default, updated if we detect strict 4/4
+                        color: m.color
+                    };
+                });
 
-                if (beatMarkers.length > 0) {
-                    setBeats(beatMarkers);
-                } else {
-                    setStatusMessage("Analyzing main track beats...");
-                    const b = await analyzeAudio(blob);
-                    setBeats(b);
-                }
+                // If all are beats, apply downbeat logic retrospectively?
+                // Or just trust the marker types.
+                setMainMarkers(audioMarkers);
             } else {
+                // Fallback to basic analysis if no markers found
                 setStatusMessage("Analyzing main track beats...");
-                const b = await analyzeAudio(blob);
-                setBeats(b);
+                const rawBeats = await analyzeAudio(blob);
+                const audioMarkers: AudioMarker[] = rawBeats.map((t, i) => ({
+                    time: t,
+                    type: 'beat',
+                    isDownbeat: i % 4 === 0
+                }));
+                setMainMarkers(audioMarkers);
             }
 
             setStatusMessage("Ready.");
@@ -250,51 +287,87 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     };
 
     // Helper: inject beat markers into a WaveSurfer's internal wrapper
-    const renderBeatMarkers = (ws: WaveSurfer, markerBeats: number[], markerDuration: number, brightColor = 'rgba(255, 255, 255, 0.8)', dimColor = 'rgba(255, 255, 255, 0.4)') => {
+    const renderBeatMarkers = (ws: WaveSurfer, markers: AudioMarker[], markerDuration: number) => {
         try {
             const wrapper = ws.getWrapper();
             if (!wrapper) return;
             // Remove existing markers
             wrapper.querySelectorAll('.beat-marker').forEach(el => el.remove());
             if (markerDuration <= 0) return;
-            markerBeats.forEach((beat, i) => {
-                const left = (beat / markerDuration) * 100;
+
+            markers.forEach((marker) => {
+                const left = (marker.time / markerDuration) * 100;
                 if (left > 100) return;
-                const isDownbeat = i % 4 === 0;
-                const marker = document.createElement('div');
-                marker.className = 'beat-marker';
-                marker.style.cssText = `
+
+                let color = MARKER_COLORS.default;
+
+                if (marker.color) {
+                    color = marker.color;
+                } else {
+                    switch (marker.type) {
+                        case 'beat':
+                            color = marker.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat;
+                            break;
+                        case 'onset':
+                            color = MARKER_COLORS.onset;
+                            break;
+                        case 'loudness':
+                            color = MARKER_COLORS.loudness;
+                            break;
+                        default:
+                            color = MARKER_COLORS.default;
+                    }
+                }
+
+                // Visual style tweaks based on type
+                const isDownbeat = marker.type === 'beat' && marker.isDownbeat;
+                const width = isDownbeat ? '2px' : '1px';
+                const opacity = marker.type === 'onset' ? '0.7' : '1';
+
+                const div = document.createElement('div');
+                div.className = 'beat-marker';
+                div.style.cssText = `
                     position: absolute;
                     left: ${left}%;
                     top: 0;
                     bottom: 0;
-                    width: ${isDownbeat ? '2px' : '1px'};
-                    background-color: ${isDownbeat ? brightColor : dimColor};
+                    width: ${width};
+                    background-color: ${color};
+                    opacity: ${opacity};
                     pointer-events: none;
                     z-index: 10;
                 `;
-                wrapper.appendChild(marker);
+                wrapper.appendChild(div);
             });
         } catch (e) {
             console.error('renderBeatMarkers error:', e);
         }
     };
 
-    // Zoom Effect
+    // Zoom Effect — only run when audio is loaded (duration > 0)
     useEffect(() => {
+        if (duration <= 0) return; // Audio not ready yet
+
         if (wavesurfer.current) {
-            wavesurfer.current.zoom(zoomLevel);
-            // Re-render main markers after zoom
-            const currentBeats = mainBeatSource === 'main' ? beats : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].beats : []);
-            renderBeatMarkers(wavesurfer.current, currentBeats, duration);
+            try {
+                wavesurfer.current.zoom(zoomLevel);
+            } catch (e) {
+                // Silently ignore — audio may still be decoding
+            }
+            const currentMarkers = mainBeatSource === 'main' ? mainMarkers : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].markers : []);
+            renderBeatMarkers(wavesurfer.current, currentMarkers, duration);
         }
         stemSurfers.current.forEach((ws, idx) => {
-            ws.zoom(zoomLevel);
-            if (stems[idx] && stems[idx].beats) {
-                renderBeatMarkers(ws, stems[idx].beats, duration, 'rgba(255, 255, 255, 0.6)', 'rgba(255, 255, 255, 0.3)');
+            try {
+                ws.zoom(zoomLevel);
+            } catch (e) {
+                // Silently ignore
+            }
+            if (stems[idx] && stems[idx].markers) {
+                renderBeatMarkers(ws, stems[idx].markers, duration);
             }
         });
-    }, [zoomLevel]);
+    }, [zoomLevel, mainMarkers, stems, mainBeatSource, duration]);
 
     // Initialize WaveSurfer
     useEffect(() => {
@@ -316,10 +389,26 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         ws.on('ready', () => {
             const dur = ws.getDuration();
             setDuration(dur);
-            ws.zoom(zoomLevel);
+
+            // Calculate Min Zoom to prevent horizontal scrolling
+            if (containerRef.current) {
+                const width = containerRef.current.clientWidth;
+                // e.g. if duration is 10s and width is 1000px, minPxPerSec = 100
+                // If duration is 0, default to 1
+                const calculatedMin = dur > 0 ? width / dur : 1;
+                // Round down slightly to ensure fit? Or up? WaveSurfer sometimes adds padding.
+                // Let's floor it.
+                setMinZoom(calculatedMin);
+            }
+
+            try {
+                ws.zoom(zoomLevel);
+            } catch (e) {
+                console.warn("WaveSurfer initial zoom failed", e);
+            }
             // Render beat markers inside WaveSurfer wrapper
-            const currentBeats = mainBeatSource === 'main' ? beats : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].beats : []);
-            renderBeatMarkers(ws, currentBeats, dur);
+            const currentMarkers = mainBeatSource === 'main' ? mainMarkers : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].markers : []);
+            renderBeatMarkers(ws, currentMarkers, dur);
         });
 
         // Register Regions Plugin
@@ -332,15 +421,15 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         // Snap to Beat Logic
         regions.on('region-updated', (region) => {
-            const currentBeats = mainBeatSource === 'main' ? beats : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].beats : []);
+            const currentMarkers = mainBeatSource === 'main' ? mainMarkers : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].markers : []);
 
-            if (currentBeats.length === 0) return;
+            if (currentMarkers.length === 0) return;
 
             const snapToBeat = (time: number) => {
-                const closest = currentBeats.reduce((prev, curr) =>
-                    Math.abs(curr - time) < Math.abs(prev - time) ? curr : prev
+                const closest = currentMarkers.reduce((prev, curr) =>
+                    Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
                 );
-                return closest;
+                return closest.time;
             };
 
             const snappedStart = snapToBeat(region.start);
@@ -381,21 +470,40 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         };
 
         ws.on('interaction', syncStems);
-        ws.on('play', () => stemSurfers.current.forEach(s => s.play()));
-        ws.on('pause', () => stemSurfers.current.forEach(s => s.pause()));
+        ws.on('play', () => {
+            if (isStemPlaying) stemSurfers.current.forEach(s => s.play());
+        });
+        ws.on('pause', () => {
+            if (isStemPlaying) stemSurfers.current.forEach(s => s.pause());
+        });
 
         wavesurfer.current = ws;
 
         return () => {
-            ws.destroy();
+            try {
+                ws.destroy();
+            } catch (e) {
+                // Ignore destroy errors
+            }
         };
-    }, [audioUrl, beats, stems, mainBeatSource]);
+    }, [audioUrl, mainMarkers, stems, mainBeatSource]);
 
     // Initialize WaveSurfers (Stems)
     useEffect(() => {
-        // Cleanup old stem surfers
-        stemSurfers.current.forEach(ws => ws.destroy());
-        stemSurfers.current = [];
+        // Cleanup function for stems
+        const cleanupStems = () => {
+            stemSurfers.current.forEach(ws => {
+                try {
+                    ws.destroy();
+                } catch (e) {
+                    // Ignore
+                }
+            });
+            stemSurfers.current = [];
+        };
+
+        // Initial cleanup
+        cleanupStems();
 
         if (stems.length === 0) return;
 
@@ -437,13 +545,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     });
 
                     // Snap to Stem's OWN beats
-                    const stemBeats = stem.beats || [];
-                    if (stemBeats.length > 0) {
+                    const stemMarkers = stem.markers || [];
+                    if (stemMarkers.length > 0) {
                         const snapToBeat = (time: number) => {
-                            const closest = stemBeats.reduce((prev, curr) =>
-                                Math.abs(curr - time) < Math.abs(prev - time) ? curr : prev
+                            const closest = stemMarkers.reduce((prev, curr) =>
+                                Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
                             );
-                            return closest;
+                            return closest.time;
                         };
                         const snappedStart = snapToBeat(region.start);
                         const snappedEnd = snapToBeat(region.end);
@@ -461,8 +569,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
                 ws.on('ready', () => {
                     ws.zoom(zoomLevel);
-                    if (stem.beats && stem.beats.length > 0) {
-                        renderBeatMarkers(ws, stem.beats, wavesurfer.current?.getDuration() || 0, 'rgba(255, 255, 255, 0.6)', 'rgba(255, 255, 255, 0.3)');
+                    if (stem.markers && stem.markers.length > 0) {
+                        renderBeatMarkers(ws, stem.markers, wavesurfer.current?.getDuration() || 0);
                     }
                 });
 
@@ -470,6 +578,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
         });
 
+
+        return () => {
+            cleanupStems();
+        };
     }, [stems]);
 
     // Auto-select Bass as main beat source if available
@@ -642,31 +754,19 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [isStemPlaying, setIsStemPlaying] = useState(false);
 
     const handlePlayStems = () => {
-        if (wavesurfer.current) {
-            // Mute main track to hear only stems
-            wavesurfer.current.setVolume(0);
-            wavesurfer.current.setMuted(true);
-
-            // Seek all stems to start and ensure they are unmuted
-            stemSurfers.current.forEach(s => {
-                s.setVolume(1);
-                s.setTime(0);
-            });
-
-            wavesurfer.current.stop();
-            wavesurfer.current.play();
-            setIsStemPlaying(true);
-        }
+        // Play all stems from the start — does NOT affect the main track
+        stemSurfers.current.forEach(s => {
+            s.setVolume(1);
+            s.setTime(0);
+            s.play();
+        });
+        setIsStemPlaying(true);
     };
 
     const handlePauseAll = () => {
-        if (wavesurfer.current) {
-            wavesurfer.current.pause();
-            wavesurfer.current.setVolume(1); // Restore main track volume
-            wavesurfer.current.setMuted(false);
-            setIsStemPlaying(false);
-        }
+        // Pause all stems — does NOT affect the main track
         stemSurfers.current.forEach(s => s.pause());
+        setIsStemPlaying(false);
     };
 
     const handlePlayMain = () => {
@@ -747,14 +847,23 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             <div className="controls-bar mt-4 flex items-center gap-4 bg-[var(--bg-tertiary)] p-3 rounded border border-gray-700">
                 <div className="flex flex-col gap-1">
                     <label className="text-xs text-gray-400 font-semibold uppercase">Zoom</label>
-                    <input
-                        type="range"
-                        min="10"
-                        max="200"
-                        value={zoomLevel}
-                        onChange={(e) => setZoomLevel(Number(e.target.value))}
-                        className="w-32 accent-indigo-500"
-                    />
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="range"
+                            min={Math.floor(minZoom)}
+                            max="200"
+                            value={zoomLevel}
+                            onChange={(e) => setZoomLevel(Number(e.target.value))}
+                            className="w-32 accent-indigo-500"
+                        />
+                        <button
+                            className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-gray-300"
+                            onClick={() => setZoomLevel(minZoom)}
+                            title="Fit to Screen"
+                        >
+                            Fit
+                        </button>
+                    </div>
                 </div>
 
                 <div className="flex flex-col gap-1">
@@ -778,6 +887,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     {duration > 0 && `Duration: ${duration.toFixed(2)}s`}
                 </div>
             </div>
+
+
 
             {/* Main Track Header with Play/Stop */}
             <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded mt-4">
@@ -813,6 +924,27 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             {/* Stems Container */}
             {stems.length > 0 && (
                 <div className="stems-list mt-8 flex flex-col gap-8">
+                    {/* Marker Legend */}
+                    <div style={{ display: 'flex', gap: '16px', marginBottom: '8px', padding: '6px 8px', fontSize: '12px', color: '#9ca3af', alignItems: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '6px' }}>
+                        <span style={{ fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Markers:</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.downbeat, flexShrink: 0 }}></span>
+                            <span>Downbeat</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.offbeat, border: '1px solid #4b5563', flexShrink: 0 }}></span>
+                            <span>Offbeat</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.onset, flexShrink: 0 }}></span>
+                            <span>Onset</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.loudness, flexShrink: 0 }}></span>
+                            <span>Loudness</span>
+                        </div>
+                    </div>
+
                     <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded">
                         <h4 className="text-sm font-semibold text-gray-400">Project Stems</h4>
                         <div className="flex gap-4">
