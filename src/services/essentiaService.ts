@@ -88,7 +88,7 @@ export const initEssentia = () => getEssentia();
 // ---------------------------------------------------------------------------
 
 /** Extract mono Float32Array from an AudioBuffer (downmix if stereo) in JS to save WASM heap. */
-function getMonoSignal(essentiaInstance: EssentiaInstance, audioBuffer: AudioBuffer): Float32Array {
+function getMonoSignal(audioBuffer: AudioBuffer): Float32Array {
     const channels = audioBuffer.numberOfChannels;
     const length = audioBuffer.length;
     const mono = new Float32Array(length);
@@ -132,7 +132,7 @@ export async function analyzeBeats(
     algorithm: BeatAlgorithm = 'multifeature',
 ): Promise<BeatResult> {
     const essentia = await getEssentia();
-    const mono = getMonoSignal(essentia, audioBuffer);
+    const mono = getMonoSignal(audioBuffer);
     const signal = essentia.arrayToVector(mono);
     let result: any;
 
@@ -166,7 +166,7 @@ export async function analyzeOnsets(
     audioBuffer: AudioBuffer,
 ): Promise<OnsetResult> {
     const essentia = await getEssentia();
-    const mono = getMonoSignal(essentia, audioBuffer);
+    const mono = getMonoSignal(audioBuffer);
     const signal = essentia.arrayToVector(mono);
     let result: any;
 
@@ -198,7 +198,7 @@ export async function analyzeLoudness(
     hopSize = 1024,
 ): Promise<LoudnessResult> {
     const essentia = await getEssentia();
-    const mono = getMonoSignal(essentia, audioBuffer);
+    const mono = getMonoSignal(audioBuffer);
     const sampleRate = audioBuffer.sampleRate;
 
     // Compute per-frame loudness manually via the Loudness algorithm

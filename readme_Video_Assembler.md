@@ -40,3 +40,9 @@ Projects flow from the **Stem Separation** module. When you separate stems and a
 - **Indigo Markers**: Main track beats.
 - **Stem Colors**: Matches the project settings (Drums: Red, Bass: Amber, etc.).
 - **Grayscale Waveform**: Indicates the track is currently muted or de-emphasized.
+
+## Developer Architecture
+Recent refactoring has significantly cleaned up the internal architecture:
+- **`src/types/assembler.ts`**: Centralized location for shared interfaces (`VideoClip`, `TimelineRow`, etc.) to improve type safety.
+- **`src/utils/timelineUtils.ts`**: Pure helper functions for timeline manipulation, rendering logic, and time formatting, fully unit tested.
+- **`src/components/ProjectTimelineTable.tsx`**: The complex timeline table and its editing state are decoupled from the main module, improving modularity and readability.

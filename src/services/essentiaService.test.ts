@@ -100,11 +100,11 @@ describe('essentiaService', () => {
             // Override the mock for this call
             mockEssentiaInstance.RhythmExtractor2013.mockReturnValueOnce({
                 ticks: {
-                    size: () => 2,
+                    size: () => 2 as any,
                     get: (i: number) => [1.0, 2.0][i],
                 },
                 bpm: 60,
-                confidence: undefined,
+                confidence: undefined as any,
             });
 
             const buf = createMockAudioBuffer(new Float32Array(44100));

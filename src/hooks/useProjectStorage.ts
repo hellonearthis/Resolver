@@ -32,6 +32,7 @@ export interface BeatProject {
     enableOnsets?: boolean;
     enableLoudness?: boolean;
     markers?: ProjectMarker[];
+    clips?: any[]; // Video assembler timeline clips
     createdAt: string;
     updatedAt: string;
 }
@@ -66,9 +67,8 @@ export function useProjectStorage() {
         }
     }, [projects, isLoaded]);
 
-    // Helper to save project to JSON file
-    const saveProjectFile = (project: BeatProject) => {
-        if (!project.outputDir) return;
+    const saveProjectFile = (project: BeatProject): BeatProject => {
+        if (!project.outputDir) return project;
 
         try {
             // @ts-ignore
@@ -76,16 +76,30 @@ export function useProjectStorage() {
             // @ts-ignore
             const path = window.require('path');
 
-            if (fs.existsSync(project.outputDir)) {
-                // Sanitize filename
-                const safeName = project.name.replace(/[^a-zA-Z0-9-_]/g, '_');
-                const filePath = path.join(project.outputDir, `${safeName}_data.json`);
+            const safeName = project.name.replace(/[^a-zA-Z0-9-_]/g, '_');
+            const folderName = `PRJ_${safeName}`;
 
-                fs.writeFileSync(filePath, JSON.stringify(project, null, 2));
-                console.log('Saved project backup to:', filePath);
+            // Determine if outputDir already IS the per-project folder
+            // (i.e. it already ends with the folderName). If so, don't nest again.
+            const dirBasename = path.basename(project.outputDir);
+            const projectFolder = (dirBasename === folderName || dirBasename === safeName)
+                ? project.outputDir
+                : path.join(project.outputDir, folderName);
+
+            if (!fs.existsSync(projectFolder)) {
+                fs.mkdirSync(projectFolder, { recursive: true });
             }
+
+            const filePath = path.join(projectFolder, `${safeName}_data.json`);
+
+            // Update outputDir to point to the project subfolder
+            const updatedProject = { ...project, outputDir: projectFolder };
+            fs.writeFileSync(filePath, JSON.stringify(updatedProject, null, 2));
+            console.log('Saved project to:', filePath);
+            return updatedProject;
         } catch (e) {
             console.error('Failed to save project JSON file:', e);
+            return project;
         }
     };
 

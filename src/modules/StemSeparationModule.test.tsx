@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import StemSeparationModule from './StemSeparationModule';
-import { BeatProject } from '../hooks/useProjectStorage';
+import type { BeatProject } from '../hooks/useProjectStorage';
+import '@testing-library/jest-dom';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -62,7 +62,6 @@ vi.mock('../components/DropZone', () => ({
 describe('StemSeparationModule', () => {
     const mockOnCreateProject = vi.fn();
     const mockOnUpdateProject = vi.fn();
-    const mockOnAnalyzeStem = vi.fn();
 
     const mockProject: BeatProject = {
         id: 'test-project-1',
@@ -79,7 +78,7 @@ describe('StemSeparationModule', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockCheckComfyConnection.mockResolvedValue(true);
-        mockInvoke.mockImplementation((channel, args) => {
+        mockInvoke.mockImplementation((channel) => {
             if (channel === 'load-default-workflow') {
                 return Promise.resolve({
                     success: true,
@@ -101,7 +100,6 @@ describe('StemSeparationModule', () => {
             <StemSeparationModule
                 onCreateProject={mockOnCreateProject}
                 onUpdateProject={mockOnUpdateProject}
-                onAnalyzeStem={mockOnAnalyzeStem}
             />
         );
 
@@ -118,7 +116,6 @@ describe('StemSeparationModule', () => {
             <StemSeparationModule
                 onCreateProject={mockOnCreateProject}
                 onUpdateProject={mockOnUpdateProject}
-                onAnalyzeStem={mockOnAnalyzeStem}
             />
         );
 
@@ -133,7 +130,6 @@ describe('StemSeparationModule', () => {
             <StemSeparationModule
                 onCreateProject={mockOnCreateProject}
                 onUpdateProject={mockOnUpdateProject}
-                onAnalyzeStem={mockOnAnalyzeStem}
             />
         );
 
@@ -157,7 +153,6 @@ describe('StemSeparationModule', () => {
             <StemSeparationModule
                 onCreateProject={mockOnCreateProject}
                 onUpdateProject={mockOnUpdateProject}
-                onAnalyzeStem={mockOnAnalyzeStem}
             />
         );
 
@@ -178,7 +173,6 @@ describe('StemSeparationModule', () => {
                 activeProject={mockProject}
                 onCreateProject={mockOnCreateProject}
                 onUpdateProject={mockOnUpdateProject}
-                onAnalyzeStem={mockOnAnalyzeStem}
                 mockProcessDuration={0}
             />
         );

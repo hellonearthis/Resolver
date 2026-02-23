@@ -2,38 +2,27 @@ import React, { useState, useEffect } from 'react';
 import DropZone from '../components/DropZone';
 // import BeatVisualizer from '../components/BeatVisualizer'; // Unused
 import { checkComfyConnection, queuePrompt, type ComfyWorkflow } from '../services/comfyService';
-import type { BeatProject } from '../hooks/useProjectStorage';
+import type { BeatProject, ProjectMarker } from '../hooks/useProjectStorage';
 import MultiTrackWaveform from '../components/MultiTrackWaveform';
-import BeatExtractionModule from './BeatExtractionModule';
-import { type BeatAlgorithm, initEssentia } from '../services/essentiaService';
+import { analyzeBeats, analyzeOnsets, analyzeLoudness, type BeatAlgorithm, initEssentia } from '../services/essentiaService';
+import { getStemTheme } from '../utils/timelineUtils';
 import './StemSeparationModule.css';
-
-
 
 // You might want to move this to a settings file/context
 const DEFAULT_COMFY_OUTPUT_PATH = 'C:\\ComfyUI_windows_portable\\ComfyUI\\output';
 
 interface StemSeparationModuleProps {
-    onAnalyzeStem: (path: string, type: string) => void;
     activeProject?: BeatProject;
     onCreateProject: (file: File) => BeatProject;
     onUpdateProject: (id: string, updates: Partial<BeatProject>) => void;
-    // New Props for Embedded Beat Extraction
-    projects: BeatProject[];
-    onSelectProject: (id: string) => void;
-    onDeleteProject: (id: string) => void;
     mockProcessDuration?: number;
     onExportAll?: () => Promise<{ success: number; failed: number }>;
 }
 
 const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
-    onAnalyzeStem,
     activeProject,
     onCreateProject,
-    onUpdateProject,
-    projects,
-    onSelectProject,
-    onDeleteProject
+    onUpdateProject
 }) => {
     const [comfyConnected, setComfyConnected] = useState<boolean>(false);
     const [workflow, setWorkflow] = useState<ComfyWorkflow | null>(null);
@@ -45,8 +34,7 @@ const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
     const [statusMessage, setStatusMessage] = useState<string>('');
     const [generatedStems, setGeneratedStems] = useState<{ type: string; path: string }[]>([]);
 
-    // New State for Embedded Analysis
-    const [selectedAnalysisStem, setSelectedAnalysisStem] = useState<{ path: string; type: string } | null>(null);
+    // Embedded Analysis removed
 
     // Beat Detection Options (Lifted State)
     const [algorithm, setAlgorithm] = useState<BeatAlgorithm>('multifeature');
@@ -57,22 +45,11 @@ const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
     // Store markers for visualization: stemType -> number[] (timestamps)
     const [stemMarkers, setStemMarkers] = useState<Record<string, number[]>>({});
 
-    // Color Mapping (Same as in BeatExtractionModule)
-    // We duplicate this here for button styling. Ideally shared.
-    const USER_STEM_MAPPING: Record<string, { base: string, light: string }> = {
-        'vocals': { base: 'Green', light: 'Emerald' },
-        'bass': { base: 'Blue', light: 'Sky' },
-        'drums': { base: 'Red', light: 'Pink' },
-        'other': { base: 'Yellow', light: 'Amber' },
-        'beat': { base: 'Blue', light: 'Sky' } // Default / Fallback
-    };
-
     const getStemColorClass = (type: string) => {
         // Simple mapping to Tailwind classes or raw styles could be done here.
         // For now, we'll use inline styles or existing class logic.
         // Actually, let's use the mapping to set a style.
-        const mapping = USER_STEM_MAPPING[type.toLowerCase()] || USER_STEM_MAPPING['beat'];
-        return mapping;
+        return getStemTheme(type);
     };
 
 
@@ -155,8 +132,7 @@ const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
                         const pathModule = window.require ? window.require('path') : null;
                         if (pathModule && activeProject.audioPath) {
                             const audioDir = pathModule.dirname(activeProject.audioPath);
-                            const stemsDir = pathModule.join(audioDir, 'Stems');
-                            setOutputDir(stemsDir);
+                            setOutputDir(audioDir);
                         }
                     } catch (e) { }
                 }
@@ -207,8 +183,7 @@ const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
                     const pathModule = window.require ? window.require('path') : null;
                     if (pathModule) {
                         const audioDir = pathModule.dirname(pathStr);
-                        const stemsDir = pathModule.join(audioDir, 'Stems');
-                        setOutputDir(stemsDir);
+                        setOutputDir(audioDir);
                     }
                 } catch (e) {
                     console.error("Failed to auto-set output dir", e);
@@ -411,7 +386,7 @@ const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
 
     // Move files from Comfy Output -> Project Output
     // New Logic: Find files matching Vocals_*.mp3 etc created AFTER startTime
-    const moveFilesToProject = async (targetDir: string, startTime: number, runPrefix: string) => {
+    const moveFilesToProject = async (targetDir: string, _startTime: number, runPrefix: string) => {
         // @ts-ignore
         const fs = window.require('fs');
         // @ts-ignore
@@ -474,14 +449,105 @@ const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
         return stems;
     };
 
-    // Internal handler to show embedded analysis
-    const handleAnalyzeLocal = (path: string, type: string) => {
-        setSelectedAnalysisStem({ path, type });
-        // Optionally scroll to it
-        setTimeout(() => {
-            const el = document.getElementById('embedded-analysis');
-            if (el) el.scrollIntoView({ behavior: 'smooth' });
-        }, 100);
+    const runBeatAnalysis = async (audioPath: string, stemType: string) => {
+        setIsProcessing(true);
+        setStatusMessage(`Analyzing beats for ${stemType} (${algorithm})…`);
+        setDetectionStatus(`Analyzing ${stemType}...`);
+
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        try {
+            // Read file
+            // @ts-ignore
+            const fs = window.require('fs');
+            const buffer = fs.readFileSync(audioPath);
+            const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+            setDetectionStatus('Analyzing beats...');
+            const beatResult = await analyzeBeats(audioBuffer, algorithm);
+            console.log('[Essentia] BPM:', beatResult.bpm, 'beats:', beatResult.beats.length);
+
+            const allMarkers: ProjectMarker[] = [];
+            const stemMapping = getStemTheme(stemType);
+            const frameRate = activeProject?.frameRate || 24;
+
+            beatResult.beats.forEach((time: number) => {
+                allMarkers.push({
+                    timestamp: time,
+                    frame: Math.round(time * frameRate),
+                    color: stemMapping.base,
+                    note: stemType,
+                    type: 'beat',
+                    duration_sec: 1 / frameRate
+                });
+            });
+
+            if (enableOnsets) {
+                setDetectionStatus('Analyzing onsets...');
+                const onsetResult = await analyzeOnsets(audioBuffer);
+                onsetResult.onsets.forEach((time: number) => {
+                    allMarkers.push({
+                        timestamp: time,
+                        frame: Math.round(time * frameRate),
+                        color: stemMapping.light,
+                        note: 'Onset',
+                        type: 'onset',
+                        duration_sec: 0.05
+                    });
+                });
+            }
+
+            if (enableLoudness) {
+                setDetectionStatus('Analyzing loudness...');
+                const loudResult = await analyzeLoudness(audioBuffer);
+                loudResult.regions.forEach((region: any) => {
+                    allMarkers.push({
+                        timestamp: region.start,
+                        frame: Math.round(region.start * frameRate),
+                        color: stemMapping.light,
+                        note: 'Loud',
+                        type: 'loudness',
+                        duration_sec: region.end - region.start
+                    });
+                });
+            }
+
+            // Update local state
+            const beatsOnly = allMarkers.filter((m: ProjectMarker) => m.type === 'beat').map((m: ProjectMarker) => m.timestamp);
+            setStemMarkers((prev: Record<string, number[]>) => ({
+                ...prev,
+                [stemType]: beatsOnly
+            }));
+
+            // Save to project
+            if (activeProject && onUpdateProject) {
+                const otherMarkers = (activeProject.markers || []).filter((m: ProjectMarker) => m.note !== stemType);
+                onUpdateProject(activeProject.id, {
+                    markers: [...otherMarkers, ...allMarkers],
+                    outputDir: outputDir || undefined
+                });
+            }
+
+            setDetectionStatus(`Complete: ${beatsOnly.length} beats @${Math.round(beatResult.bpm)} BPM`);
+
+        } catch (err) {
+            console.error('Analysis failed:', err);
+            setDetectionStatus(`Analysis failed for ${stemType}.`);
+        } finally {
+            setIsProcessing(false);
+            audioContext.close().catch(() => { });
+
+            // Clear status message after a few seconds
+            setTimeout(() => {
+                setDetectionStatus('');
+                setStatusMessage('');
+            }, 4000);
+        }
+    };
+
+    // Internal handler directly triggers analysis
+    const handleAnalyzeLocal = async (path: string, type: string) => {
+        await runBeatAnalysis(path, type);
     };
 
 
@@ -681,74 +747,7 @@ const StemSeparationModule: React.FC<StemSeparationModuleProps> = ({
                 </div>
             )}
 
-            {/* Embedded Beat Extraction Section */}
-            {
-                selectedAnalysisStem && (
-                    <div id="embedded-analysis" className="mt-8 pt-8 border-t border-gray-700">
 
-
-                        <div className="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
-                            <BeatExtractionModule
-                                isEmbedded={true}
-                                initialAudioPath={selectedAnalysisStem.path}
-                                initialStemType={selectedAnalysisStem.type}
-                                // Pass our lifted state
-                                initialAlgorithm={algorithm}
-                                initialEnableOnsets={enableOnsets}
-
-                                initialEnableLoudness={enableLoudness}
-                                onStatusChange={setDetectionStatus}
-
-                                // Pass existing markers if any
-                                initialMarkers={activeProject && activeProject.markers
-                                    ? activeProject.markers.filter(m => m.note === selectedAnalysisStem.type)
-                                    : undefined
-                                }
-
-                                // Capture results for visualization AND saving
-                                onAnalysisComplete={(markers) => {
-                                    const stemType = selectedAnalysisStem.type;
-                                    const beats = markers.filter(m => m.type === 'beat').map(m => m.timestamp);
-
-                                    // 1. Update local visualization state
-                                    setStemMarkers(prev => ({
-                                        ...prev,
-                                        [stemType]: beats
-                                    }));
-
-                                    // 2. Save to Project
-                                    if (activeProject && onUpdateProject) {
-                                        // Filter out existing markers for this stem to avoid duplicates/conflicts
-                                        const otherMarkers = (activeProject.markers || []).filter(m => m.note !== stemType);
-
-                                        // Combine with new markers
-                                        // We need to map the raw marker data to ProjectMarker structure if needed, 
-                                        // but BeatExtractionModule passes compatible structures.
-                                        // Ensure we tag them correctly just in case.
-                                        const newMarkers = markers.map(m => ({
-                                            ...m,
-                                            note: stemType // Enforce stem type as note
-                                        }));
-
-                                        onUpdateProject(activeProject.id, {
-                                            markers: [...otherMarkers, ...newMarkers],
-                                            outputDir: outputDir || undefined
-                                        });
-                                    }
-                                }}
-
-                                projects={projects}
-
-                                activeProject={activeProject} // Share the same project context?
-                                onSelectProject={onSelectProject}
-                                onCreateProject={onCreateProject}
-                                onUpdateProject={onUpdateProject}
-                                onDeleteProject={onDeleteProject}
-                            />
-                        </div>
-                    </div>
-                )
-            }
 
         </div >
     );

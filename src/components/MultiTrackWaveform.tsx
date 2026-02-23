@@ -158,7 +158,7 @@ const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers 
 
         if (wavesurfers.length === 0 || regionsPluginsRef.current.length === 0) return;
 
-        wavesurfers.forEach((ws, index) => {
+        wavesurfers.forEach((_ws, index) => {
             const stem = stems[index];
             const wsRegions = regionsPluginsRef.current[index];
 

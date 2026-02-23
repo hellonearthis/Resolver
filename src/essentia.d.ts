@@ -1,6 +1,5 @@
 declare module 'essentia.js/dist/essentia-wasm.es.js' {
-    const EssentiaWASM: () => Promise<any>;
-    export default EssentiaWASM;
+    export const EssentiaWASM: any;
 }
 
 declare module 'essentia.js/dist/essentia.js-core.es.js' {

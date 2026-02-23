@@ -2,94 +2,45 @@ import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { analyzeBeats } from '../services/essentiaService';
-import DropZone from '../components/DropZone';
+
 import ProjectsPanel from '../components/ProjectsPanel';
 import { queuePrompt } from '../services/comfyService';
 import type { BeatProject } from '../hooks/useProjectStorage';
+import ProjectTimelineTable from '../components/ProjectTimelineTable';
 import './MusicVideoAssemblerModule.css';
 
+/**
+ * Props required to initialize the MusicVideoAssemblerModule.
+ * Receives global project data and callbacks to interact with the broader application state.
+ */
 interface MusicVideoAssemblerModuleProps {
     projects: BeatProject[];
     activeProject?: BeatProject;
     onSelectProject: (id: string) => void;
-    onCreateProject: (file: File) => BeatProject;
     onUpdateProject: (id: string, updates: Partial<BeatProject>) => void;
     onDeleteProject: (id: string) => void;
 }
 
-interface VideoClip {
-    id: string;
-    startTime: number;
-    duration: number;
-    endTime: number;
-    track: number; // 1 or 2 for checkerboarding
-    status: 'pending' | 'generating' | 'done' | 'error';
-    videoPath?: string;
-    promptText?: string;
-}
+import type { VideoClip, SelectionState, AudioMarker, StemData } from '../types/assembler';
+import {
+    MARKER_COLORS,
+    STEM_COLORS,
+    DEFAULT_STEM_COLOR,
+    hexToRgba,
+    adjustColorBrightness,
+    formatTime
+} from '../utils/timelineUtils';
 
-interface SelectionState {
-    source: 'main' | 'stem';
-    stemIndex?: number;
-    start: number;
-    end: number;
-}
-
-interface AudioMarker {
-    time: number;
-    type: 'beat' | 'onset' | 'loudness' | string;
-    isDownbeat?: boolean;
-    color?: string;
-}
-
-const MARKER_COLORS = {
-    downbeat: 'rgba(6, 182, 212, 0.9)', // Cyan
-    offbeat: 'rgba(255, 255, 255, 0.5)', // Dim White
-    onset: 'rgba(245, 158, 11, 0.8)',    // Orange
-    loudness: 'rgba(139, 92, 246, 0.8)', // Purple
-    default: 'rgba(156, 163, 175, 0.8)'   // Gray
-};
-
-const STEM_COLORS: Record<string, string> = {
-    'drums': '#ef4444', // Red
-    'bass': '#f59e0b', // Amber/Yellow
-    'other': '#10b981', // Emerald/Green
-    'vocals': '#3b82f6', // Blue
-    'piano': '#8b5cf6', // Violet
-    'guitar': '#ec4899', // Pink
-};
-
-const DEFAULT_STEM_COLOR = '#6b7280'; // Gray
-
-interface StemData {
-    type: string;
-    url: string;
-    path: string;
-    color: string;
-    markers: AudioMarker[];
-}
-
-const hexToRgba = (hex: string, alpha: number) => {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
-
-const adjustColorBrightness = (hex: string, percent: number) => {
-    const num = parseInt(hex.replace("#", ""), 16),
-        amt = Math.round(2.55 * percent),
-        R = (num >> 16) + amt,
-        B = ((num >> 8) & 0x00FF) + amt,
-        G = (num & 0x0000FF) + amt;
-    return "#" + (0x1000000 + (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 + (B < 255 ? B < 1 ? 0 : B : 255) * 0x100 + (G < 255 ? G < 1 ? 0 : G : 255)).toString(16).slice(1);
-};
-
+/**
+ * The core module for assembling music videos.
+ * Handles the display of the master track waveform and all associated instrument stems.
+ * Features a multi-track playback audit mode, beat snapping for precise trim selections,
+ * and integration with ComfyUI to queue image-to-video generation tasks.
+ */
 const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     projects,
     activeProject,
     onSelectProject,
-    onCreateProject,
     onDeleteProject,
     onUpdateProject
 }) => {
@@ -278,13 +229,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         }
     };
 
-    const handleAudioDrop = async (files: File[]) => {
-        if (files.length > 0) {
-            const file = files[0];
-            const newProject = onCreateProject(file);
-            loadProjectAudio(newProject);
-        }
-    };
 
     // Helper: inject beat markers into a WaveSurfer's internal wrapper
     const renderBeatMarkers = (ws: WaveSurfer, markers: AudioMarker[], markerDuration: number) => {
@@ -415,6 +359,16 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const regions = ws.registerPlugin(RegionsPlugin.create());
         wsRegions.current = regions;
 
+        // Helper: clear only interactive (drag) regions, keep saved ones
+        const clearInteractiveRegions = (regPlugin: any) => {
+            const allRegions = regPlugin.getRegions();
+            allRegions.forEach((r: any) => {
+                if (!r.id || !r.id.startsWith('saved-')) {
+                    r.remove();
+                }
+            });
+        };
+
         regions.enableDragSelection({
             color: 'rgba(255, 0, 0, 0.2)',
         });
@@ -426,7 +380,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             if (currentMarkers.length === 0) return;
 
             const snapToBeat = (time: number) => {
-                const closest = currentMarkers.reduce((prev, curr) =>
+                // Include 0 and track end as valid snap points
+                const snapPoints = [
+                    { time: 0 },
+                    ...currentMarkers,
+                    { time: ws.getDuration() }
+                ];
+                const closest = snapPoints.reduce((prev, curr) =>
                     Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
                 );
                 return closest.time;
@@ -447,16 +407,18 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 start: region.start,
                 end: region.end
             });
-            stemRegionsRefs.current.forEach(r => r.clearRegions());
+            stemRegionsRefs.current.forEach(r => clearInteractiveRegions(r));
         });
 
         regions.on('region-created', (region) => {
+            // Skip saved regions being re-added
+            if (region.id && region.id.startsWith('saved-')) return;
             setActiveSelection({
                 source: 'main',
                 start: region.start,
                 end: region.end
             });
-            stemRegionsRefs.current.forEach(r => r.clearRegions());
+            stemRegionsRefs.current.forEach(r => clearInteractiveRegions(r));
         });
 
         // Sync Stems on Interaction
@@ -531,6 +493,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 });
 
                 const handleStemRegionUpdate = (region: any) => {
+                    // Skip saved regions
+                    if (region.id && region.id.startsWith('saved-')) return;
                     setActiveSelection({
                         source: 'stem',
                         stemIndex: index,
@@ -538,17 +502,35 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         end: region.end
                     });
 
-                    if (wsRegions.current) wsRegions.current.clearRegions();
+                    // Clear interactive regions on main track
+                    if (wsRegions.current) {
+                        const allRegions = wsRegions.current.getRegions();
+                        allRegions.forEach((r: any) => {
+                            if (!r.id || !r.id.startsWith('saved-')) r.remove();
+                        });
+                    }
 
+                    // Clear interactive regions on other stems
                     stemRegionsRefs.current.forEach((val, key) => {
-                        if (key !== index) val.clearRegions();
+                        if (key !== index) {
+                            const allRegions = val.getRegions();
+                            allRegions.forEach((r: any) => {
+                                if (!r.id || !r.id.startsWith('saved-')) r.remove();
+                            });
+                        }
                     });
 
                     // Snap to Stem's OWN beats
                     const stemMarkers = stem.markers || [];
                     if (stemMarkers.length > 0) {
                         const snapToBeat = (time: number) => {
-                            const closest = stemMarkers.reduce((prev, curr) =>
+                            // Include 0 and track end as valid snap points
+                            const snapPoints = [
+                                { time: 0 },
+                                ...stemMarkers,
+                                { time: wavesurfer.current?.getDuration() || 0 }
+                            ];
+                            const closest = snapPoints.reduce((prev, curr) =>
                                 Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
                             );
                             return closest.time;
@@ -599,6 +581,148 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         }
     }, [stems]);
 
+    // Add the current selection as a segment to the timeline (no ComfyUI generation)
+    const handleAddSegment = () => {
+        if (!activeSelection) {
+            setStatusMessage('Select a region on a waveform first.');
+            return;
+        }
+        const { start, end, source, stemIndex } = activeSelection;
+        const segDuration = end - start;
+        const track = (clips.length % 2) + 1;
+
+        const newClip: VideoClip = {
+            id: Date.now().toString(),
+            startTime: start,
+            endTime: end,
+            duration: segDuration,
+            track,
+            status: 'pending',
+            source,
+            stemName: source === 'stem' && stemIndex !== undefined ? stems[stemIndex]?.type : undefined,
+            label: `clip_${clips.length}`,
+        };
+
+        setClips(prev => [...prev, newClip]);
+        setActiveSelection(null);
+
+        // Clear interactive drag regions so only saved ones remain
+        if (wsRegions.current) wsRegions.current.clearRegions();
+        stemRegionsRefs.current.forEach(r => r.clearRegions());
+
+        setStatusMessage(`Segment added: ${formatTime(start)} – ${formatTime(end)}`);
+    };
+
+    // Remove a clip/segment from the timeline
+    const handleRemoveClip = (clipId: string) => {
+        setClips(prev => prev.filter(c => c.id !== clipId));
+    };
+
+    // Save clips to the active project
+    const handleSaveToProject = async () => {
+        if (!activeProject) {
+            setStatusMessage('No project selected.');
+            return;
+        }
+        try {
+            // @ts-ignore
+            const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+
+            // If project has no outputDir, load it from config
+            let baseOutputDir = activeProject.outputDir;
+            if (!baseOutputDir && ipcRenderer) {
+                const res = await ipcRenderer.invoke('get-config');
+                if (res.success && res.config.projectOutputDir) {
+                    baseOutputDir = res.config.projectOutputDir;
+                }
+            }
+
+            if (!baseOutputDir) {
+                setStatusMessage('No output folder configured. Set one in Settings → Defaults.');
+                return;
+            }
+
+            // Update project with clips and ensure outputDir is set
+            onUpdateProject(activeProject.id, {
+                clips: clips,
+                outputDir: baseOutputDir,
+            });
+            setStatusMessage(`Project saved ✓  →  ${baseOutputDir}`);
+        } catch (e) {
+            console.error('Save failed:', e);
+            setStatusMessage('Error saving project.');
+        }
+    };
+
+    // Image picker for start/end images
+    const handlePickImage = (clipId: string, field: 'startImagePath' | 'endImagePath') => {
+        if (!activeProject?.outputDir) {
+            setStatusMessage('No project folder available. Save the project first.');
+            return;
+        }
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = (e: any) => {
+            const file = e.target.files?.[0];
+            if (file) {
+                const filePath = file.path || file.name;
+                setClips(prev => prev.map(c => c.id === clipId ? { ...c, [field]: filePath } : c));
+            }
+        };
+        input.click();
+    };
+
+    const handleUpdateClipLabel = (clipId: string, newLabel: string) => {
+        setClips(prev => prev.map(c => c.id === clipId ? { ...c, label: newLabel } : c));
+    };
+
+    // Render saved clip regions on the appropriate waveform whenever clips change
+    useEffect(() => {
+        // Clear all existing pinned regions first
+        const renderSavedRegions = () => {
+            // Render main-track clips
+            if (wsRegions.current) {
+                wsRegions.current.clearRegions();
+                clips.filter(c => c.source === 'main').forEach(c => {
+                    const region = wsRegions.current.addRegion({
+                        id: `saved-${c.id}`,
+                        start: c.startTime,
+                        end: c.endTime,
+                        color: 'rgba(34, 197, 94, 0.18)',
+                        drag: false,
+                        resize: false,
+                    });
+                    // Push behind waveform
+                    if (region.element) region.element.style.zIndex = '0';
+                });
+            }
+
+            // Render stem clips
+            stemRegionsRefs.current.forEach((reg, stemIdx) => {
+                reg.clearRegions();
+                const stemType = stems[stemIdx]?.type;
+                if (!stemType) return;
+                clips.filter(c => c.source === 'stem' && c.stemName === stemType).forEach(c => {
+                    const region = reg.addRegion({
+                        id: `saved-${c.id}`,
+                        start: c.startTime,
+                        end: c.endTime,
+                        color: 'rgba(34, 197, 94, 0.18)',
+                        drag: false,
+                        resize: false,
+                    });
+                    // Push behind waveform
+                    if (region.element) region.element.style.zIndex = '0';
+                });
+            });
+        };
+
+        // Small delay to let WaveSurfer finish any pending updates
+        const timer = setTimeout(renderSavedRegions, 100);
+        return () => clearTimeout(timer);
+    }, [clips, stems]);
+
     const handleGenerateClipFromRegion = async () => {
         if (!activeSelection) {
             setStatusMessage("Please select a region on the waveform first.");
@@ -631,7 +755,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             duration,
             track,
             status: 'pending',
-            promptText: "A cool music video scene, dynamic lighting, 4k" // Default prompt
+            promptText: "A cool music video scene, dynamic lighting, 4k", // Default prompt
+            source: source,
+            stemName: source === 'stem' && stemIndex !== undefined ? stems[stemIndex]?.type : undefined,
+            label: `clip_${clips.length}`
         };
 
         setClips((prev) => [...prev, newClip]);
@@ -818,30 +945,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 />
             </div>
 
-            {/* ... (DropZone) ... */}
-            <div className="card mt-4">
-                <DropZone onFilesDropped={handleAudioDrop} accept="audio/*" label="Drop Audio to Create New Project" />
-                {audioFile && <p className="mt-2 text-sm text-gray-400">Current: {audioFile.name}</p>}
-            </div>
 
-            {/* Selection Status */}
-            {activeSelection && (
-                <div className="selection-status mt-4 p-2 bg-indigo-900/30 border border-indigo-500/50 rounded flex justify-between items-center text-sm">
-                    <div>
-                        <span className="text-gray-400 uppercase text-xs font-bold mr-2">Selection Source:</span>
-                        <span className="text-white font-semibold">
-                            {activeSelection.source === 'main' ? 'MAIN TRACK' : `STEM: ${stems[activeSelection.stemIndex!]?.type.toUpperCase()}`}
-                        </span>
-                    </div>
-                    <div>
-                        <span className="text-gray-400 text-xs mr-2">Range:</span>
-                        <span className="text-indigo-300 font-mono">
-                            {activeSelection.start.toFixed(2)}s - {activeSelection.end.toFixed(2)}s
-                            <span className="ml-2 text-white">({(activeSelection.end - activeSelection.start).toFixed(2)}s)</span>
-                        </span>
-                    </div>
-                </div>
-            )}
+
 
             {/* Controls Bar */}
             <div className="controls-bar mt-4 flex items-center gap-4 bg-[var(--bg-tertiary)] p-3 rounded border border-gray-700">
@@ -1008,29 +1113,50 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 <button className="btn btn-secondary" onClick={handleExportManifest} disabled={clips.length === 0}>
                     Export Manifest for Resolve
                 </button>
+                <button
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded font-bold text-sm"
+                    onClick={handleSaveToProject}
+                    disabled={!activeProject || clips.length === 0}
+                >
+                    💾 Save to Project
+                </button>
             </div>
 
-            <div className="clip-list mt-4 grid gap-2">
-                {clips.map(clip => (
-                    <div key={clip.id} className={`clip-item ${clip.status} p-3 rounded bg-gray-800 border border-gray-700 flex justify-between items-center`}>
-                        <div className="clip-info flex flex-col">
-                            <span className="font-mono text-indigo-300">
-                                {clip.startTime.toFixed(2)}s - {clip.endTime.toFixed(2)}s
-                            </span>
-                            <span className="text-xs text-gray-400">
-                                Track {clip.track} | {Math.round(clip.duration * 24)} frames | {(clip.track === 1 ? 'A Roll' : 'B Roll')}
+            {/* Project Timeline Table */}
+            <div className="mt-8">
+                {/* Selection Status — positioned just above the table */}
+                {activeSelection && (
+                    <div className="selection-status mb-3 p-2 bg-indigo-900/30 border border-indigo-500/50 rounded flex justify-between items-center text-sm">
+                        <div>
+                            <span className="text-gray-400 uppercase text-xs font-bold mr-2">Selection Source:</span>
+                            <span className="text-white font-semibold">
+                                {activeSelection.source === 'main' ? 'MAIN TRACK' : `STEM: ${stems[activeSelection.stemIndex!]?.type.toUpperCase()}`}
                             </span>
                         </div>
-                        <div className="clip-actions">
-                            <span className={`status-badge px-2 py-1 rounded text-xs font-bold uppercase ${clip.status === 'done' ? 'bg-green-900 text-green-300' :
-                                clip.status === 'error' ? 'bg-red-900 text-red-300' :
-                                    'bg-yellow-900 text-yellow-300'
-                                }`}>
-                                {clip.status}
+                        <div className="flex items-center gap-3">
+                            <span className="text-gray-400 text-xs mr-2">Range:</span>
+                            <span className="text-indigo-300 font-mono">
+                                {activeSelection.start.toFixed(2)}s - {activeSelection.end.toFixed(2)}s
+                                <span className="ml-2 text-white">({(activeSelection.end - activeSelection.start).toFixed(2)}s)</span>
                             </span>
+                            <button
+                                className="ml-3 bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs font-bold uppercase tracking-wide"
+                                onClick={handleAddSegment}
+                            >
+                                + Add Segment
+                            </button>
                         </div>
                     </div>
-                ))}
+                )}
+                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">📋 Project Timeline</h3>
+                <ProjectTimelineTable
+                    clips={clips}
+                    duration={duration}
+                    onUpdateClipLabel={handleUpdateClipLabel}
+                    onRemoveClip={handleRemoveClip}
+                    onPickImage={handlePickImage}
+                    onError={setStatusMessage}
+                />
             </div>
 
             {statusMessage && <div className="status-bar mt-4 text-xs text-gray-400 italic text-center">{statusMessage}</div>}

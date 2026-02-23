@@ -15,7 +15,6 @@ interface ModuleItem {
 const modules: ModuleItem[] = [
     { id: 'beat-extraction', label: 'Beat Extraction', icon: '🎵', enabled: true },
     { id: 'script-manager', label: 'Script Manager', icon: '📜', enabled: true },
-    { id: 'video-sync', label: 'Video Sync', icon: '🎬', enabled: true },
     { id: 'music-video-assembler', label: 'Video Assembler', icon: '🎸', enabled: true },
     { id: 'stem-separation', label: 'Stem Separation', icon: '🎚️', enabled: true },
     { id: 'settings', label: 'Settings', icon: '⚙️', enabled: true },
