@@ -2,7 +2,7 @@ import { useState } from 'react';
 import useProjectStorage, { type BeatProject } from './hooks/useProjectStorage';
 import Layout from './components/Layout';
 import ScriptManagerModule from './modules/ScriptManagerModule';
-import StemSeparationModule from './modules/StemSeparationModule';
+
 import MusicVideoAssemblerModule from './modules/MusicVideoAssemblerModule';
 import SettingsModule from './modules/SettingsModule';
 
@@ -19,7 +19,7 @@ declare global {
 
 
 function App() {
-  const [activeModule, setActiveModule] = useState('stem-separation');
+  const [activeModule, setActiveModule] = useState('music-video-assembler');
 
   // --- Global Project State ---
   const { projects, saveProject, updateProject, deleteProject } = useProjectStorage();
@@ -27,17 +27,19 @@ function App() {
 
   const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : undefined;
 
-  const handleCreateProject = (file: File) => {
+  const handleCreateProject = (file: File, preferredOutputDir?: string) => {
     // Try to calculate an initial outputDir if possible (useful for Electron)
-    let initialOutputDir = undefined;
-    try {
-      // @ts-ignore
-      const path = window.require ? window.require('path') : null;
-      if (path && (file as any).path) {
-        initialOutputDir = path.dirname((file as any).path);
+    let initialOutputDir = preferredOutputDir;
+    if (!initialOutputDir) {
+      try {
+        // @ts-ignore
+        const path = window.require ? window.require('path') : null;
+        if (path && (file as any).path) {
+          initialOutputDir = path.dirname((file as any).path);
+        }
+      } catch (e) {
+        console.warn("Could not determine default output dir during project creation", e);
       }
-    } catch (e) {
-      console.warn("Could not determine default output dir during project creation", e);
     }
 
     const newProject = saveProject({
@@ -69,14 +71,7 @@ function App() {
     switch (activeModule) {
       case 'script-manager':
         return <ScriptManagerModule />;
-      case 'stem-separation':
-        return (
-          <StemSeparationModule
-            activeProject={activeProject}
-            onCreateProject={handleCreateProject}
-            onUpdateProject={handleUpdateProject}
-          />
-        );
+
       case 'settings':
         return <SettingsModule />;
       case 'music-video-assembler':
@@ -85,16 +80,20 @@ function App() {
             projects={projects}
             activeProject={activeProject}
             onSelectProject={handleSelectProject}
+            onCreateProject={handleCreateProject}
             onUpdateProject={handleUpdateProject}
             onDeleteProject={deleteProject}
           />
         );
       default:
         return (
-          <StemSeparationModule
+          <MusicVideoAssemblerModule
+            projects={projects}
             activeProject={activeProject}
+            onSelectProject={handleSelectProject}
             onCreateProject={handleCreateProject}
             onUpdateProject={handleUpdateProject}
+            onDeleteProject={deleteProject}
           />
         );
     }

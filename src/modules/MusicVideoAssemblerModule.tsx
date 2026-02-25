@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
-import { analyzeBeats } from '../services/essentiaService';
+import { analyzeBeats, analyzeOnsets, analyzeLoudness, type BeatAlgorithm, initEssentia } from '../services/essentiaService';
 
+import DropZone from '../components/DropZone';
 import ProjectsPanel from '../components/ProjectsPanel';
-import { queuePrompt } from '../services/comfyService';
-import type { BeatProject } from '../hooks/useProjectStorage';
+import { checkComfyConnection, queuePrompt, type ComfyWorkflow } from '../services/comfyService';
+import type { BeatProject, ProjectMarker } from '../hooks/useProjectStorage';
 import ProjectTimelineTable from '../components/ProjectTimelineTable';
+import CollapsibleCard from '../components/CollapsibleCard';
 import './MusicVideoAssemblerModule.css';
 
 /**
@@ -17,6 +19,7 @@ interface MusicVideoAssemblerModuleProps {
     projects: BeatProject[];
     activeProject?: BeatProject;
     onSelectProject: (id: string) => void;
+    onCreateProject: (file: File, preferredOutputDir?: string) => BeatProject;
     onUpdateProject: (id: string, updates: Partial<BeatProject>) => void;
     onDeleteProject: (id: string) => void;
 }
@@ -28,7 +31,8 @@ import {
     DEFAULT_STEM_COLOR,
     hexToRgba,
     adjustColorBrightness,
-    formatTime
+    formatTime,
+    getStemTheme
 } from '../utils/timelineUtils';
 
 /**
@@ -41,6 +45,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     projects,
     activeProject,
     onSelectProject,
+    onCreateProject,
     onDeleteProject,
     onUpdateProject
 }) => {
@@ -52,7 +57,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [mainMarkers, setMainMarkers] = useState<AudioMarker[]>([]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [clips, setClips] = useState<VideoClip[]>([]);
-    const [workflow, setWorkflow] = useState<any>(null);
+    const [workflow, setWorkflow] = useState<ComfyWorkflow | null>(null);
     const [statusMessage, setStatusMessage] = useState('');
     const [stems, setStems] = useState<StemData[]>([]);
     const stemSurfers = useRef<WaveSurfer[]>([]);
@@ -60,16 +65,62 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [duration, setDuration] = useState(0);
     const [activeSelection, setActiveSelection] = useState<SelectionState | null>(null);
 
+    // Stem Separation State
+    const [comfyConnected, setComfyConnected] = useState<boolean>(false);
+    const [comfyOutputDir, setComfyOutputDir] = useState<string>('C:\\ComfyUI_windows_portable\\ComfyUI\\output');
+    const [outputDir, setOutputDir] = useState<string | null>(null);
+    const [defaultOutputDir, setDefaultOutputDir] = useState<string | null>(null);
+    const [isProcessing, setIsProcessing] = useState<boolean>(false);
+
+    // Essentia Detection State
+    const [algorithm, setAlgorithm] = useState<BeatAlgorithm>('multifeature');
+    const [enableOnsets, setEnableOnsets] = useState<boolean>(true);
+    const [enableLoudness, setEnableLoudness] = useState<boolean>(false);
+    const [detectionStatus, setDetectionStatus] = useState<string>('');
+
+    // Tooltip State
+    const [tooltipState, setTooltipState] = useState<{
+        visible: boolean;
+        x: number;
+        y: number;
+        content: React.ReactNode;
+    }>({ visible: false, x: 0, y: 0, content: null });
+
     // Zoom & Beat Source Controls
     const [zoomLevel, setZoomLevel] = useState(50); // minPxPerSec
     const [minZoom, setMinZoom] = useState(1);
     const [mainBeatSource, setMainBeatSource] = useState<'main' | number>('main'); // 'main' or index of stem
 
-    // Load initial connection status & workflow
     useEffect(() => {
-        // checkConnection(); // We can remove this if we just rely on explicit checks or global status
+        checkConnection();
         loadWorkflow();
+        loadConfig();
+        initEssentia();
     }, []);
+
+    const checkConnection = async () => {
+        const connected = await checkComfyConnection();
+        setComfyConnected(connected);
+    };
+
+    const loadConfig = async () => {
+        try {
+            // @ts-ignore
+            const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+            if (!ipcRenderer) return;
+
+            const res = await ipcRenderer.invoke('get-config');
+            if (res.success) {
+                if (res.config.comfyOutputDir) setComfyOutputDir(res.config.comfyOutputDir);
+                if (res.config.projectOutputDir) {
+                    setDefaultOutputDir(res.config.projectOutputDir);
+                    setOutputDir((prev) => prev || res.config.projectOutputDir);
+                }
+            }
+        } catch (e) {
+            console.error("Failed to load config", e);
+        }
+    };
 
     const loadWorkflow = async () => {
         try {
@@ -95,6 +146,361 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
         const result = await analyzeBeats(audioBuffer);
         return result.beats;
+    };
+
+    const handleAudioDrop = (files: File[]) => {
+        if (files.length > 0) {
+            const file = files[0];
+            const pathStr = (file as any).path;
+
+            if (!pathStr) {
+                setStatusMessage("Error: Could not read file path.");
+                return;
+            }
+
+            // Use default output dir if set, otherwise relative Stems folder
+            let finalOutputDir = defaultOutputDir;
+            if (defaultOutputDir) {
+                setOutputDir(defaultOutputDir);
+            } else {
+                try {
+                    // @ts-ignore
+                    const pathModule = window.require ? window.require('path') : null;
+                    if (pathModule) {
+                        const audioDir = pathModule.dirname(pathStr);
+                        setOutputDir(audioDir);
+                        finalOutputDir = audioDir;
+                    }
+                } catch (e) {
+                    console.error("Failed to auto-set output dir", e);
+                }
+            }
+
+            if (!activeProject || activeProject.audioPath !== pathStr) {
+                onCreateProject(file, finalOutputDir || undefined);
+                setStatusMessage(`Project created for ${file.name}`);
+            }
+        }
+    };
+
+    // --- Core Logic: Run & Poll ---
+    const handleRunSeparation = async () => {
+        if (!comfyConnected || !workflow || !audioFile?.path || !outputDir) {
+            setStatusMessage('Missing setup (Audio, Workflow, or Output Folder)');
+            return;
+        }
+
+        // Save config when running (just in case)
+        try {
+            // @ts-ignore
+            const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+            if (ipcRenderer) {
+                ipcRenderer.invoke('save-config', { comfyOutputDir, projectOutputDir: outputDir });
+            }
+        } catch (e) { /* ignore */ }
+
+        setIsProcessing(true);
+        setStatusMessage('Preparing workflow...');
+        const startTime = Date.now(); // Capture start time to find new files
+
+        try {
+            const prompt = JSON.parse(JSON.stringify(workflow));
+
+            let loadNodeKey: string | null = null;
+            for (const [key, node] of Object.entries(prompt)) {
+                // @ts-ignore
+                if (node.class_type === 'LoadAudio' || node.class_type === 'LoadAudioPath') {
+                    loadNodeKey = key;
+                    break;
+                }
+            }
+
+            if (!loadNodeKey) throw new Error('Could not find LoadAudio node');
+            // @ts-ignore
+            prompt[loadNodeKey].inputs.audio = audioFile.path;
+
+            const runId = Date.now().toString();
+            const prefix = `stem_${runId}`;
+
+            for (const node of Object.values(prompt)) {
+                // @ts-ignore
+                if (node.class_type.includes('Save') && node.inputs) {
+                    // @ts-ignore
+                    const currentPrefix = node.inputs.filename_prefix || '';
+                    // @ts-ignore
+                    node.inputs.filename_prefix = `${prefix}_${currentPrefix}`;
+                }
+            }
+
+            const result = await queuePrompt(prompt);
+
+            if (!result || !result.prompt_id) {
+                throw new Error('Failed to queue prompt');
+            }
+
+            setStatusMessage(`Processing... (ID: ${result.prompt_id})`);
+            await waitForGeneration(result.prompt_id);
+
+            setStatusMessage('Moving files...');
+
+            const movedFiles = await moveFilesToProject(outputDir, startTime, prefix);
+
+            // Re-wrap files matching the StemData interface required by MusicVideoAssemblerModule
+            const newStems: StemData[] = movedFiles.map((f, i) => ({
+                id: `stem-${i}-${Date.now()}`,
+                type: f.type,
+                path: f.path,
+                url: `file://${f.path.replace(/\\/g, '/')}`,
+                color: STEM_COLORS[f.type.toLowerCase()] || Object.values(STEM_COLORS)[i % Object.values(STEM_COLORS).length] || DEFAULT_STEM_COLOR,
+                markers: [],
+                beats: []
+            }));
+
+            // If we're updating stems we should just wipe existing old stems from the array.
+            setStems(newStems);
+
+            if (activeProject) {
+                // We need to omit 'url' when saving to `ProjectStorage` since it isn't tracked in project data
+                const projectStemsToSave = newStems.map(s => ({
+                    type: s.type,
+                    path: s.path,
+                    color: s.color,
+                    markers: [] as ProjectMarker[],
+                    beats: [] as number[]
+                }));
+
+                onUpdateProject(activeProject.id, {
+                    stems: projectStemsToSave,
+                    outputDir: outputDir || undefined
+                });
+            }
+
+            setStatusMessage(newStems.length > 0 ? 'Separation Complete!' : 'Warning: No output files found.');
+
+        } catch (err: any) {
+            console.error(err);
+            setStatusMessage(`Error: ${err.message}`);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
+    const waitForGeneration = async (promptId: string): Promise<any> => {
+        return new Promise((resolve, reject) => {
+            const interval = setInterval(async () => {
+                try {
+                    // @ts-ignore
+                    const { ipcRenderer } = window.require('electron');
+                    const queueRes = await ipcRenderer.invoke('comfy-fetch', 'http://127.0.0.1:8188/queue');
+                    if (queueRes.success) {
+                        const queue = queueRes.data;
+                        const isPending = queue.queue_pending && queue.queue_pending.some((i: any) => i[1] === promptId);
+                        const isRunning = queue.queue_running && queue.queue_running.some((i: any) => i[1] === promptId);
+
+                        if (isPending) {
+                            setStatusMessage(`Queued... (Position: ${queue.queue_pending.findIndex((i: any) => i[1] === promptId) + 1})`);
+                            return;
+                        }
+                        if (isRunning) {
+                            setStatusMessage('Processing... (Running in ComfyUI)');
+                        }
+                    }
+
+                    const res = await ipcRenderer.invoke('comfy-fetch', 'http://127.0.0.1:8188/history');
+                    if (!res.success) return;
+
+                    const history = res.data;
+                    if (history[promptId]) {
+                        clearInterval(interval);
+                        if (history[promptId].status && history[promptId].status.status_str === 'error') {
+                            const errorDetails = history[promptId].status.messages;
+                            let errorMsg = "ComfyUI reported an error";
+                            if (errorDetails) {
+                                const errorData = errorDetails[1];
+                                if (errorData && errorData.exception_message) {
+                                    errorMsg = `ComfyUI Error (${errorData.node_type}): ${errorData.exception_message}`;
+                                } else {
+                                    errorMsg = `ComfyUI Error: ${JSON.stringify(errorDetails)}`;
+                                }
+                            }
+                            reject(new Error(errorMsg));
+                        } else {
+                            resolve(history[promptId].outputs);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Polling error", e);
+                }
+            }, 1000);
+        });
+    };
+
+    const moveFilesToProject = async (targetDir: string, _startTime: number, runPrefix: string) => {
+        // @ts-ignore
+        const fs = window.require('fs');
+        // @ts-ignore
+        const path = window.require('path');
+
+        if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+        }
+
+        const movedStems: { type: string; path: string }[] = [];
+        const stemTypes = ['Vocals', 'Bass', 'Drums', 'Other'];
+        const baseName = audioFile?.path ? path.parse(audioFile.path).name : 'stem';
+
+        try {
+            const files = fs.readdirSync(comfyOutputDir);
+            for (const type of stemTypes) {
+                const regex = new RegExp(`^${runPrefix}_.*${type}.*\\.(mp3|flac|wav)$`, 'i');
+                const matches = files.filter((f: string) => regex.test(f))
+                    .map((f: string) => {
+                        const fullPath = path.join(comfyOutputDir, f);
+                        const stats = fs.statSync(fullPath);
+                        return { file: f, path: fullPath, time: stats.mtimeMs as number };
+                    })
+                    .sort((a: any, b: any) => b.time - a.time);
+
+                if (matches.length > 0) {
+                    const latest = matches[0];
+                    const ext = path.extname(latest.file);
+                    const destFilename = `${baseName}_${type}${ext}`;
+                    const destPath = path.join(targetDir, destFilename);
+
+                    fs.copyFileSync(latest.path, destPath);
+                    console.log(`Found & Moved: ${latest.path} -> ${destPath}`);
+                    movedStems.push({ type, path: destPath });
+                } else {
+                    console.warn(`No new ${type} file found in ${comfyOutputDir} matching ${runPrefix}`);
+                }
+            }
+        } catch (e) {
+            console.error("Error moving files:", e);
+        }
+
+        return movedStems;
+    };
+
+
+    const runBeatAnalysis = async (audioPath: string, stemType: string) => {
+        setIsProcessing(true);
+        setStatusMessage(`Analyzing beats for ${stemType} (${algorithm})…`);
+        setDetectionStatus(`Analyzing ${stemType}...`);
+
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        try {
+            // @ts-ignore
+            const fs = window.require('fs');
+            const buffer = fs.readFileSync(audioPath);
+            const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+            setDetectionStatus('Analyzing beats...');
+            const beatResult = await analyzeBeats(audioBuffer, algorithm);
+            console.log('[Essentia] BPM:', beatResult.bpm, 'beats:', beatResult.beats.length);
+
+            const allMarkers: AudioMarker[] = [];
+            const stemMapping = getStemTheme(stemType); // getStemTheme should be guaranteed imported, but wait we didn't import it!
+            const frameRate = activeProject?.frameRate || 24;
+
+            beatResult.beats.forEach((time: number) => {
+                allMarkers.push({
+                    time: time,
+                    color: stemMapping.base,
+                    type: 'beat',
+                    isDownbeat: false // Standard tracking doesn't distinguish out of box without secondary check
+                });
+            });
+
+            if (enableOnsets) {
+                setDetectionStatus('Analyzing onsets...');
+                const onsetResult = await analyzeOnsets(audioBuffer);
+                onsetResult.onsets.forEach((time: number) => {
+                    allMarkers.push({
+                        time: time,
+                        color: stemMapping.light,
+                        type: 'onset'
+                    });
+                });
+            }
+
+            if (enableLoudness) {
+                setDetectionStatus('Analyzing loudness...');
+                const loudResult = await analyzeLoudness(audioBuffer);
+                loudResult.regions.forEach((region: any) => {
+                    allMarkers.push({
+                        time: region.start,
+                        color: stemMapping.light,
+                        type: 'loudness'
+                    });
+                });
+            }
+
+            const beatsOnly = allMarkers.filter((m: AudioMarker) => m.type === 'beat').map((m: AudioMarker) => m.time);
+
+            // Update markers on the specific stem object inside `stems` array
+            const updatedStems = stems.map(stem => {
+                if (stem.type === stemType) {
+                    return { ...stem, markers: allMarkers, beats: beatsOnly };
+                }
+                return stem;
+            });
+            setStems(updatedStems);
+
+            // Save to project
+            if (activeProject && onUpdateProject) {
+                // Wipe older markers for this stem note
+                const otherMarkers = (activeProject.markers || []).filter((m: ProjectMarker) => m.note !== stemType);
+
+                // Convert AudioMarkers to ProjectMarkers before saving
+                const projectMarkersToSave: ProjectMarker[] = allMarkers.map(m => {
+                    const mappedType = (m.type === 'beat' || m.type === 'onset' || m.type === 'loudness')
+                        ? m.type
+                        : 'beat';
+
+                    return {
+                        timestamp: m.time,
+                        frame: Math.round(m.time * frameRate),
+                        color: m.color || stemMapping.base,
+                        note: stemType,
+                        type: mappedType as "beat" | "onset" | "loudness",
+                        duration_sec: m.type === 'beat' ? 1 / frameRate : m.type === 'onset' ? 0.05 : 0.1
+                    };
+                });
+
+                // Omit URL for project stems
+                const projectStemsToSave = updatedStems.map(s => ({
+                    type: s.type,
+                    path: s.path,
+                    color: s.color,
+                    markers: [] as ProjectMarker[]
+                }));
+
+                onUpdateProject(activeProject.id, {
+                    stems: projectStemsToSave,
+                    markers: [...otherMarkers, ...projectMarkersToSave],
+                    outputDir: outputDir || undefined
+                });
+            }
+
+            setDetectionStatus(`Complete: ${beatsOnly.length} beats @${Math.round(beatResult.bpm)} BPM`);
+
+        } catch (err) {
+            console.error('Analysis failed:', err);
+            setDetectionStatus(`Analysis failed for ${stemType}.`);
+        } finally {
+            setIsProcessing(false);
+            audioContext.close().catch(() => { });
+
+            setTimeout(() => {
+                setDetectionStatus('');
+                setStatusMessage('');
+            }, 4000);
+        }
+    };
+
+    const handleAnalyzeLocal = async (path: string, type: string) => {
+        await runBeatAnalysis(path, type);
     };
 
     const loadProjectAudio = async (project: BeatProject) => {
@@ -131,48 +537,57 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             // 2. Load Stems & Analyze their beats
             let loadedStems: StemData[] = [];
             if (newStems.length > 0) {
-                const promises = newStems.map(async (stem, index) => {
+                for (let i = 0; i < newStems.length; i++) {
+                    const stem = newStems[i];
                     try {
                         const sBuffer = fs.readFileSync(stem.path);
                         const sBlob = new Blob([sBuffer], { type: 'audio/mpeg' });
 
-                        let stemBeats = stem.beats;
+                        let stemMarkers = stem.markers;
                         const stemColor = stem.color || STEM_COLORS[stem.type.toLowerCase()] || DEFAULT_STEM_COLOR;
 
-                        // Identify missing data
-                        if (!stemBeats || stemBeats.length === 0) {
-                            console.log(`Analyzing beats for stem: ${stem.type}`);
-                            stemBeats = await analyzeAudio(sBlob);
+                        let finalAudioMarkers: AudioMarker[] = [];
 
-                            // Update the local copy for saving later
-                            newStems[index] = { ...stem, beats: stemBeats, color: stemColor };
-                            stemsUpdated = true;
+                        // 1. Try modern ProjectMarkers array
+                        if (stemMarkers && stemMarkers.length > 0) {
+                            let beatIndex = 0;
+                            finalAudioMarkers = stemMarkers.map(m => {
+                                let isDownbeat = false;
+                                if (m.type === 'beat') {
+                                    isDownbeat = beatIndex % 4 === 0;
+                                    beatIndex++;
+                                }
+                                return {
+                                    time: m.timestamp,
+                                    type: m.type as any,
+                                    isDownbeat,
+                                    color: m.color
+                                };
+                            });
+                        }
+                        // 2. Fallback to legacy flat beats array
+                        else if (stem.beats && stem.beats.length > 0) {
+                            finalAudioMarkers = stem.beats.map((t, index) => ({
+                                time: t,
+                                type: 'beat',
+                                isDownbeat: index % 4 === 0,
+                                color: undefined
+                            }));
                         }
 
-                        // Convert to AudioMarkers
-                        const markers: AudioMarker[] = (stemBeats || []).map((t, i) => ({
-                            time: t,
-                            type: 'beat',
-                            isDownbeat: i % 4 === 0,
-                            color: undefined // Use default logic
-                        }));
+                        // 3. Removed auto-fallback so stems don't analyze immediately on load
 
-                        return {
+                        loadedStems.push({
                             type: stem.type,
                             url: URL.createObjectURL(sBlob),
                             path: stem.path,
                             color: stemColor,
-                            markers: markers
-                        };
+                            markers: finalAudioMarkers
+                        });
                     } catch (err) {
                         console.error(`Failed to load stem ${stem.path}`, err);
-                        return null;
                     }
-                });
-
-                const results = await Promise.all(promises);
-                // @ts-ignore
-                loadedStems = results.filter(s => s !== null);
+                }
                 setStems(loadedStems);
             } else {
                 setStems([]);
@@ -208,6 +623,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     isDownbeat: i % 4 === 0
                 }));
                 setMainMarkers(audioMarkers);
+            }
+
+            // 4. Load Clips
+            if (project.clips) {
+                setClips(project.clips);
+            } else {
+                setClips([]);
             }
 
             setStatusMessage("Ready.");
@@ -330,6 +752,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             url: audioUrl,
         });
 
+        ws.on('error', (e: any) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (e?.name !== 'AbortError' && !msg.toLowerCase().includes('abort') && !msg.toLowerCase().includes('destroy')) {
+                console.error("Wavesurfer error:", e);
+            }
+        });
+
         ws.on('ready', () => {
             const dur = ws.getDuration();
             setDuration(dur);
@@ -395,10 +824,24 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             const snappedStart = snapToBeat(region.start);
             const snappedEnd = snapToBeat(region.end);
 
-            if (Math.abs(region.start - snappedStart) > 0.01 || Math.abs(region.end - snappedEnd) > 0.01) {
+            // Calculate current zoom level snap distance in seconds (e.g., 10 pixels)
+            const SNAP_THRESHOLD_PX = 10;
+            const snapThresholdSecs = SNAP_THRESHOLD_PX / zoomLevel;
+
+            let newStart = region.start;
+            let newEnd = region.end;
+
+            if (Math.abs(region.start - snappedStart) <= snapThresholdSecs) {
+                newStart = snappedStart;
+            }
+            if (Math.abs(region.end - snappedEnd) <= snapThresholdSecs) {
+                newEnd = snappedEnd;
+            }
+
+            if (newStart !== region.start || newEnd !== region.end) {
                 region.setOptions({
-                    start: snappedStart,
-                    end: Math.max(snappedEnd, snappedStart + 0.1)
+                    start: newStart,
+                    end: Math.max(newEnd, newStart + 0.1)
                 });
             }
 
@@ -448,7 +891,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 // Ignore destroy errors
             }
         };
-    }, [audioUrl, mainMarkers, stems, mainBeatSource]);
+    }, [audioUrl]);
 
     // Initialize WaveSurfers (Stems)
     useEffect(() => {
@@ -469,95 +912,115 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         if (stems.length === 0) return;
 
-        stems.forEach((stem, index) => {
-            const containerId = `stem-waveform-${index}`;
-            const container = document.getElementById(containerId);
-            if (container) {
-                const ws = WaveSurfer.create({
-                    container,
-                    waveColor: stem.color,
-                    progressColor: adjustColorBrightness(stem.color, 20),
-                    height: 64,
-                    minPxPerSec: zoomLevel,
-                    url: stem.url,
-                    interact: true,
-                    cursorWidth: 1,
-                });
-
-                // Add Regions
-                const stemRegions = ws.registerPlugin(RegionsPlugin.create());
-                stemRegionsRefs.current.set(index, stemRegions);
-
-                stemRegions.enableDragSelection({
-                    color: hexToRgba(stem.color, 0.2),
-                });
-
-                const handleStemRegionUpdate = (region: any) => {
-                    // Skip saved regions
-                    if (region.id && region.id.startsWith('saved-')) return;
-                    setActiveSelection({
-                        source: 'stem',
-                        stemIndex: index,
-                        start: region.start,
-                        end: region.end
+        // Use requestAnimationFrame to ensure the DOM has updated and containers are available
+        requestAnimationFrame(() => {
+            stems.forEach((stem, index) => {
+                const containerId = `stem-waveform-${index}`;
+                const container = document.getElementById(containerId);
+                if (container) {
+                    const ws = WaveSurfer.create({
+                        container,
+                        waveColor: stem.color,
+                        progressColor: adjustColorBrightness(stem.color, 20),
+                        height: 64,
+                        minPxPerSec: zoomLevel,
+                        url: stem.url,
+                        interact: true,
+                        cursorWidth: 1,
                     });
 
-                    // Clear interactive regions on main track
-                    if (wsRegions.current) {
-                        const allRegions = wsRegions.current.getRegions();
-                        allRegions.forEach((r: any) => {
-                            if (!r.id || !r.id.startsWith('saved-')) r.remove();
-                        });
-                    }
+                    // Add Regions
+                    const stemRegions = ws.registerPlugin(RegionsPlugin.create());
+                    stemRegionsRefs.current.set(index, stemRegions);
 
-                    // Clear interactive regions on other stems
-                    stemRegionsRefs.current.forEach((val, key) => {
-                        if (key !== index) {
-                            const allRegions = val.getRegions();
+                    stemRegions.enableDragSelection({
+                        color: hexToRgba(stem.color, 0.2),
+                    });
+
+                    const handleStemRegionUpdate = (region: any) => {
+                        // Skip saved regions
+                        if (region.id && region.id.startsWith('saved-')) return;
+                        setActiveSelection({
+                            source: 'stem',
+                            stemIndex: index,
+                            start: region.start,
+                            end: region.end
+                        });
+
+                        // Clear interactive regions on main track
+                        if (wsRegions.current) {
+                            const allRegions = wsRegions.current.getRegions();
                             allRegions.forEach((r: any) => {
                                 if (!r.id || !r.id.startsWith('saved-')) r.remove();
                             });
                         }
+
+                        // Clear interactive regions on other stems
+                        stemRegionsRefs.current.forEach((val, key) => {
+                            if (key !== index) {
+                                const allRegions = val.getRegions();
+                                allRegions.forEach((r: any) => {
+                                    if (!r.id || !r.id.startsWith('saved-')) r.remove();
+                                });
+                            }
+                        });
+
+                        // Snap to Stem's OWN beats
+                        const stemMarkers = stem.markers || [];
+                        if (stemMarkers.length > 0) {
+                            const snapToBeat = (time: number) => {
+                                // Include 0 and track end as valid snap points
+                                const snapPoints = [
+                                    { time: 0 },
+                                    ...stemMarkers,
+                                    { time: wavesurfer.current?.getDuration() || 0 }
+                                ];
+                                const closest = snapPoints.reduce((prev, curr) =>
+                                    Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
+                                );
+                                return closest.time;
+                            };
+                            const snappedStart = snapToBeat(region.start);
+                            const snappedEnd = snapToBeat(region.end);
+
+                            // Calculate current zoom level snap distance in seconds (e.g., 10 pixels)
+                            const SNAP_THRESHOLD_PX = 10;
+                            const snapThresholdSecs = SNAP_THRESHOLD_PX / zoomLevel;
+
+                            let newStart = region.start;
+                            let newEnd = region.end;
+
+                            if (Math.abs(region.start - snappedStart) <= snapThresholdSecs) {
+                                newStart = snappedStart;
+                            }
+                            if (Math.abs(region.end - snappedEnd) <= snapThresholdSecs) {
+                                newEnd = snappedEnd;
+                            }
+
+                            if (newStart !== region.start || newEnd !== region.end) {
+                                region.setOptions({
+                                    start: newStart,
+                                    end: Math.max(newEnd, newStart + 0.1)
+                                });
+                            }
+                        }
+                    };
+
+                    stemRegions.on('region-created', handleStemRegionUpdate);
+                    stemRegions.on('region-updated', handleStemRegionUpdate);
+
+                    ws.on('ready', () => {
+                        ws.zoom(zoomLevel);
+                        if (stem.markers && stem.markers.length > 0) {
+                            renderBeatMarkers(ws, stem.markers, wavesurfer.current?.getDuration() || 0);
+                        }
                     });
 
-                    // Snap to Stem's OWN beats
-                    const stemMarkers = stem.markers || [];
-                    if (stemMarkers.length > 0) {
-                        const snapToBeat = (time: number) => {
-                            // Include 0 and track end as valid snap points
-                            const snapPoints = [
-                                { time: 0 },
-                                ...stemMarkers,
-                                { time: wavesurfer.current?.getDuration() || 0 }
-                            ];
-                            const closest = snapPoints.reduce((prev, curr) =>
-                                Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
-                            );
-                            return closest.time;
-                        };
-                        const snappedStart = snapToBeat(region.start);
-                        const snappedEnd = snapToBeat(region.end);
-                        if (Math.abs(region.start - snappedStart) > 0.01 || Math.abs(region.end - snappedEnd) > 0.01) {
-                            region.setOptions({
-                                start: snappedStart,
-                                end: Math.max(snappedEnd, snappedStart + 0.1)
-                            });
-                        }
-                    }
-                };
-
-                stemRegions.on('region-created', handleStemRegionUpdate);
-                stemRegions.on('region-updated', handleStemRegionUpdate);
-
-                ws.on('ready', () => {
-                    ws.zoom(zoomLevel);
-                    if (stem.markers && stem.markers.length > 0) {
-                        renderBeatMarkers(ws, stem.markers, wavesurfer.current?.getDuration() || 0);
-                    }
-                });
-
-                stemSurfers.current.push(ws);
-            }
+                    stemSurfers.current.push(ws);
+                } else {
+                    console.error(`Container ${containerId} not found when initializing stem WaveSurfer.`);
+                }
+            });
         });
 
 
@@ -580,6 +1043,160 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             setMainBeatSource('main');
         }
     }, [stems]);
+
+    // NLE Keyboard Shortcuts
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Disable if typing in an input or textarea
+            if (
+                document.activeElement?.tagName === 'INPUT' ||
+                document.activeElement?.tagName === 'TEXTAREA' ||
+                (document.activeElement as HTMLElement)?.isContentEditable
+            ) {
+                return;
+            }
+
+            const ws = wavesurfer.current;
+            if (!ws) return;
+
+            // Current time info
+            const time = ws.getCurrentTime();
+            const dur = ws.getDuration();
+
+            switch (e.key.toLowerCase()) {
+                case ' ':
+                    e.preventDefault();
+                    if (ws.isPlaying()) {
+                        ws.pause();
+                        stemSurfers.current.forEach(s => s.pause());
+                    } else {
+                        ws.play();
+                        // Assume stems play if they exist for now, or use a ref if we need strict isStemPlaying sync
+                        stemSurfers.current.forEach(s => s.play());
+                    }
+                    break;
+                case 'k': // Pause
+                    e.preventDefault();
+                    ws.pause();
+                    stemSurfers.current.forEach(s => s.pause());
+                    break;
+                case 'l': // Play / Fast Forward
+                    e.preventDefault();
+                    if (!ws.isPlaying()) {
+                        ws.setPlaybackRate(1);
+                        stemSurfers.current.forEach(s => s.setPlaybackRate(1));
+                        ws.play();
+                        stemSurfers.current.forEach(s => s.play());
+                    } else {
+                        // Increase speed up to 8x
+                        const currentRate = ws.getPlaybackRate();
+                        const nextRate = Math.min(8, currentRate * 2);
+                        ws.setPlaybackRate(nextRate);
+                        stemSurfers.current.forEach(s => s.setPlaybackRate(nextRate));
+                    }
+                    break;
+                case 'j': // Rewind / Reverse / Normal Speed
+                    e.preventDefault();
+                    const currentRate = ws.getPlaybackRate();
+                    if (ws.isPlaying() && currentRate > 1) {
+                        // Slow down to normal first
+                        ws.setPlaybackRate(1);
+                        stemSurfers.current.forEach(s => s.setPlaybackRate(1));
+                    } else {
+                        // Wavesurfer negative playback rate isn't reliable, skip backwards
+                        const newTime = Math.max(0, time - 5);
+                        ws.setTime(newTime);
+                        stemSurfers.current.forEach(s => s.setTime(newTime));
+                    }
+                    break;
+                case 'i': // Mark In
+                    e.preventDefault();
+                    if (wsRegions.current) {
+                        // Clear existing interactive region to reset it
+                        const allRegions = wsRegions.current.getRegions();
+                        let existingRegion = null;
+
+                        allRegions.forEach((r: any) => {
+                            if (!r.id || !r.id.startsWith('saved-')) {
+                                existingRegion = r;
+                            }
+                        });
+
+                        const markInTime = time;
+                        let markOutTime = Math.min(dur, markInTime + 5); // Default to 5s loop if no 'O' is set
+
+                        if (existingRegion) {
+                            // @ts-ignore
+                            markOutTime = existingRegion.end;
+                            if (markInTime > markOutTime) markOutTime = Math.min(dur, markInTime + 5);
+                            // @ts-ignore
+                            existingRegion.setOptions({ start: markInTime, end: markOutTime });
+                            setActiveSelection({ source: 'main', start: markInTime, end: markOutTime });
+                        } else {
+                            wsRegions.current.addRegion({
+                                start: markInTime,
+                                end: markOutTime,
+                                color: 'rgba(255, 0, 0, 0.2)',
+                            });
+                            setActiveSelection({ source: 'main', start: markInTime, end: markOutTime });
+                        }
+                    }
+                    break;
+                case 'o': // Mark Out
+                    e.preventDefault();
+                    if (wsRegions.current) {
+                        const allRegions = wsRegions.current.getRegions();
+                        let existingRegion = null;
+
+                        allRegions.forEach((r: any) => {
+                            if (!r.id || !r.id.startsWith('saved-')) {
+                                existingRegion = r;
+                            }
+                        });
+
+                        const markOutTime = time;
+                        let markInTime = Math.max(0, markOutTime - 5);
+
+                        if (existingRegion) {
+                            // @ts-ignore
+                            markInTime = existingRegion.start;
+                            if (markInTime > markOutTime) markInTime = Math.max(0, markOutTime - 5);
+                            // @ts-ignore
+                            existingRegion.setOptions({ start: markInTime, end: markOutTime });
+                            setActiveSelection({ source: 'main', start: markInTime, end: markOutTime });
+                        } else {
+                            wsRegions.current.addRegion({
+                                start: markInTime,
+                                end: markOutTime,
+                                color: 'rgba(255, 0, 0, 0.2)',
+                            });
+                            setActiveSelection({ source: 'main', start: markInTime, end: markOutTime });
+                        }
+                    }
+                    break;
+                case 'c': // Cut (Add Segment)
+                    e.preventDefault();
+                    // trigger visually clicking the Add Segment button requires either state changes or button ref. 
+                    // Better to just call a ref to our handleAddSegment function, but since it depends on state, we might hit stale closures if not careful.
+                    // We'll dispatch a custom event and catch it.
+                    document.dispatchEvent(new CustomEvent('NLE_ADD_SEGMENT'));
+                    break;
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [stems]);
+
+    // Catch the custom NLE Cut event to ensure we have fresh activeSelection / clips state from the component body
+    useEffect(() => {
+        const handleCustomAdd = () => {
+            handleAddSegment();
+        };
+        document.addEventListener('NLE_ADD_SEGMENT', handleCustomAdd);
+        return () => document.removeEventListener('NLE_ADD_SEGMENT', handleCustomAdd);
+    }, [activeSelection, clips, stems]);
+
 
     // Add the current selection as a segment to the timeline (no ComfyUI generation)
     const handleAddSegment = () => {
@@ -721,7 +1338,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         // Small delay to let WaveSurfer finish any pending updates
         const timer = setTimeout(renderSavedRegions, 100);
         return () => clearTimeout(timer);
-    }, [clips, stems]);
+    }, [clips, stems, duration]);
 
     const handleGenerateClipFromRegion = async () => {
         if (!activeSelection) {
@@ -932,17 +1549,136 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 <h2 className="module-title">🎬 Video Assembler</h2>
             </div>
 
-            {/* ... (Select Project Card) ... */}
-            <div className="card">
-                <div className="card-header">
-                    <h3 className="card-title">Select Project</h3>
-                </div>
+            {/* Project Selection / Creation */}
+            <CollapsibleCard title="Load Audio Source" className="mt-4" defaultOpen={!activeProject}>
+                <DropZone
+                    onFilesDropped={handleAudioDrop}
+                    accept="audio/*"
+                    label="Drop Audio File Here: Selected File"
+                    defaultAudioPath={audioFile?.path || undefined}
+                />
+            </CollapsibleCard>
+
+            <CollapsibleCard title="Select Project" className="mt-4" defaultOpen={!activeProject}>
                 <ProjectsPanel
                     projects={projects}
                     onLoad={(p) => onSelectProject(p.id)}
                     onDelete={onDeleteProject}
                     currentProjectId={activeProject?.id}
                 />
+            </CollapsibleCard>
+
+            {/* Stem Separation Configuration & Action */}
+            <div className="grid-2 mt-4">
+                <CollapsibleCard
+                    title="Stem Generation"
+                    defaultOpen={false}
+                    headerRight={
+                        <div className="flex gap-2">
+                            <span className={`status-badge ${comfyConnected ? 'success' : 'error'}`}>
+                                {comfyConnected ? 'Connected' : 'Disconnected'}
+                            </span>
+                            <span className={`status-badge ${workflow ? 'success' : 'warning'}`}>
+                                {workflow ? 'Ready' : 'No Workflow'}
+                            </span>
+                        </div>
+                    }
+                >
+
+                    <div className="flex flex-col gap-4">
+
+                        <button
+                            onClick={handleRunSeparation}
+                            disabled={isProcessing || !comfyConnected || !audioFile?.path}
+                            className={`btn w-full mt-2 ${isProcessing || !comfyConnected || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                        >
+                            {isProcessing ? (
+                                <>Processing Music File...</>
+                            ) : (
+                                <>Start Stem Separation</>
+                            )}
+                        </button>
+                        {statusMessage && (
+                            <div className="mt-2 text-center text-xs font-mono text-[var(--accent-primary)]">
+                                {statusMessage}
+                            </div>
+                        )}
+                    </div>
+                </CollapsibleCard>
+
+                <CollapsibleCard title="Beat & Onset Analysis configuration" defaultOpen={false}>
+                    <div className="flex flex-col gap-4">
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Beat Tracking Algorithm</label>
+                            <select
+                                value={algorithm}
+                                onChange={(e) => setAlgorithm(e.target.value as BeatAlgorithm)}
+                                className="w-full bg-[var(--bg-elevated)] border border-[var(--border-color)] rounded p-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                            >
+                                <option value="degara">Degara (Complex rhythm)</option>
+                                <option value="multifeature">Multi-feature (Electronic/Dance)</option>
+                            </select>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <label className="flex items-center gap-2 text-sm text-gray-300">
+                                <input
+                                    type="checkbox"
+                                    checked={enableOnsets}
+                                    onChange={(e) => setEnableOnsets(e.target.checked)}
+                                    className="accent-[var(--accent-primary)]"
+                                />
+                                Extract Onsets (Granular events)
+                            </label>
+                            <label className="flex items-center gap-2 text-sm text-gray-300">
+                                <input
+                                    type="checkbox"
+                                    checked={enableLoudness}
+                                    onChange={(e) => setEnableLoudness(e.target.checked)}
+                                    className="accent-[var(--accent-primary)]"
+                                />
+                                Extract Loudness Envelopes
+                            </label>
+                        </div>
+                        {stems.length > 0 && (
+                            <div className="flex flex-col mt-2 pt-4 border-t border-[var(--border-color)]" style={{ gap: '3px' }}>
+                                <label className="block text-sm text-gray-400 mb-1">Run Analysis on Generated Stems</label>
+                                <button
+                                    className="btn w-full btn-primary justify-center"
+                                    style={{ border: '1px solid #818cf8', marginBottom: '3px' }}
+                                    onClick={async () => {
+                                        for (const s of stems) {
+                                            await handleAnalyzeLocal(s.path, s.type);
+                                        }
+                                    }}
+                                    disabled={isProcessing}
+                                    title="Analyze All Stems"
+                                >
+                                    {isProcessing ? 'Analyzing...' : 'Analyze All Stems'}
+                                </button>
+                                <div className="flex flex-col w-full" style={{ gap: '3px' }}>
+                                    {stems.map((stem, index) => (
+                                        <button
+                                            key={index}
+                                            className="btn w-full btn-primary flex justify-center items-center gap-2"
+                                            style={{ border: '1px solid #818cf8' }}
+                                            onClick={() => handleAnalyzeLocal(stem.path, stem.type)}
+                                            disabled={isProcessing}
+                                            title={`Run Analysis on ${stem.type}`}
+                                        >
+                                            <span style={{ color: stem.color, fontSize: '10px' }}>⬤</span>
+                                            {isProcessing ? 'Analyzing...' : `Analyze ${stem.type}`}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {detectionStatus && (
+                            <div className="text-xs text-[var(--text-secondary)] bg-[var(--bg-elevated)] p-2 rounded">
+                                Status: <span className="text-[var(--accent-primary)]">{detectionStatus}</span>
+                            </div>
+                        )}
+                    </div>
+                </CollapsibleCard>
             </div>
 
 
@@ -998,16 +1734,16 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             {/* Main Track Header with Play/Stop */}
             <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded mt-4">
                 <h4 className="text-sm font-semibold text-gray-400">Main Track</h4>
-                <div className="flex gap-2">
+                <div className="flex gap-2 w-1/3">
                     <button
-                        className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-sm font-bold flex items-center gap-1"
+                        className="btn w-full mt-2 btn-primary flex items-center justify-center gap-1"
                         onClick={handlePlayMain}
                         disabled={!audioUrl}
                     >
                         <span className="text-lg">▶</span> Play
                     </button>
                     <button
-                        className="bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1 rounded text-sm font-bold flex items-center gap-1"
+                        className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-1"
                         onClick={handlePauseMain}
                         disabled={!audioUrl}
                     >
@@ -1019,92 +1755,171 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             <div
                 className={`waveform-container mt-2 ${isStemPlaying ? 'opacity-30 grayscale' : ''}`}
                 ref={containerRef}
-                style={{ position: 'relative', transition: 'all 0.3s ease' }}
+                style={{ position: 'relative', transition: 'all 0.3s ease', minHeight: '128px' }}
             >
-                {isAnalyzing && <div className="overlay">Analyzing Beats...</div>}
+                {isAnalyzing && (
+                    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-gray-900/80 rounded backdrop-blur-sm pointer-events-none">
+                        <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2"></div>
+                        <span className="text-xl font-bold text-white shadow-sm">Analyzing Audio</span>
+                        <span className="text-sm font-semibold text-indigo-300 mt-2">{statusMessage}</span>
+                    </div>
+                )}
 
                 {/* Beat markers are now rendered inside WaveSurfer's wrapper via renderBeatMarkers */}
             </div>
 
-            {/* Stems Container */}
-            {stems.length > 0 && (
-                <div className="stems-list mt-8 flex flex-col gap-8">
-                    {/* Marker Legend */}
-                    <div style={{ display: 'flex', gap: '16px', marginBottom: '8px', padding: '6px 8px', fontSize: '12px', color: '#9ca3af', alignItems: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '6px' }}>
-                        <span style={{ fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Markers:</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.downbeat, flexShrink: 0 }}></span>
-                            <span>Downbeat</span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.offbeat, border: '1px solid #4b5563', flexShrink: 0 }}></span>
-                            <span>Offbeat</span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.onset, flexShrink: 0 }}></span>
-                            <span>Onset</span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.loudness, flexShrink: 0 }}></span>
-                            <span>Loudness</span>
-                        </div>
-                    </div>
+            {/* Calculate tooltips for legend based on marker data */}
+            {
+                (() => {
+                    const getCountData = (filterFn: (m: AudioMarker) => boolean) => {
+                        const data = [
+                            { label: 'Main Track', count: mainMarkers.filter(filterFn).length, color: '#fff' }
+                        ];
+                        stems.forEach(stem => {
+                            data.push({
+                                label: stem.type,
+                                count: (stem.markers || []).filter(filterFn).length,
+                                color: stem.color || '#fff'
+                            });
+                        });
+                        return data;
+                    };
 
-                    <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded">
-                        <h4 className="text-sm font-semibold text-gray-400">Project Stems</h4>
-                        <div className="flex gap-4">
-                            <button
-                                className="btn btn-primary bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1 rounded text-sm font-bold flex items-center gap-2"
-                                onClick={handlePlayStems}
-                                disabled={!audioUrl}
-                            >
-                                <span className="text-lg">▶</span> Play Stems
-                            </button>
+                    const downbeatData = getCountData(m => m.type === 'beat' && !!m.isDownbeat);
+                    const offbeatData = getCountData(m => m.type === 'beat' && !m.isDownbeat);
+                    const onsetData = getCountData(m => m.type === 'onset');
+                    const loudnessData = getCountData(m => m.type === 'loudness');
 
-                            <button
-                                className="btn btn-secondary bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-1 rounded text-sm font-bold flex items-center gap-2"
-                                onClick={handlePauseAll}
-                                disabled={!audioUrl}
-                            >
-                                <span className="text-lg">⏸</span> Pause
-                            </button>
-                        </div>
-                    </div>
-
-                    {stems.map((stem, index) => (
-                        <div key={index} className="stem-item bg-[var(--bg-tertiary)] p-6 rounded border border-gray-800 pb-8">
-                            <div className="flex justify-between items-center mb-1">
-                                <div className="flex items-center gap-2">
-                                    <div className="text-xs font-bold uppercase" style={{ color: stem.color }}>{stem.type}</div>
+                    const renderTooltipContent = (title: string, data: { label: string, count: number, color: string }[]) => (
+                        <div className="flex flex-col gap-1 p-2 border border-gray-600 rounded shadow-2xl text-xs min-w-[120px] z-[9999]" style={{ backgroundColor: '#000000', opacity: 1 }}>
+                            <div className="font-bold text-gray-300 border-b border-gray-700 pb-1 mb-1">{title}</div>
+                            {data.map((item, i) => (
+                                <div key={i} className="flex justify-between items-center gap-4">
+                                    <span className="font-bold uppercase" style={{ color: item.color }}>{item.label}</span>
+                                    <span className="text-gray-300 font-mono">{item.count}</span>
                                 </div>
-                                <div className="flex gap-2">
+                            ))}
+                        </div>
+                    );
+
+                    const handleMouseEnter = (e: React.MouseEvent, title: string, data: any) => {
+                        setTooltipState({
+                            visible: true,
+                            // Offset left by 128px and slightly up to prevent cursor blocking
+                            x: e.clientX - 128,
+                            y: e.clientY - 20,
+                            content: renderTooltipContent(title, data)
+                        });
+                    };
+
+                    const handleMouseMove = (e: React.MouseEvent) => {
+                        if (tooltipState.visible) {
+                            setTooltipState(prev => ({ ...prev, x: e.clientX - 128, y: e.clientY - 20 }));
+                        }
+                    };
+
+                    const handleMouseLeave = () => setTooltipState(prev => ({ ...prev, visible: false }));
+
+                    return stems.length > 0 && (
+                        <div className="stems-list mt-8 flex flex-col gap-8">
+                            {/* Marker Legend */}
+                            <div style={{ display: 'flex', gap: '16px', marginBottom: '8px', padding: '6px 8px', fontSize: '12px', color: '#9ca3af', alignItems: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '6px' }}>
+                                <span style={{ fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Markers:</span>
+                                <div
+                                    onMouseEnter={(e) => handleMouseEnter(e, "Downbeats", downbeatData)}
+                                    onMouseMove={handleMouseMove}
+                                    onMouseLeave={handleMouseLeave}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                                >
+                                    <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.downbeat, flexShrink: 0 }}></span>
+                                    <span>Downbeat</span>
+                                </div>
+                                <div
+                                    onMouseEnter={(e) => handleMouseEnter(e, "Offbeats", offbeatData)}
+                                    onMouseMove={handleMouseMove}
+                                    onMouseLeave={handleMouseLeave}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                                >
+                                    <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.offbeat, border: '1px solid #4b5563', flexShrink: 0 }}></span>
+                                    <span>Offbeat</span>
+                                </div>
+                                <div
+                                    onMouseEnter={(e) => handleMouseEnter(e, "Onsets", onsetData)}
+                                    onMouseMove={handleMouseMove}
+                                    onMouseLeave={handleMouseLeave}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                                >
+                                    <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.onset, flexShrink: 0 }}></span>
+                                    <span>Onset</span>
+                                </div>
+                                <div
+                                    onMouseEnter={(e) => handleMouseEnter(e, "Loudness", loudnessData)}
+                                    onMouseMove={handleMouseMove}
+                                    onMouseLeave={handleMouseLeave}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                                >
+                                    <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.loudness, flexShrink: 0 }}></span>
+                                    <span>Loudness</span>
+                                </div>
+                            </div>
+
+                            <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded">
+                                <h4 className="text-sm font-semibold text-gray-400">Project Stems</h4>
+                                <div className="flex gap-4 w-1/2">
                                     <button
-                                        className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                        onClick={() => handlePlayStem(index)}
-                                        title={`Play ${stem.type}`}
+                                        className="btn w-full mt-2 btn-primary flex items-center justify-center gap-2"
+                                        onClick={handlePlayStems}
+                                        disabled={!audioUrl}
                                     >
-                                        ▶ Play
+                                        <span className="text-lg">▶</span> Play Stems
                                     </button>
+
                                     <button
-                                        className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                        onClick={() => handlePauseStem(index)}
-                                        title={`Pause ${stem.type}`}
+                                        className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-2"
+                                        onClick={handlePauseAll}
+                                        disabled={!audioUrl}
                                     >
-                                        ⏸ Pause
+                                        <span className="text-lg">⏸</span> Pause
                                     </button>
                                 </div>
                             </div>
-                            <div
-                                id={`stem-waveform-${index}`}
-                                className="relative"
-                                style={{ width: '100%', minHeight: '90px' }}
-                            >
-                                {/* Beat markers are now rendered inside WaveSurfer's wrapper via renderBeatMarkers */}
-                            </div>
+
+                            {stems.map((stem, index) => (
+                                <div key={index} className="stem-item bg-[var(--bg-tertiary)] p-6 rounded border border-gray-800 pb-8">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <div className="flex items-center gap-2">
+                                            <div className="text-xs font-bold uppercase" style={{ color: stem.color }}>{stem.type}</div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button
+                                                className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
+                                                onClick={() => handlePlayStem(index)}
+                                                title={`Play ${stem.type}`}
+                                            >
+                                                ▶ Play
+                                            </button>
+                                            <button
+                                                className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
+                                                onClick={() => handlePauseStem(index)}
+                                                title={`Pause ${stem.type}`}
+                                            >
+                                                ⏸ Pause
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div
+                                        id={`stem-waveform-${index}`}
+                                        className="relative"
+                                        style={{ width: '100%', minHeight: '90px' }}
+                                    >
+                                        {/* Beat markers are now rendered inside WaveSurfer's wrapper via renderBeatMarkers */}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
-                    ))}
-                </div>
-            )}
+                    );
+                })()
+            }
 
             <div className="controls-container flex gap-4 mt-6">
                 <button className="btn btn-primary" onClick={handleGenerateClipFromRegion} disabled={!activeSelection || isAnalyzing}>
@@ -1114,7 +1929,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     Export Manifest for Resolve
                 </button>
                 <button
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded font-bold text-sm"
+                    className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm"
                     onClick={handleSaveToProject}
                     disabled={!activeProject || clips.length === 0}
                 >
@@ -1160,7 +1975,24 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             </div>
 
             {statusMessage && <div className="status-bar mt-4 text-xs text-gray-400 italic text-center">{statusMessage}</div>}
-        </div>
+
+            {/* Custom Floating Tooltip */}
+            {
+                tooltipState.visible && tooltipState.content && (
+                    <div
+                        style={{
+                            position: 'fixed',
+                            left: tooltipState.x,
+                            top: tooltipState.y,
+                            zIndex: 9999,
+                            pointerEvents: 'none'
+                        }}
+                    >
+                        {tooltipState.content}
+                    </div>
+                )
+            }
+        </div >
     );
 };
 

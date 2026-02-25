@@ -39,6 +39,7 @@ const mockEssentiaInstance = {
 
 // Mock the dynamic imports used by getEssentia()
 vi.mock('essentia.js/dist/essentia-wasm.es.js', () => ({
+    EssentiaWASM: { /* fake WASM module */ },
     default: vi.fn(async () => ({ /* fake WASM module */ })),
 }));
 

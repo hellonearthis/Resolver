@@ -12,6 +12,13 @@ A modular production tool for DaVinci Resolve featuring **beat synchronization**
 - 📜 **[Script Manager](readme_Script_Manager.md)** — Manage generated Python scripts for Resolve
 - 🎚️ **[Stem Separation](readme_Stem_Separation.md)** — Split tracks via ComfyUI with integrated Beat Analysis
 
+### Why Beat Analysis on Stems is a Game Changer
+Splitting a track as iconic as "Get Up, Stand Up" into stems—likely Drums, Bass, Vocals, and Other/Guitar—and then running beat analysis on each is a fantastic way to see how the "Wailers' pocket" actually works.
+
+- **The "Push and Pull"**: In reggae, the magic usually happens in the micro-timing. By analyzing stems individually, you can see if the drums are driving the beat while the bass sits slightly "behind" it (creating that heavy, relaxed feel).
+- **Syncopation Mapping**: You can visually track how the "bubble" (the organ) or the guitar's "skank" hits the offbeat relative to the kick drum's downbeat.
+- **Dynamic Sensitivity**: Standard beat analysis on a full mix often gets confused by the low-end thump. Doing it on a vocal or guitar stem reveals the rhythmic phrasing that isn't tied to the grid.
+
 ## Documentation
 
 - 📄 **[Beat Detection Guide](readme_Beat_Detection.md)** – Detailed guide on algorithms, onsets, and loudness.

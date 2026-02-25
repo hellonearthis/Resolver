@@ -40,38 +40,90 @@ The project data file contains all metadata, analysis results, and timeline info
 | `frameRate` | `number` | Frame rate used for timeline calculations (e.g., `24`, `30`, `60`). |
 | `bpm` | `number` | Detected Beats Per Minute (BPM) of the track. |
 | `beatCount` | `number` | Total number of beats detected. |
-| `stemType` | `string` | The type of source audio (e.g., `original`, `vocals`, `drums`). |
+| `stemType` | `string` | The type of source audio (e.g., `master`, `vocals`, `drums`). |
 | `stems` | `Array` | List of separated stem tracks (see *Stems Object*). |
-| `markers` | `Array` | List of detected events (beats, onsets) (see *Markers Object*). |
+| `markers` | `Array<ProjectMarker>` | **Main track** analysis results in the modern format (see *Data Format Relationship*). |
 | `clips` | `Array` | List of video segments created in the timeline (see *Clips Object*). |
 | `createdAt` | `string` | ISO timestamp of creation. |
 | `updatedAt` | `string` | ISO timestamp of last update. |
 
-### Stems Object (`stems`)
+---
 
-Contains information about separated audio tracks (e.g., from Demucs separation).
+### Stems Object (`stems[]`)
+
+Contains information about separated audio tracks (e.g., from Demucs separation via ComfyUI).
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `type` | `string` | Stem type (e.g., `vocals`, `drums`, `bass`, `other`). |
+| `type` | `string` | Stem type (e.g., `Vocals`, `Drums`, `Bass`, `Other`). |
 | `path` | `string` | Absolute path to the stem audio file. |
 | `color` | `string` | Hex color code assigned to this stem for UI visualization. |
-| `beats` | `Array<number>` | (Optional) Array of beat timestamps specific to this stem. |
+| `beats` | `Array<number>` | **Legacy format.** Flat array of beat timestamps in seconds. |
+| `markers` | `Array<ProjectMarker>` | **Modern format.** Rich marker objects with type, color, frame info. |
 
-### Markers Object (`markers`)
+---
 
-Represents analysis points like beats or onsets.
+### 🔀 Data Format Relationship: `beats` vs `markers`
+
+There are **two generations** of analysis data in the project JSON. Both can exist simultaneously on stems:
+
+#### Legacy: `beats` (flat number array)
+```json
+"beats": [ 0.4063, 0.8243, 1.2307, 1.6138, 2.0085, ... ]
+```
+-   **What it is:** A simple array of timestamps (seconds) where beats were detected.
+-   **Origin:** Produced by the original Essentia.js `RhythmExtractor2013` analysis.
+-   **Contains:** Only beat positions — no type classification, no frame numbers, no colors.
+-   **Where it appears:** Inside `stems[]` only (per-stem analysis).
+
+#### Modern: `markers` (ProjectMarker array)
+```json
+"markers": [
+  {
+    "timestamp": 0.418,
+    "frame": 10,
+    "color": "Yellow",
+    "note": "Main",
+    "type": "beat",
+    "duration_sec": 0.041666666666666664
+  },
+  ...
+]
+```
+-   **What it is:** Rich marker objects with full metadata for DaVinci Resolve export.
+-   **Origin:** Produced by the enhanced analysis pipeline (beats + onsets + loudness).
+-   **Contains:** Timestamp, frame number (calculated from `frameRate`), marker color, type (`beat`, `onset`, or `loudness`), note/label, and duration.
+-   **Where it appears:** At the **project root** (main track analysis) and optionally inside `stems[]` (per-stem analysis).
+
+#### Load Priority
+
+When loading a project, the app checks each stem's data in this order:
+
+1. **`stem.markers`** (modern) — Used if present and non-empty.
+2. **`stem.beats`** (legacy) — Fallback if no modern markers exist. Automatically converted to `AudioMarker` objects with inferred downbeat pattern (every 4th beat).
+
+The top-level `project.markers` always uses the modern format and represents the **main track** analysis.
+
+> **Note:** Re-analyzing a stem will produce new data in the modern `markers` format. The legacy `beats` array is kept for backwards compatibility with older projects.
+
+---
+
+### ProjectMarker Object
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `timestamp` | `number` | Time in seconds where the marker occurs. |
+| `frame` | `number` | Frame number (calculated as `timestamp × frameRate`). |
 | `type` | `string` | Type of marker: `beat`, `onset`, or `loudness`. |
-| `color` | `string` | RGBA color string for visualization. |
-| `note` | `string` | Optional label or note for the marker. |
+| `color` | `string` | Color string for Resolve marker visualization (e.g., `"Yellow"`, `"Blue"`). |
+| `note` | `string` | Label for the marker (e.g., `"Main"`, stem name). |
+| `duration_sec` | `number` | Duration in seconds (1 frame for beats/onsets, span for loudness regions). |
 
-### Clips Object (`clips`)
+---
 
-Represents the video segments arranged in the **Music Video Assembler**.
+### Clips Object (`clips[]`)
+
+Represents the video segments arranged in the **Video Assembler** timeline.
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
@@ -82,11 +134,11 @@ Represents the video segments arranged in the **Music Video Assembler**.
 | `duration` | `number` | Duration of the clip in seconds. |
 | `track` | `number` | Visual track number (1 or 2) for checkerboard layout. |
 | `source` | `string` | Source of the clip: `main` (original audio) or `stem`. |
-| `stemName` | `string` | If source is `stem`, the type of stem (e.g., `drums`). |
+| `stemName` | `string` | If source is `stem`, the type of stem (e.g., `Drums`). |
 | `status` | `string` | Generation status: `pending`, `generating`, `done`, `error`. |
 | `videoPath` | `string` | (Optional) Absolute path to the generated video file. |
-| `startImagePath` | `string` | (Optional) Path to the *Start Image* used for morph/transition reference. |
-| `endImagePath` | `string` | (Optional) Path to the *End Image* used for morph/transition reference. |
+| `startImagePath` | `string` | (Optional) Path to the *Start Image* for morph/transition reference. |
+| `endImagePath` | `string` | (Optional) Path to the *End Image* for morph/transition reference. |
 | `promptText` | `string` | (Optional) The text prompt used for generative video creation. |
 
 ---
@@ -99,21 +151,44 @@ Represents the video segments arranged in the **Music Video Assembler**.
   "name": "My Cool Track",
   "audioPath": "C:\\Music\\my_cool_track.mp3",
   "outputDir": "C:\\Projects\\PRJ_My_Cool_Track",
+  "frameRate": 24,
   "bpm": 128,
   "stems": [
-    { "type": "vocals", "path": "...", "color": "#3b82f6" },
-    { "type": "drums", "path": "...", "color": "#ef4444" }
+    {
+      "type": "Drums",
+      "path": "C:\\Projects\\PRJ_My_Cool_Track\\my_cool_track_Drums.mp3",
+      "color": "#ef4444",
+      "markers": [
+        { "timestamp": 0.418, "frame": 10, "color": "Red", "note": "Drums", "type": "beat", "duration_sec": 0.042 }
+      ],
+      "beats": [ 0.418, 0.859, 1.301, 1.742 ]
+    },
+    {
+      "type": "Bass",
+      "path": "C:\\Projects\\PRJ_My_Cool_Track\\my_cool_track_Bass.mp3",
+      "color": "#f59e0b",
+      "markers": [],
+      "beats": [ 0.430, 0.871, 1.347 ]
+    }
+  ],
+  "markers": [
+    { "timestamp": 0.418, "frame": 10, "color": "Yellow", "note": "Main", "type": "beat", "duration_sec": 0.042 },
+    { "timestamp": 0.859, "frame": 21, "color": "Yellow", "note": "Main", "type": "beat", "duration_sec": 0.042 }
   ],
   "clips": [
     {
       "id": "1708329987654",
-      "label": "Intro_01",
+      "label": "clip_0",
       "startTime": 0,
       "endTime": 4.5,
+      "duration": 4.5,
+      "track": 1,
       "source": "main",
       "status": "done",
-      "videoPath": "C:\\Projects\\PRJ_My_Cool_Track\\Intro_01.mp4"
+      "videoPath": "C:\\Projects\\PRJ_My_Cool_Track\\clip_0.mp4"
     }
-  ]
+  ],
+  "createdAt": "2026-02-24T21:37:41.306Z",
+  "updatedAt": "2026-02-24T23:41:56.208Z"
 }
 ```

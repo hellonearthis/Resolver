@@ -1,0 +1,174 @@
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90mC:/Users/Desktop-Dev/Desktop/resolver[39m
+
+ [31mÔØ»[39m src/modules/StemSeparationModule.test.tsx [2m([22m[2m5 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 113[2mms[22m[39m
+     [32mÔ£ô[39m renders and checks connection[32m 32[2mms[22m[39m
+     [32mÔ£ô[39m loads workflow on mount[32m 7[2mms[22m[39m
+     [32mÔ£ô[39m creates project on file drop if no active project[32m 23[2mms[22m[39m
+     [32mÔ£ô[39m updates output folder via IPC[32m 14[2mms[22m[39m
+[31m     [31m├ù[31m runs separation and saves stems to project[39m[32m 35[2mms[22m[39m
+
+ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ» Failed Tests 1 ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»
+
+ FAIL  src/modules/StemSeparationModule.test.tsx > StemSeparationModule > runs separation and saves stems to project
+TestingLibraryElementError: Unable to find an element with the text: /Select destination.../i. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+<body>
+  <div>
+    <div
+      class="module-container"
+    >
+      <div
+        class="module-header"
+      >
+        <h2
+          class="module-title"
+        >
+          ­ƒÄÁ Stem Separation
+        </h2>
+        <p
+          class="module-description"
+        >
+          Isolate vocals, drums, bass, and other instruments using ComfyUI workflows.
+        </p>
+      </div>
+      <div
+        class="grid-2"
+      >
+        <div
+          class="card"
+        >
+          <div
+            class="card-header"
+          >
+            <h3
+              class="card-title"
+            >
+              Configuration
+            </h3>
+            <div
+              class="flex gap-2"
+            >
+              <span
+                class="status-badge success"
+              >
+                Connected
+              </span>
+              <span
+                class="status-badge success"
+              >
+                Workflow Loaded
+              </span>
+            </div>
+          </div>
+          <div
+            class="flex flex-col gap-4"
+          >
+            <div>
+              <label
+                class="block text-sm text-gray-400 mb-1"
+              >
+                ComfyUI Source Folder
+              </label>
+              <input
+                class="w-full bg-[var(--bg-elevated)] border border-[var(--border-color)] rounded p-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] placeholder-gray-600"
+                placeholder="C:\\ComfyUI\\output"
+                type="text"
+                value="C:\\ComfyUI_windows_portable\\ComfyUI\\output"
+              />
+            </div>
+            <div>
+              <label
+                class="block text-sm text-gray-400 mb-1"
+              >
+                Project Output Folder
+              </label>
+              <button
+                class="btn btn-secondary w-full justify-between"
+              >
+                <span
+                  class="truncate"
+                >
+                  /path/to
+                </span>
+                <span>
+                  ­ƒôé
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div
+          class="card"
+        >
+          <div
+            class="card-header"
+          >
+            <h3
+              class="card-title"
+            >
+              Audio Source
+            </h3>
+          </div>
+          <div
+            data-testid="drop-zone"
+          >
+            <input
+              data-testid="file-input"
+              type="file"
+            />
+            Drop Audio File Here
+          </div>
+          <div
+            class="mt-4 p-3 bg-[var(--bg-tertiary)] rounded border border-[var(--border-color)]"
+          >
+            <div
+              class="text-xs text-[var(--text-secondary)] uppercase font-bold mb-1"
+            >
+              Selected File
+            </div>
+            <div
+              class="text-sm truncate"
+              title="/path/to/audio.mp3"
+            >
+              /path/to/audio.mp3
+            </div>
+          </div>
+          <div
+            class="mt-6"
+          >
+            <button
+              class="btn w-full btn-primary"
+            >
+              <span>
+                ­ƒÜÇ
+              </span>
+               Start Separation
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+ ÔØ» Object.getElementError node_modules/@testing-library/dom/dist/config.js:37:19
+ ÔØ» node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ÔØ» node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ÔØ» node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ÔØ» src/modules/StemSeparationModule.test.tsx:221:34
+    219| 
+    220|         // Set output folder
+    221|         const folderBtn = screen.getByText(/Select destination.../i);
+       |                                  ^
+    222|         fireEvent.click(folderBtn);
+    223|         await waitFor(() => screen.getByText('/path/to/output'));
+
+ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»[1/1]ÔÄ»
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m4 passed[39m[22m[90m (5)[39m
+[2m   Start at [22m 11:31:26
+[2m   Duration [22m 1.01s[2m (transform 243ms, setup 75ms, import 179ms, tests 113ms, environment 491ms)[22m
+

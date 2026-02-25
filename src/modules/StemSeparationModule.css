@@ -1,9 +1,0 @@
-/* StemSeparationModule.css */
-/* Most styles are now handled by index.css utility classes (card, btn, module-container) */
-
-/* Specific layout adjustments if needed */
-.grid-2 {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-  gap: 24px;
-}

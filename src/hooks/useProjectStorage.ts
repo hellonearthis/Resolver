@@ -7,6 +7,22 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
+// Helper to format arrays of numbers on a single line instead of expanded
+const stringifyWithCompactArrays = (obj: any): string => {
+    const jsonStr = JSON.stringify(obj, null, 2);
+    // Find arrays that contain only numbers, commas, and whitespace
+    return jsonStr.replace(
+        /\[\s*([\d\s.,+\-eE]+)\s*\]/g,
+        (match, inside) => {
+            // Verify it's genuinely a list of numbers to avoid matching random text
+            if (/^[ \n\r\t\d.,+\-eE]+$/.test(inside)) {
+                return `[ ${inside.replace(/\s+/g, ' ').trim()} ]`;
+            }
+            return match;
+        }
+    );
+};
+
 export interface ProjectMarker {
     timestamp: number;
     frame: number;
@@ -26,13 +42,14 @@ export interface BeatProject {
     bpm?: number;
     beatCount?: number;
     stemType: string;
-    stems?: { type: string; path: string; beats?: number[]; color?: string }[]; // New field for separated stems
+    stems?: { type: string; path: string; beats?: number[]; markers?: ProjectMarker[]; color?: string }[]; // New field for separated stems
     outputDir?: string; // Path to save the project JSON
     algorithm?: string;
-    enableOnsets?: boolean;
     enableLoudness?: boolean;
     markers?: ProjectMarker[];
     clips?: any[]; // Video assembler timeline clips
+    segments?: any[]; // Video assembler timeline segments
+    sections?: any[]; // Video assembler timeline sections
     createdAt: string;
     updatedAt: string;
 }
@@ -68,7 +85,20 @@ export function useProjectStorage() {
     }, [projects, isLoaded]);
 
     const saveProjectFile = (project: BeatProject): BeatProject => {
-        if (!project.outputDir) return project;
+        let currentOutputDir = project.outputDir;
+
+        // Fallback to audio path directory if outputDir is not set
+        if (!currentOutputDir && project.audioPath) {
+            try {
+                // @ts-ignore
+                const path = window.require('path');
+                currentOutputDir = path.dirname(project.audioPath);
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        if (!currentOutputDir) return project;
 
         try {
             // @ts-ignore
@@ -81,10 +111,10 @@ export function useProjectStorage() {
 
             // Determine if outputDir already IS the per-project folder
             // (i.e. it already ends with the folderName). If so, don't nest again.
-            const dirBasename = path.basename(project.outputDir);
+            const dirBasename = path.basename(currentOutputDir);
             const projectFolder = (dirBasename === folderName || dirBasename === safeName)
-                ? project.outputDir
-                : path.join(project.outputDir, folderName);
+                ? currentOutputDir
+                : path.join(currentOutputDir, folderName);
 
             if (!fs.existsSync(projectFolder)) {
                 fs.mkdirSync(projectFolder, { recursive: true });
@@ -94,7 +124,7 @@ export function useProjectStorage() {
 
             // Update outputDir to point to the project subfolder
             const updatedProject = { ...project, outputDir: projectFolder };
-            fs.writeFileSync(filePath, JSON.stringify(updatedProject, null, 2));
+            fs.writeFileSync(filePath, stringifyWithCompactArrays(updatedProject));
             console.log('Saved project to:', filePath);
             return updatedProject;
         } catch (e) {
@@ -111,15 +141,16 @@ export function useProjectStorage() {
             createdAt: now,
             updatedAt: now,
         };
+
+        // Save to file immediately and get the updated project with the resolved PRJ folder path
+        const finalProject = saveProjectFile(newProject);
+
         setProjects(prev => {
-            const updated = [newProject, ...prev];
+            const updated = [finalProject, ...prev];
             return updated;
         });
 
-        // Save to file immediately
-        saveProjectFile(newProject);
-
-        return newProject;
+        return finalProject;
     }, []);
 
     const updateProject = useCallback((id: string, updates: Partial<BeatProject>) => {
@@ -127,9 +158,9 @@ export function useProjectStorage() {
         setProjects(prev => prev.map(p => {
             if (p.id === id) {
                 const updatedProject = { ...p, ...updates, updatedAt: new Date().toISOString() };
-                // Save to file if outputDir is present (either in updates or existing)
-                saveProjectFile(updatedProject);
-                return updatedProject;
+                // Save to file and use the returned object with resolved outputDir
+                const finalProject = saveProjectFile(updatedProject);
+                return finalProject;
             }
             return p;
         }));
@@ -173,7 +204,7 @@ export function useProjectStorage() {
                         const safeName = project.name.replace(/[^a-zA-Z0-9-_]/g, '_');
                         const filePath = path.join(targetDir, `${safeName}_data.json`);
 
-                        fs.writeFileSync(filePath, JSON.stringify(project, null, 2));
+                        fs.writeFileSync(filePath, stringifyWithCompactArrays(project));
                         successCount++;
                     } else {
                         failCount++;

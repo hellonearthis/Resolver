@@ -114,7 +114,8 @@ function vecToArray(vec: any): number[] {
     const arr: number[] = [];
     const size = vec.size();
     for (let i = 0; i < size; i++) {
-        arr.push(vec.get(i));
+        // Round to 4 decimal places to keep JSON clean
+        arr.push(Number(vec.get(i).toFixed(4)));
     }
     return arr;
 }
@@ -145,8 +146,8 @@ export async function analyzeBeats(
         );
 
         const beats = vecToArray(result.ticks);
-        const bpm = result.bpm as number;
-        const confidence = algorithm === 'multifeature' ? (result.confidence as number) : undefined;
+        const bpm = Number((result.bpm as number).toFixed(4));
+        const confidence = algorithm === 'multifeature' ? Number((result.confidence as number).toFixed(4)) : undefined;
 
         // Clean up result vectors if they are vectors
         if (result.ticks && result.ticks.delete) result.ticks.delete();
@@ -173,7 +174,7 @@ export async function analyzeOnsets(
     try {
         result = essentia.OnsetRate(signal);
         const onsets = vecToArray(result.onsets);
-        const onsetRate = result.onsetRate as number;
+        const onsetRate = Number((result.onsetRate as number).toFixed(4));
 
         if (result.onsets && result.onsets.delete) result.onsets.delete();
 
@@ -230,8 +231,8 @@ export async function analyzeLoudness(
     let regionStart: number | null = null;
 
     for (let i = 0; i < frameLoudness.length; i++) {
-        const timeSec = (i * hopSize) / sampleRate;
-        const normalised = frameLoudness[i] / peak;
+        const timeSec = Number(((i * hopSize) / sampleRate).toFixed(4));
+        const normalised = Number((frameLoudness[i] / peak).toFixed(4));
 
         if (frameLoudness[i] >= threshold) {
             if (regionStart === null) regionStart = timeSec;
@@ -248,11 +249,11 @@ export async function analyzeLoudness(
     }
     // Close trailing region
     if (regionStart !== null) {
-        const endTime = ((frameLoudness.length - 1) * hopSize + frameSize) / sampleRate;
+        const endTime = Number((((frameLoudness.length - 1) * hopSize + frameSize) / sampleRate).toFixed(4));
         regions.push({
             start: regionStart,
-            end: Math.min(endTime, audioBuffer.duration),
-            level: frameLoudness[frameLoudness.length - 1] / peak,
+            end: Math.min(endTime, Number(audioBuffer.duration.toFixed(4))),
+            level: Number((frameLoudness[frameLoudness.length - 1] / peak).toFixed(4)),
         });
     }
 

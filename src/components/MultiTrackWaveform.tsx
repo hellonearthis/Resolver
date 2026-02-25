@@ -42,6 +42,7 @@ const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers 
             // Label
             const label = document.createElement('div');
             // Try explicit match first, then lowercase match for debug count
+            label.className = 'stem-label';
             let debugCount = 0;
             const stemType = stem.type;
             let m = markers[stemType];
@@ -100,7 +101,10 @@ const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers 
                 const url = URL.createObjectURL(blob);
 
                 ws.load(url).catch(e => {
-                    if (e.name !== 'AbortError') console.error("Wavesurfer load error:", e);
+                    const msg = e instanceof Error ? e.message : String(e);
+                    if (e?.name !== 'AbortError' && !msg.toLowerCase().includes('abort') && !msg.toLowerCase().includes('destroy')) {
+                        console.error("Wavesurfer load error:", e);
+                    }
                 });
 
 
@@ -146,7 +150,7 @@ const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers 
             if (containerRef.current) containerRef.current.innerHTML = '';
         };
 
-    }, [stems, markers]);
+    }, [stems]);
 
     // Handle Markers (Separate Effect)
     useEffect(() => {
@@ -187,6 +191,15 @@ const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers 
                 console.log(`[Waveform] Adding ${stemMarkers.length} markers for ${stem.type} (Plugin: ${!!wsRegions})`);
                 if (stemMarkers.length > 0) {
                     console.log(`[Waveform] First marker for ${stem.type}: ${stemMarkers[0]}s`);
+                }
+
+                // Update the label count dynamically
+                if (containerRef.current && containerRef.current.children[index]) {
+                    const wrapper = containerRef.current.children[index];
+                    const label = wrapper.querySelector('.stem-label');
+                    if (label) {
+                        label.innerHTML = `<strong>${stem.type}</strong> <span style="opacity:0.7; font-size:9px">(${stemMarkers.length} markers)</span>`;
+                    }
                 }
 
                 try {
