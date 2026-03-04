@@ -1883,6 +1883,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 onClick={handleRunSeparation}
                                 disabled={isProcessing || !comfyConnected || !audioFile?.path || !workflow}
                                 className={`btn w-full ${isProcessing || !comfyConnected || !audioFile?.path || !workflow ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                                style={{ marginBottom: '5px' }}
                             >
                                 {isProcessing && !detectionStatus.includes("main") ? (
                                     <>Processing Music File...</>
@@ -1894,6 +1895,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 onClick={handleRunMainBeatAnalysis}
                                 disabled={isProcessing || !activeProject || !audioFile?.path}
                                 className={`btn w-full ${isProcessing || !activeProject || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                                style={{ marginBottom: '5px' }}
                             >
                                 {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
                             </button>
