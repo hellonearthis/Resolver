@@ -612,6 +612,43 @@ ipcMain.handle('comfy-fetch', async (_event, url, options) => {
     }
 });
 
+// Proxy ComfyUI file uploads (multipart/form-data)
+ipcMain.handle('comfy-upload-file', async (_event, api_url, filePath, type, overwrite) => {
+    console.log(`Uploading file to ComfyUI: ${filePath}`);
+    try {
+        if (!fs.existsSync(filePath)) {
+            return { success: false, error: "File does not exist locally" };
+        }
+
+        const formData = new FormData();
+        const fileContent = fs.readFileSync(filePath);
+        const fileName = path.basename(filePath);
+
+        const blob = new Blob([fileContent]);
+
+        formData.append('image', blob, fileName);
+        formData.append('type', type);
+        formData.append('overwrite', overwrite.toString());
+
+        const response = await fetch(`${api_url}/upload/image`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            console.error(`ComfyUI Upload Error: ${response.status} ${response.statusText}`);
+            return { success: false, status: response.status, error: response.statusText };
+        }
+
+        const data = await response.json();
+        return { success: true, data };
+    } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('ComfyUI Upload Error:', message);
+        return { success: false, error: message };
+    }
+});
+
 // Config Persistence
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
 

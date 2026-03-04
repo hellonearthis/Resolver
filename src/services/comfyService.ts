@@ -94,3 +94,33 @@ export const getQueue = async (): Promise<{ queue_running: any[], queue_pending:
         return null;
     }
 };
+
+/**
+ * Uploads an image or audio file to ComfyUI's input directory.
+ * @param filePath The absolute path to the local file
+ * @param type Typically 'input'
+ * @param overwrite Whether to overwrite an existing file
+ */
+export const uploadFileToComfyUI = async (filePath: string, type: 'input' = 'input', overwrite: boolean = true): Promise<{ name: string } | null> => {
+    try {
+        // We use Electron IPC since we need to read the local file and send it as FormData
+        // @ts-ignore
+        if (window.require) {
+            // @ts-ignore
+            const { ipcRenderer } = window.require('electron');
+            const result = await ipcRenderer.invoke('comfy-upload-file', COMFY_API_URL, filePath, type, overwrite);
+
+            if (result.success && result.data && result.data.name) {
+                return { name: result.data.name };
+            }
+            console.error('Failed to upload file via IPC:', result.error);
+            return null;
+        }
+
+        console.error('uploadFileToComfyUI requires Electron environment.');
+        return null;
+    } catch (error) {
+        console.error('Failed to upload file:', error);
+        return null;
+    }
+};

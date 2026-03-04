@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import workflowJson from '../../comfyui_workflows/video_ltx2_i2v.json';
 import DropZone from '../components/DropZone';
 import { getValidLtxFrameCount } from '../utils/timelineUtils';
+import { uploadFileToComfyUI } from '../services/comfyService';
 
 // Helper to get IPC renderer
 const getIpcRenderer = () => {
@@ -13,13 +14,15 @@ const getIpcRenderer = () => {
 
 export default function LtxTestModule() {
     const [startImage, setStartImage] = useState<string>('Image_fx(21).jpg');
+    const [startImagePath, setStartImagePath] = useState<string | null>(null);
     const [startImagePreview, setStartImagePreview] = useState<string | null>(null);
     const [positivePrompt, setPositivePrompt] = useState<string>('A sweeping cinematic shot of a mountain landscape at sunset...');
     const [negativePrompt, setNegativePrompt] = useState<string>('blurry, low quality, still frame, frames, watermark, overlay, titles, has blurbox, has subtitles');
-    const [fps, setFps] = useState<number>(25);
+    const [fps, setFps] = useState<number>(20);
     const [frameCount, setFrameCount] = useState<number>(81);
     const [outputPrefix, setOutputPrefix] = useState<string>('video/LTX_2.0_i2v');
     const [audioFile, setAudioFile] = useState<string>('Bob Marly-Get Up, Stand Up_Vocals.mp3');
+    const [audioFilePath, setAudioFilePath] = useState<string | null>(null);
 
     const [isGenerating, setIsGenerating] = useState(false);
     const [isClearingVram, setIsClearingVram] = useState(false);
@@ -67,9 +70,33 @@ export default function LtxTestModule() {
         }
 
         setIsGenerating(true);
-        setStatusMessage('Preparing workflow...');
+        setStatusMessage('Uploading files to ComfyUI...');
 
         try {
+            // Upload Image
+            let finalImageName = startImage;
+            if (startImagePath) {
+                const uploadResult = await uploadFileToComfyUI(startImagePath);
+                if (uploadResult && uploadResult.name) {
+                    finalImageName = uploadResult.name;
+                } else {
+                    throw new Error("Failed to upload image to ComfyUI.");
+                }
+            }
+
+            // Upload Audio
+            let finalAudioName = audioFile;
+            if (audioFilePath) {
+                const uploadResult = await uploadFileToComfyUI(audioFilePath);
+                if (uploadResult && uploadResult.name) {
+                    finalAudioName = uploadResult.name;
+                } else {
+                    throw new Error("Failed to upload audio to ComfyUI.");
+                }
+            }
+
+            setStatusMessage('Preparing workflow...');
+
             // Deep clone the workflow template
             const workflow = JSON.parse(JSON.stringify(workflowJson));
 
@@ -77,7 +104,7 @@ export default function LtxTestModule() {
 
             // 1. Start Image (Node 98)
             if (workflow["98"] && workflow["98"].inputs) {
-                workflow["98"].inputs.image = startImage;
+                workflow["98"].inputs.image = finalImageName;
             }
 
             // 2. Positive Prompt (Node 92:3)
@@ -114,7 +141,7 @@ export default function LtxTestModule() {
 
             // 7. Audio file (Node 92:113)
             if (workflow["92:113"] && workflow["92:113"].inputs) {
-                workflow["92:113"].inputs.audio = audioFile;
+                workflow["92:113"].inputs.audio = finalAudioName;
             }
 
             const payload = {
@@ -179,6 +206,7 @@ export default function LtxTestModule() {
                                         if (files.length > 0) {
                                             const file = files[0];
                                             setStartImage(file.name);
+                                            setStartImagePath((file as any).path);
                                             // Create preview URL
                                             if (startImagePreview) URL.revokeObjectURL(startImagePreview);
                                             setStartImagePreview(URL.createObjectURL(file));
@@ -207,6 +235,7 @@ export default function LtxTestModule() {
                             onFilesDropped={(files) => {
                                 if (files.length > 0) {
                                     setAudioFile(files[0].name);
+                                    setAudioFilePath((files[0] as any).path);
                                 }
                             }}
                             accept="audio/*"
