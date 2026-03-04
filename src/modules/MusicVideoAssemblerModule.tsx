@@ -2129,184 +2129,216 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
                     const handleMouseLeave = () => setTooltipState(prev => ({ ...prev, visible: false }));
 
-                    return stems.length > 0 && (
+                    return (
                         <div className="stems-list mt-8 flex flex-col gap-8">
-                            {/* Marker Legend */}
-                            <div style={{ display: 'flex', gap: '16px', marginBottom: '8px', padding: '6px 8px', fontSize: '12px', color: '#9ca3af', alignItems: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '6px' }}>
-                                <span style={{ fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Markers:</span>
-                                <div
-                                    onMouseEnter={(e) => handleMouseEnter(e, "Downbeats", downbeatData)}
-                                    onMouseMove={handleMouseMove}
-                                    onMouseLeave={handleMouseLeave}
-                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
-                                >
-                                    <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.downbeat, flexShrink: 0 }}></span>
-                                    <span>Downbeat</span>
-                                </div>
-                                <div
-                                    onMouseEnter={(e) => handleMouseEnter(e, "Offbeats", offbeatData)}
-                                    onMouseMove={handleMouseMove}
-                                    onMouseLeave={handleMouseLeave}
-                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
-                                >
-                                    <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.offbeat, border: '1px solid #4b5563', flexShrink: 0 }}></span>
-                                    <span>Offbeat</span>
-                                </div>
-                                <div
-                                    onMouseEnter={(e) => handleMouseEnter(e, "Onsets", onsetData)}
-                                    onMouseMove={handleMouseMove}
-                                    onMouseLeave={handleMouseLeave}
-                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
-                                >
-                                    <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.onset, flexShrink: 0 }}></span>
-                                    <span>Onset</span>
-                                </div>
-                                <div
-                                    onMouseEnter={(e) => handleMouseEnter(e, "Loudness", loudnessData)}
-                                    onMouseMove={handleMouseMove}
-                                    onMouseLeave={handleMouseLeave}
-                                    style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
-                                >
-                                    <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.loudness, flexShrink: 0 }}></span>
-                                    <span>Loudness</span>
-                                </div>
-                            </div>
-
-                            <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded">
-                                <h4 className="text-sm font-semibold text-gray-400">Project Stems</h4>
-                                <div className="flex gap-4 w-1/2">
-                                    <button
-                                        className="btn w-full mt-2 btn-primary flex items-center justify-center gap-2"
-                                        onClick={handlePlayStems}
-                                        disabled={!audioUrl}
+                            {/* Marker Legend — always visible when any markers exist */}
+                            {(mainMarkers.length > 0 || stems.length > 0) && (
+                                <div style={{ display: 'flex', gap: '16px', marginBottom: '8px', padding: '6px 8px', fontSize: '12px', color: '#9ca3af', alignItems: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '6px' }}>
+                                    <span style={{ fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Beat Key:</span>
+                                    <div
+                                        onMouseEnter={(e) => handleMouseEnter(e, "Downbeats", downbeatData)}
+                                        onMouseMove={handleMouseMove}
+                                        onMouseLeave={handleMouseLeave}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
                                     >
-                                        <span className="text-lg">▶</span> Play Stems
-                                    </button>
-
-                                    <button
-                                        className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-2"
-                                        onClick={handlePauseAll}
-                                        disabled={!audioUrl}
-                                    >
-                                        <span className="text-lg">⏸</span> Pause
-                                    </button>
-                                </div>
-                            </div>
-
-                            {stems.map((stem, index) => (
-                                <div key={index} className="stem-item bg-[var(--bg-tertiary)] p-6 rounded border border-gray-800 pb-8">
-                                    <div className="flex justify-between items-center mb-1">
-                                        <div className="flex items-center gap-2">
-                                            <div className="text-xs font-bold uppercase" style={{ color: stem.color }}>{stem.type}</div>
-                                        </div>
-                                        <div className="flex gap-2">
-                                            <button
-                                                className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                                onClick={() => handlePlayStem(index)}
-                                                title={`Play ${stem.type}`}
-                                            >
-                                                ▶ Play
-                                            </button>
-                                            <button
-                                                className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                                onClick={() => handlePauseStem(index)}
-                                                title={`Pause ${stem.type}`}
-                                            >
-                                                ⏸ Pause
-                                            </button>
-                                        </div>
+                                        <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.downbeat, flexShrink: 0 }}></span>
+                                        <span>Downbeat</span>
                                     </div>
                                     <div
-                                        id={`stem-waveform-${index}`}
-                                        className="relative"
-                                        style={{ width: '100%', minHeight: '90px' }}
+                                        onMouseEnter={(e) => handleMouseEnter(e, "Offbeats", offbeatData)}
+                                        onMouseMove={handleMouseMove}
+                                        onMouseLeave={handleMouseLeave}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
                                     >
-                                        {/* Beat markers are now rendered inside WaveSurfer's wrapper via renderBeatMarkers */}
+                                        <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.offbeat, border: '1px solid #4b5563', flexShrink: 0 }}></span>
+                                        <span>Offbeat</span>
+                                    </div>
+                                    <div
+                                        onMouseEnter={(e) => handleMouseEnter(e, "Onsets", onsetData)}
+                                        onMouseMove={handleMouseMove}
+                                        onMouseLeave={handleMouseLeave}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                                    >
+                                        <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.onset, flexShrink: 0 }}></span>
+                                        <span>Onset</span>
+                                    </div>
+                                    <div
+                                        onMouseEnter={(e) => handleMouseEnter(e, "Loudness", loudnessData)}
+                                        onMouseMove={handleMouseMove}
+                                        onMouseLeave={handleMouseLeave}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                                    >
+                                        <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.loudness, flexShrink: 0 }}></span>
+                                        <span>Loudness</span>
+                                    </div>
+
+                                    {/* Main track beat summary */}
+                                    {mainMarkers.length > 0 && (
+                                        <div className="ml-auto flex items-center gap-3 text-xs text-gray-400 border-l border-gray-700 pl-4">
+                                            <span className="font-semibold text-gray-500 uppercase">Main Track:</span>
+                                            {mainMarkers.filter(m => m.type === 'beat').length > 0 && (
+                                                <span>
+                                                    <span style={{ color: MARKER_COLORS.downbeat }}>⬤</span>
+                                                    {' '}{mainMarkers.filter(m => m.type === 'beat').length} beats
+                                                </span>
+                                            )}
+                                            {mainMarkers.filter(m => m.type === 'onset').length > 0 && (
+                                                <span>
+                                                    <span style={{ color: MARKER_COLORS.onset }}>⬤</span>
+                                                    {' '}{mainMarkers.filter(m => m.type === 'onset').length} onsets
+                                                </span>
+                                            )}
+                                            {mainMarkers.filter(m => m.type === 'loudness').length > 0 && (
+                                                <span>
+                                                    <span style={{ color: MARKER_COLORS.loudness }}>⬤</span>
+                                                    {' '}{mainMarkers.filter(m => m.type === 'loudness').length} loudness
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Stems section — only visible when stems exist */}
+                            {stems.length > 0 && (<>
+                                <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded">
+                                    <h4 className="text-sm font-semibold text-gray-400">Project Stems</h4>
+                                    <div className="flex gap-4 w-1/2">
+                                        <button
+                                            className="btn w-full mt-2 btn-primary flex items-center justify-center gap-2"
+                                            onClick={handlePlayStems}
+                                            disabled={!audioUrl}
+                                        >
+                                            <span className="text-lg">▶</span> Play Stems
+                                        </button>
+
+                                        <button
+                                            className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-2"
+                                            onClick={handlePauseAll}
+                                            disabled={!audioUrl}
+                                        >
+                                            <span className="text-lg">⏸</span> Pause
+                                        </button>
                                     </div>
                                 </div>
-                            ))}
-                        </div>
+
+                                {stems.map((stem, index) => (
+                                    <div key={index} className="stem-item bg-[var(--bg-tertiary)] p-6 rounded border border-gray-800 pb-8">
+                                        <div className="flex justify-between items-center mb-1">
+                                            <div className="flex items-center gap-2">
+                                                <div className="text-xs font-bold uppercase" style={{ color: stem.color }}>{stem.type}</div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
+                                                    onClick={() => handlePlayStem(index)}
+                                                    title={`Play ${stem.type}`}
+                                                >
+                                                    ▶ Play
+                                                </button>
+                                                <button
+                                                    className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
+                                                    onClick={() => handlePauseStem(index)}
+                                                    title={`Pause ${stem.type}`}
+                                                >
+                                                    ⏸ Pause
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div
+                                            id={`stem-waveform-${index}`}
+                                            className="relative"
+                                            style={{ width: '100%', minHeight: '90px' }}
+                                        >
+                                            {/* Beat markers are now rendered inside WaveSurfer's wrapper via renderBeatMarkers */}
+                                        </div>
+                                    </div>
+                                ))}
+                            </>)} {/* end stems.length > 0 */}
+
+                            {/* Controls */}
+                            <div className="controls-container flex gap-4 mt-6">
+                                <button className="btn btn-primary" onClick={handleGenerateClipFromRegion} disabled={!activeSelection || isAnalyzing}>
+                                    Generate Clip from Selection
+                                </button>
+                                <button className="btn btn-secondary" onClick={handleExportManifest} disabled={clips.length === 0}>
+                                    Export Manifest for Resolve
+                                </button>
+                                <button
+                                    className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm"
+                                    onClick={handleSaveToProject}
+                                    disabled={!activeProject}
+                                >
+                                    💾 Save to Project
+                                </button>
+                            </div>
+
+                            {/* Project Timeline Table */}
+                            <div className="mt-8">
+                                {/* Selection Status — positioned just above the table */}
+                                {activeSelection && (
+                                    <div className="selection-status mb-3 p-2 bg-indigo-900/30 border border-indigo-500/50 rounded flex justify-between items-center text-sm">
+                                        <div>
+                                            <span className="text-gray-400 uppercase text-xs font-bold mr-2">Selection Source:</span>
+                                            <span className="text-white font-semibold">
+                                                {activeSelection.source === 'main' ? 'MAIN TRACK' : `STEM: ${stems[activeSelection.stemIndex!]?.type.toUpperCase()}`}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-gray-400 text-xs mr-2">Range:</span>
+                                            <span className="text-indigo-300 font-mono">
+                                                {activeSelection.start.toFixed(2)}s - {activeSelection.end.toFixed(2)}s
+                                                <span className="ml-2 text-white">({(activeSelection.end - activeSelection.start).toFixed(2)}s)</span>
+                                            </span>
+                                            <button
+                                                className="ml-3 bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs font-bold uppercase tracking-wide"
+                                                onClick={handleAddSegment}
+                                            >
+                                                + Add Segment
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">📋 Project Timeline</h3>
+                                <ProjectTimelineTable
+                                    clips={clips}
+                                    duration={duration}
+                                    onUpdateClipLabel={handleUpdateClipLabel}
+                                    onRemoveClip={handleRemoveClip}
+                                    onPickImage={handlePickImage}
+                                    onGenerateClip={handleGenerateTimelineClip}
+                                    onError={(msg) => onStatusChange && onStatusChange(`Table Error: ${msg}`)}
+                                />
+                            </div>
+
+                            {/* Custom Floating Tooltip */}
+                            {
+                                tooltipState.visible && tooltipState.content && (
+                                    <div
+                                        style={{
+                                            position: 'fixed',
+                                            left: tooltipState.x,
+                                            top: tooltipState.y,
+                                            zIndex: 9999,
+                                            pointerEvents: 'none'
+                                        }}
+                                    >
+                                        {tooltipState.content}
+                                    </div>
+                                )
+                            }
+
+                            {/* LTX Test Module Integration */}
+                            <div className="mt-8">
+                                <CollapsibleCard title="🧪 LTX-Video 2.0 Generator Test" defaultOpen={false}>
+                                    <LtxTestModule />
+                                </CollapsibleCard>
+                            </div>
+
+                        </div> {/* end stems-list */ }
                     );
                 })()
             }
-
-            <div className="controls-container flex gap-4 mt-6">
-                <button className="btn btn-primary" onClick={handleGenerateClipFromRegion} disabled={!activeSelection || isAnalyzing}>
-                    Generate Clip from Selection
-                </button>
-                <button className="btn btn-secondary" onClick={handleExportManifest} disabled={clips.length === 0}>
-                    Export Manifest for Resolve
-                </button>
-                <button
-                    className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm"
-                    onClick={handleSaveToProject}
-                    disabled={!activeProject || clips.length === 0}
-                >
-                    💾 Save to Project
-                </button>
-            </div>
-
-            {/* Project Timeline Table */}
-            <div className="mt-8">
-                {/* Selection Status — positioned just above the table */}
-                {activeSelection && (
-                    <div className="selection-status mb-3 p-2 bg-indigo-900/30 border border-indigo-500/50 rounded flex justify-between items-center text-sm">
-                        <div>
-                            <span className="text-gray-400 uppercase text-xs font-bold mr-2">Selection Source:</span>
-                            <span className="text-white font-semibold">
-                                {activeSelection.source === 'main' ? 'MAIN TRACK' : `STEM: ${stems[activeSelection.stemIndex!]?.type.toUpperCase()}`}
-                            </span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            <span className="text-gray-400 text-xs mr-2">Range:</span>
-                            <span className="text-indigo-300 font-mono">
-                                {activeSelection.start.toFixed(2)}s - {activeSelection.end.toFixed(2)}s
-                                <span className="ml-2 text-white">({(activeSelection.end - activeSelection.start).toFixed(2)}s)</span>
-                            </span>
-                            <button
-                                className="ml-3 bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs font-bold uppercase tracking-wide"
-                                onClick={handleAddSegment}
-                            >
-                                + Add Segment
-                            </button>
-                        </div>
-                    </div>
-                )}
-                <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">📋 Project Timeline</h3>
-                <ProjectTimelineTable
-                    clips={clips}
-                    duration={duration}
-                    onUpdateClipLabel={handleUpdateClipLabel}
-                    onRemoveClip={handleRemoveClip}
-                    onPickImage={handlePickImage}
-                    onGenerateClip={handleGenerateTimelineClip}
-                    onError={(msg) => onStatusChange && onStatusChange(`Table Error: ${msg}`)}
-                />
-            </div>
-
-            {/* Custom Floating Tooltip */}
-            {
-                tooltipState.visible && tooltipState.content && (
-                    <div
-                        style={{
-                            position: 'fixed',
-                            left: tooltipState.x,
-                            top: tooltipState.y,
-                            zIndex: 9999,
-                            pointerEvents: 'none'
-                        }}
-                    >
-                        {tooltipState.content}
-                    </div>
-                )
-            }
-
-            {/* LTX Test Module Integration */}
-            <div className="mt-8">
-                <CollapsibleCard title="🧪 LTX-Video 2.0 Generator Test" defaultOpen={false}>
-                    <LtxTestModule />
-                </CollapsibleCard>
-            </div>
 
         </div >
     );
