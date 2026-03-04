@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 
 
-const SettingsModule: React.FC = () => {
+interface SettingsModuleProps {
+    onSave?: () => void;
+}
+
+const SettingsModule: React.FC<SettingsModuleProps> = ({ onSave }) => {
     const [comfyOutputDir, setComfyOutputDir] = useState<string>('');
     const [projectOutputDir, setProjectOutputDir] = useState<string>('');
     const [statusMessage, setStatusMessage] = useState<string>('');
@@ -36,6 +40,7 @@ const SettingsModule: React.FC = () => {
                     projectOutputDir
                 });
                 setStatusMessage('Settings saved successfully!');
+                if (onSave) onSave();
                 setTimeout(() => setStatusMessage(''), 3000);
             }
         } catch (e) {

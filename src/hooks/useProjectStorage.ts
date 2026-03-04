@@ -54,35 +54,49 @@ export interface BeatProject {
     updatedAt: string;
 }
 
-const STORAGE_KEY = 'resolve-tools-projects';
+
 
 export function useProjectStorage() {
     const [projects, setProjects] = useState<BeatProject[]>([]);
     const [isLoaded, setIsLoaded] = useState(false);
 
-    // Load projects from localStorage on mount
-    useEffect(() => {
+    const refreshProjects = useCallback(async (customPath?: string) => {
         try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored) {
-                setProjects(JSON.parse(stored));
+            // @ts-ignore
+            const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+            if (!ipcRenderer) return;
+
+            // 1. Get the path to scan
+            let scanPath = customPath;
+            if (!scanPath) {
+                const configRes = await ipcRenderer.invoke('get-config');
+                if (configRes.success && configRes.config.projectOutputDir) {
+                    scanPath = configRes.config.projectOutputDir;
+                }
+            }
+
+            if (!scanPath) {
+                console.log('[useProjectStorage] No scan path found in config.');
+                setIsLoaded(true);
+                return;
+            }
+
+            console.log(`[useProjectStorage] Scanning for projects in: ${scanPath}`);
+            // 2. Scan the folder
+            const scanRes = await ipcRenderer.invoke('scan-projects-folder', scanPath);
+            if (scanRes.success) {
+                setProjects(scanRes.projects);
             }
         } catch (e) {
-            console.warn('Failed to load projects from storage:', e);
+            console.error('Failed to refresh projects:', e);
         }
         setIsLoaded(true);
     }, []);
 
-    // Save to localStorage whenever projects change
+    // Load projects on mount
     useEffect(() => {
-        if (isLoaded) {
-            try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
-            } catch (e) {
-                console.warn('Failed to save projects to storage:', e);
-            }
-        }
-    }, [projects, isLoaded]);
+        refreshProjects();
+    }, [refreshProjects]);
 
     const saveProjectFile = (project: BeatProject): BeatProject => {
         let currentOutputDir = project.outputDir;
@@ -106,26 +120,32 @@ export function useProjectStorage() {
             // @ts-ignore
             const path = window.require('path');
 
-            const safeName = project.name.replace(/[^a-zA-Z0-9-_]/g, '_');
-            const folderName = `PRJ_${safeName}`;
+            const safeProjectName = project.name.replace(/[^a-zA-Z0-9-_]/g, '_');
+            const bundleName = `PRJ_${safeProjectName}`; // The standardized prefix for project bundles
 
-            // Determine if outputDir already IS the per-project folder
-            // (i.e. it already ends with the folderName). If so, don't nest again.
-            const dirBasename = path.basename(currentOutputDir);
-            const projectFolder = (dirBasename === folderName || dirBasename === safeName)
-                ? currentOutputDir
-                : path.join(currentOutputDir, folderName);
+            // Normalize path to prevent trailing slashes from breaking basename (recursive nesting fix)
+            const normalizedOutputDir = currentOutputDir.replace(/[\\/]+$/, '');
+            const dirBasename = path.basename(normalizedOutputDir);
 
-            if (!fs.existsSync(projectFolder)) {
-                fs.mkdirSync(projectFolder, { recursive: true });
+            // Determine if outputDir already IS the per-project bundle folder
+            // Use startsWith('PRJ_') to prevent infinite nesting if the project name gets slightly altered
+            const isAlreadyBundle = dirBasename.startsWith('PRJ_') || dirBasename === safeProjectName;
+            const bundleDirectory = isAlreadyBundle
+                ? normalizedOutputDir
+                : path.join(normalizedOutputDir, bundleName);
+
+            // Create bundle directory if it doesn't exist
+            if (!fs.existsSync(bundleDirectory)) {
+                fs.mkdirSync(bundleDirectory, { recursive: true });
             }
 
-            const filePath = path.join(projectFolder, `${safeName}_data.json`);
+            // Save standard project metadata file
+            const filePath = path.join(bundleDirectory, 'project.json');
 
             // Update outputDir to point to the project subfolder
-            const updatedProject = { ...project, outputDir: projectFolder };
+            const updatedProject = { ...project, outputDir: bundleDirectory };
             fs.writeFileSync(filePath, stringifyWithCompactArrays(updatedProject));
-            console.log('Saved project to:', filePath);
+            console.log('Saved project bundle to:', filePath);
             return updatedProject;
         } catch (e) {
             console.error('Failed to save project JSON file:', e);
@@ -167,7 +187,25 @@ export function useProjectStorage() {
     }, []);
 
     const deleteProject = useCallback((id: string) => {
-        setProjects(prev => prev.filter(p => p.id !== id));
+        setProjects(prev => {
+            const project = prev.find(p => p.id === id);
+            if (project && project.outputDir) {
+                try {
+                    // @ts-ignore
+                    const fs = window.require('fs');
+                    // @ts-ignore
+                    const path = window.require('path');
+                    const filePath = path.join(project.outputDir, 'project.json');
+                    if (fs.existsSync(filePath)) {
+                        fs.unlinkSync(filePath);
+                        console.log('[useProjectStorage] Deleted project file:', filePath);
+                    }
+                } catch (e) {
+                    console.error('Failed to delete project file:', e);
+                }
+            }
+            return prev.filter(p => p.id !== id);
+        });
     }, []);
 
     const getProject = useCallback((id: string) => {
@@ -200,9 +238,7 @@ export function useProjectStorage() {
                             fs.mkdirSync(targetDir, { recursive: true });
                         }
 
-                        // Sanitize filename
-                        const safeName = project.name.replace(/[^a-zA-Z0-9-_]/g, '_');
-                        const filePath = path.join(targetDir, `${safeName}_data.json`);
+                        const filePath = path.join(targetDir, 'project.json');
 
                         fs.writeFileSync(filePath, stringifyWithCompactArrays(project));
                         successCount++;
@@ -230,6 +266,7 @@ export function useProjectStorage() {
         updateProject,
         deleteProject,
         getProject,
+        refreshProjects,
         exportAllProjects,
     };
 }

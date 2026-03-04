@@ -34,7 +34,7 @@ function App() {
   };
 
   // --- Global Project State ---
-  const { projects, saveProject, updateProject, deleteProject } = useProjectStorage();
+  const { projects, saveProject, updateProject, deleteProject, refreshProjects } = useProjectStorage();
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
   const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : undefined;
@@ -56,13 +56,41 @@ function App() {
 
     const newProject = saveProject({
       name: file.name.replace(/\.[^/.]+$/, ""), // Remove extension
-      audioPath: (file as any).path,
+      audioPath: (file as any).path, // Temporary absolute path
       audioFileName: file.name,
       frameRate: 20, // Default to 20 fps for cleaner math in LTX
       stemType: 'master', // Default
       stems: [],
       outputDir: initialOutputDir
     });
+
+    // Post-process project bundle: Create the 'source/' directory to hold the original media
+    // and copy the user's dropped audio into it. We then save a relative path to keep the project portable.
+    if (newProject.outputDir && (file as any).path) {
+      try {
+        // @ts-ignore
+        const fs = window.require('fs');
+        // @ts-ignore
+        const path = window.require('path');
+        const sourceDir = path.join(newProject.outputDir, 'source');
+        if (!fs.existsSync(sourceDir)) {
+          fs.mkdirSync(sourceDir, { recursive: true });
+        }
+
+        // Sanitize the audio file name to prevent broken paths
+        const safeAudioName = file.name.replace(/[^a-zA-Z0-9-_\.]/g, '_');
+        const destPath = path.join(sourceDir, safeAudioName);
+        fs.copyFileSync((file as any).path, destPath);
+
+        // Update the project json with a portable relative path (e.g. "./source/my_song.mp3")
+        const relativePath = `./source/${safeAudioName}`;
+        handleUpdateProject(newProject.id, { audioPath: relativePath });
+        newProject.audioPath = relativePath;
+      } catch (e) {
+        console.error("Failed to copy source audio into the project bundle:", e);
+      }
+    }
+
     setActiveProjectId(newProject.id);
     return newProject;
   };
@@ -85,7 +113,7 @@ function App() {
         return <ScriptManagerModule />;
 
       case 'settings':
-        return <SettingsModule />;
+        return <SettingsModule onSave={refreshProjects} />;
       case 'music-video-assembler':
         return (
           <MusicVideoAssemblerModule
@@ -95,6 +123,7 @@ function App() {
             onCreateProject={handleCreateProject}
             onUpdateProject={handleUpdateProject}
             onDeleteProject={deleteProject}
+            onRefreshProjects={refreshProjects}
             onStatusChange={addLog}
           />
         );
@@ -109,6 +138,7 @@ function App() {
             onCreateProject={handleCreateProject}
             onUpdateProject={handleUpdateProject}
             onDeleteProject={deleteProject}
+            onRefreshProjects={refreshProjects}
           />
         );
     }

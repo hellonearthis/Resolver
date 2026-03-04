@@ -5,7 +5,7 @@ import { analyzeBeats, analyzeOnsets, analyzeLoudness, type BeatAlgorithm, initE
 
 import DropZone from '../components/DropZone';
 import ProjectsPanel from '../components/ProjectsPanel';
-import { checkComfyConnection, queuePrompt, uploadFileToComfyUI } from '../services/comfyService';
+import { checkComfyConnection, queuePrompt, uploadFileToComfyUI, convertAudioForComfyUI } from '../services/comfyService';
 import workflowJsonTemplate from '../../comfyui_workflows/video_ltx2_i2v.json';
 import { getValidLtxFrameCount } from '../utils/timelineUtils';
 import type { BeatProject, ProjectMarker } from '../hooks/useProjectStorage';
@@ -25,6 +25,7 @@ interface MusicVideoAssemblerModuleProps {
     onCreateProject: (file: File, preferredOutputDir?: string) => BeatProject;
     onUpdateProject: (id: string, updates: Partial<BeatProject>) => void;
     onDeleteProject: (id: string) => void;
+    onRefreshProjects: () => void;
     onStatusChange?: (msg: string) => void;
 }
 
@@ -52,6 +53,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     onCreateProject,
     onDeleteProject,
     onUpdateProject,
+    onRefreshProjects,
     onStatusChange
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -68,6 +70,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const stemRegionsRefs = useRef<Map<number, any>>(new Map());
     const [duration, setDuration] = useState(0);
     const [activeSelection, setActiveSelection] = useState<SelectionState | null>(null);
+    const lastProjectIdRef = useRef<string | null>(null);
+    const stemRafRef = useRef<number | null>(null);
 
     // Stem Separation State
     const [comfyConnected, setComfyConnected] = useState<boolean>(false);
@@ -143,12 +147,20 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     useEffect(() => {
         if (activeProject && activeProject.audioPath) {
             loadProjectAudio(activeProject);
+
             // Auto defaults for older projects without frameRate
             if (!activeProject.frameRate) {
                 onUpdateProject(activeProject.id, { frameRate: 20 });
             }
+        } else if (!activeProject) {
+            lastProjectIdRef.current = null;
         }
-    }, [activeProject]);
+    }, [
+        activeProject?.id,
+        activeProject?.markers?.length,
+        activeProject?.stems?.length,
+        activeProject?.clips?.length
+    ]);
 
     const analyzeAudio = async (blob: Blob) => {
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -227,9 +239,17 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
             if (!loadNodeKey) throw new Error('Could not find LoadAudio node');
 
+            // Convert to WAV first so ComfyUI's PyAV decoder can read it reliably
+            if (onStatusChange) onStatusChange('Converting audio to WAV...');
+            const wavPath = await convertAudioForComfyUI(audioFile.path);
+            const uploadPath = wavPath ?? audioFile.path;
+            if (!wavPath) {
+                if (onStatusChange) onStatusChange('ffmpeg not found — uploading original file (may fail)...');
+            }
+
             // Upload the audio file to ComfyUI's input directory so LoadAudio can access it
             if (onStatusChange) onStatusChange('Uploading audio to ComfyUI...');
-            const uploaded = await uploadFileToComfyUI(audioFile.path);
+            const uploaded = await uploadFileToComfyUI(uploadPath);
             if (!uploaded) {
                 throw new Error('Failed to upload audio file to ComfyUI. Check that ComfyUI is running and accessible.');
             }
@@ -269,7 +289,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 id: `stem-${i}-${Date.now()}`,
                 type: f.type,
                 path: f.path,
-                url: `file://${f.path.replace(/\\/g, '/')}`,
+                url: `media://${f.path.replace(/\\/g, '/')}`,
                 color: STEM_COLORS[f.type.toLowerCase()] || Object.values(STEM_COLORS)[i % Object.values(STEM_COLORS).length] || DEFAULT_STEM_COLOR,
                 markers: [],
                 beats: []
@@ -360,8 +380,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         // @ts-ignore
         const path = window.require('path');
 
-        if (!fs.existsSync(targetDir)) {
-            fs.mkdirSync(targetDir, { recursive: true });
+        const stemsDir = path.join(targetDir, 'stems');
+        if (!fs.existsSync(stemsDir)) {
+            fs.mkdirSync(stemsDir, { recursive: true });
         }
 
         const movedStems: { type: string; path: string }[] = [];
@@ -384,11 +405,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     const latest = matches[0];
                     const ext = path.extname(latest.file);
                     const destFilename = `${baseName}_${type}${ext}`;
-                    const destPath = path.join(targetDir, destFilename);
+                    const destPath = path.join(stemsDir, destFilename);
 
                     fs.copyFileSync(latest.path, destPath);
                     console.log(`Found & Moved: ${latest.path} -> ${destPath}`);
-                    movedStems.push({ type, path: destPath });
+                    movedStems.push({ type, path: `./stems/${destFilename}` });
                 } else {
                     console.warn(`No new ${type} file found in ${comfyOutputDir} matching ${runPrefix}`);
                 }
@@ -525,58 +546,83 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     };
 
     const loadProjectAudio = async (project: BeatProject) => {
-        if (onStatusChange) onStatusChange(`Loading project audio: ${project.audioFileName}`);
-        setIsAnalyzing(true);
-        setDuration(0);
-        setClips([]);
-        setStems([]);
-        setMainMarkers([]);
+        console.log("[loadProjectAudio] Loading project:", project.name, project.id);
 
         // Track updates needed for the project
         let stemsUpdated = false;
         let newStems = project.stems ? [...project.stems] : [];
 
-        console.log("[loadProjectAudio] Loading project:", project.name, project.id);
-        if (newStems.length > 0) {
-            console.log("[loadProjectAudio] Stems found:", newStems.length);
-            newStems.forEach((s, i) => {
-                console.log(`[loadProjectAudio] Stem ${i} (${s.type}): details`, s); // Check entire object
-                console.log(`[loadProjectAudio] Stem ${i} (${s.type}): beats length = ${s.beats ? s.beats.length : 'undefined'}`);
-            });
-        } else {
-            console.log("[loadProjectAudio] No stems in project.");
-        }
+        // Determine if we need to reload the audio files (heavy operation)
+        const isNewProject = lastProjectIdRef.current !== project.id;
+        lastProjectIdRef.current = project.id;
+
+        if (onStatusChange && isNewProject) onStatusChange(`Loading project audio: ${project.audioFileName}`);
+
+        // Always sync basic metadata
+        setClips(project.clips || []);
 
         try {
             // @ts-ignore
             const fs = window.require('fs');
 
-            // 1. Read file to blob (using Electron fs)
-            const buffer = fs.readFileSync(project.audioPath);
-            const blob = new Blob([buffer], { type: 'audio/mpeg' });
-            const url = URL.createObjectURL(blob);
+            // 1. Audio Setup (Only if project changed)
+            if (isNewProject) {
+                setIsAnalyzing(true);
+                setDuration(0);
+                setStems([]);
+                setMainMarkers([]);
 
-            setAudioUrl(url);
-            setAudioFile({ name: project.audioFileName, path: project.audioPath });
+                // @ts-ignore
+                const pathModule = window.require('path');
+                const absoluteAudioPath = pathModule.resolve(project.outputDir || '', project.audioPath);
+
+                const buffer = fs.readFileSync(absoluteAudioPath);
+                const blob = new Blob([buffer], { type: 'audio/mpeg' });
+                const url = URL.createObjectURL(blob);
+
+                setAudioUrl(url);
+                setAudioFile({ name: project.audioFileName, path: absoluteAudioPath }); // Keep absolute in state for FFmpeg
+                if (project.outputDir) setOutputDir(project.outputDir);
+            }
 
             // 2. Load Stems & Analyze their beats
             let loadedStems: StemData[] = [];
             if (newStems.length > 0) {
-                for (let i = 0; i < newStems.length; i++) {
-                    const stem = newStems[i];
-                    try {
-                        const sBuffer = fs.readFileSync(stem.path);
-                        const sBlob = new Blob([sBuffer], { type: 'audio/mpeg' });
+                // Deduplicate stems by path to prevent visual duplication on load
+                const uniqueStems = newStems.filter((s, index, self) =>
+                    index === self.findIndex((t) => t.path === s.path)
+                );
 
-                        let stemMarkers = stem.markers;
+                for (let i = 0; i < uniqueStems.length; i++) {
+                    const stem = uniqueStems[i];
+
+                    // Optimization: Reuse existing URL if available
+                    const existingStem = stems.find(s => s.path === stem.path);
+                    let finalUrl = existingStem?.url;
+
+                    try {
+                        if (!finalUrl) {
+                            // @ts-ignore
+                            const pathModule = window.require('path');
+                            const absoluteStemPath = pathModule.resolve(project.outputDir || '', stem.path);
+                            const sBuffer = fs.readFileSync(absoluteStemPath);
+                            const sBlob = new Blob([sBuffer], { type: 'audio/mpeg' });
+                            finalUrl = URL.createObjectURL(sBlob);
+                        }
+
+                        const projectMarkers = project.markers || [];
+                        const stemProjectMarkers = projectMarkers.filter(m => m.note === stem.type);
+
+                        // Fallback to stem.markers if the global filter finds nothing (backwards compatibility)
+                        const markersToUse = stemProjectMarkers.length > 0 ? stemProjectMarkers : (stem.markers || []);
                         const stemColor = stem.color || STEM_COLORS[stem.type.toLowerCase()] || DEFAULT_STEM_COLOR;
 
                         let finalAudioMarkers: AudioMarker[] = [];
 
                         // 1. Try modern ProjectMarkers array
-                        if (stemMarkers && stemMarkers.length > 0) {
+                        if (markersToUse && markersToUse.length > 0) {
                             let beatIndex = 0;
-                            finalAudioMarkers = stemMarkers.map(m => {
+                            finalAudioMarkers = markersToUse.map(m => {
                                 let isDownbeat = false;
                                 if (m.type === 'beat') {
                                     isDownbeat = beatIndex % 4 === 0;
@@ -604,7 +650,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
                         loadedStems.push({
                             type: stem.type,
-                            url: URL.createObjectURL(sBlob),
+                            url: finalUrl as string,
                             path: stem.path,
                             color: stemColor,
                             markers: finalAudioMarkers
@@ -619,24 +665,20 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
 
             // 3. Load Main Markers
-            if (project.markers && project.markers.length > 0) {
-                // Determine downbeats if strictly beats
-                // For now, map all project markers
-                const audioMarkers: AudioMarker[] = project.markers.map(m => {
-                    // Refine isDownbeat logic if not present
-                    // Try to deduce isDownbeat if we have a sequence of beats?
-                    // ProjectMarker doesn't strictly have isDownbeat, but we can infer or pass it.
-                    // For now, simplify: if type is beat, we might need to re-analyze or just treat as plain beats.
+            const projectMarkersForMain = project.markers || [];
+            const mainProjectMarkers = projectMarkersForMain.filter(m => !m.note || m.note === '');
+
+            if (mainProjectMarkers.length > 0) {
+                const audioMarkers: AudioMarker[] = mainProjectMarkers.map(m => {
                     return {
                         time: m.timestamp,
                         type: m.type,
-                        isDownbeat: false, // Default, updated if we detect strict 4/4
+                        isDownbeat: m.color === MARKER_COLORS.downbeat,
                         color: m.color
                     };
                 });
                 setMainMarkers(audioMarkers);
             } else {
-                // Do not auto-analyze beats anymore. Just prepare an empty list.
                 setMainMarkers([]);
             }
 
@@ -699,7 +741,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 markers: audioMarkers.map(m => ({
                     timestamp: m.time,
                     frame: Math.round(m.time * (activeProject.frameRate || 20)),
-                    color: m.color || (m.isDownbeat ? '#ff3e3e' : '#ffffff'),
+                    color: m.color || (m.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat),
                     note: '',
                     type: m.type as any,
                     duration_sec: 0
@@ -1148,6 +1190,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
     // Initialize WaveSurfers (Stems)
     useEffect(() => {
+        let isActive = true;
+
+        if (stemRafRef.current) {
+            cancelAnimationFrame(stemRafRef.current);
+            stemRafRef.current = null;
+        }
+
         // Cleanup function for stems
         const cleanupStems = () => {
             stemSurfers.current.forEach(ws => {
@@ -1166,11 +1215,20 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         if (stems.length === 0) return;
 
         // Use requestAnimationFrame to ensure the DOM has updated and containers are available
-        requestAnimationFrame(() => {
+        stemRafRef.current = requestAnimationFrame(() => {
+            if (!isActive) return;
+
             stems.forEach((stem, index) => {
                 const containerId = `stem-waveform-${index}`;
                 const container = document.getElementById(containerId);
                 if (container) {
+                    // Fix: shadowRoot is a property, not a selector. 
+                    // Also check for the WaveSurfer-specific class to be sure.
+                    if (container.shadowRoot || container.querySelector('shadow-root') || container.innerHTML.includes('wavesurfer')) {
+                        console.warn(`Container ${containerId} already occupied, skipping init.`);
+                        return;
+                    }
+
                     const ws = WaveSurfer.create({
                         container,
                         waveColor: stem.color,
@@ -1264,8 +1322,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
                     ws.on('ready', () => {
                         ws.zoom(zoomLevel);
-                        if (stem.markers && stem.markers.length > 0) {
-                            renderBeatMarkers(ws, stem.markers, wavesurfer.current?.getDuration() || 0);
+                        const durToUse = duration || wavesurfer.current?.getDuration() || 0;
+                        if (stem.markers && stem.markers.length > 0 && durToUse > 0) {
+                            renderBeatMarkers(ws, stem.markers, durToUse);
                         }
                     });
 
@@ -1278,7 +1337,12 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
 
         return () => {
+            isActive = false;
             cleanupStems();
+            if (stemRafRef.current) {
+                cancelAnimationFrame(stemRafRef.current);
+                stemRafRef.current = null;
+            }
         };
     }, [stems]);
 
@@ -1536,7 +1600,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             const mainMarkersToSave = mainMarkers.map(m => ({
                 timestamp: m.time,
                 frame: Math.round(m.time * (activeProject.frameRate || 20)),
-                color: m.color || (m.isDownbeat ? '#ff3e3e' : '#ffffff'),
+                color: m.color || (m.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat),
                 note: '',
                 type: m.type as 'beat' | 'onset' | 'loudness',
                 duration_sec: 0
@@ -1856,6 +1920,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     projects={projects}
                     onLoad={(p) => onSelectProject(p.id)}
                     onDelete={onDeleteProject}
+                    onRefresh={onRefreshProjects}
                     currentProjectId={activeProject?.id}
                 />
             </CollapsibleCard>

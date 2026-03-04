@@ -1,0 +1,35 @@
+{
+  projectName: 'My Project',
+  currentOutputDir: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output',
+  normalizedOutputDir: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output',
+  dirBasename: 'output',
+  projectFolder: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_My_Project'
+}
+{
+  projectName: 'My Project',
+  currentOutputDir: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_My_Project',
+  normalizedOutputDir: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_My_Project',
+  dirBasename: 'PRJ_My_Project',
+  projectFolder: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_My_Project'
+}
+{
+  projectName: 'My Project Renamed',
+  currentOutputDir: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_My_Project',
+  normalizedOutputDir: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_My_Project',
+  dirBasename: 'PRJ_My_Project',
+  projectFolder: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_My_Project'
+}
+{
+  projectName: 'Trailing Slash',
+  currentOutputDir: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\',
+  normalizedOutputDir: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output',
+  dirBasename: 'output',
+  projectFolder: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_Trailing_Slash'
+}
+{
+  projectName: 'Trailing Slash',
+  currentOutputDir: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_Trailing_Slash\\',
+  normalizedOutputDir: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_Trailing_Slash',
+  dirBasename: 'PRJ_Trailing_Slash',
+  projectFolder: 'C:\\Users\\Desktop-Dev\\Desktop\\resolver\\output\\PRJ_Trailing_Slash'
+}

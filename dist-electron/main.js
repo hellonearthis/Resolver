@@ -578,6 +578,40 @@ electron_1.ipcMain.handle('comfy-upload-file', async (_event, api_url, filePath,
         return { success: false, error: message };
     }
 });
+// Convert any audio file to a clean WAV before sending to ComfyUI
+// Uses ffmpeg if available; returns the path of the temp WAV file
+electron_1.ipcMain.handle('convert-audio-to-wav', async (_event, inputPath) => {
+    const tmpDir = electron_1.app.getPath('temp');
+    const baseName = path_1.default.basename(inputPath, path_1.default.extname(inputPath));
+    const outPath = path_1.default.join(tmpDir, `${baseName}_comfy_${Date.now()}.wav`);
+    return new Promise((resolve) => {
+        // Try ffmpeg first (most reliable)
+        const ffmpeg = (0, child_process_1.spawn)('ffmpeg', [
+            '-y', // overwrite
+            '-i', inputPath,
+            '-ar', '44100', // standard sample rate
+            '-ac', '2', // stereo
+            '-sample_fmt', 's16',
+            outPath
+        ]);
+        let stderr = '';
+        ffmpeg.stderr.on('data', (d) => { stderr += d.toString(); });
+        ffmpeg.on('close', (code) => {
+            if (code === 0 && fs_1.default.existsSync(outPath)) {
+                console.log(`[convert-audio-to-wav] Success: ${outPath}`);
+                resolve({ success: true, path: outPath });
+            }
+            else {
+                console.error(`[convert-audio-to-wav] ffmpeg exited ${code}: ${stderr.slice(-300)}`);
+                resolve({ success: false, error: `ffmpeg failed (code ${code}). Is ffmpeg installed and on PATH?` });
+            }
+        });
+        ffmpeg.on('error', (err) => {
+            console.error('[convert-audio-to-wav] spawn error:', err.message);
+            resolve({ success: false, error: `ffmpeg not found: ${err.message}` });
+        });
+    });
+});
 // Config Persistence
 const CONFIG_PATH = path_1.default.join(electron_1.app.getPath('userData'), 'config.json');
 electron_1.ipcMain.handle('get-config', async () => {
@@ -626,6 +660,49 @@ electron_1.ipcMain.handle('save-manifest', async (_event, manifest) => {
     }
     catch (err) {
         console.error('Error saving manifest:', err);
+        return { success: false, error: String(err) };
+    }
+});
+// Scan projects folder for *_data.json files
+electron_1.ipcMain.handle('scan-projects-folder', async (_event, folderPath) => {
+    try {
+        if (!fs_1.default.existsSync(folderPath)) {
+            return { success: false, error: 'Folder does not exist' };
+        }
+        const projects = [];
+        // Only scan top-level items in the output folder for PRJ_ directories
+        const items = fs_1.default.readdirSync(folderPath);
+        for (const item of items) {
+            const itemPath = path_1.default.join(folderPath, item);
+            const stat = fs_1.default.statSync(itemPath);
+            if (stat.isDirectory() && item.startsWith('PRJ_')) {
+                // Look for the *_data.json file inside the project folder
+                const subFiles = fs_1.default.readdirSync(itemPath);
+                for (const subFile of subFiles) {
+                    if (subFile.endsWith('_data.json')) {
+                        try {
+                            const dataPath = path_1.default.join(itemPath, subFile);
+                            const content = fs_1.default.readFileSync(dataPath, 'utf8');
+                            const project = JSON.parse(content);
+                            if (project.id && project.name) {
+                                projects.push(project);
+                            }
+                        }
+                        catch (e) {
+                            console.error(`Error reading project file in ${itemPath}:`, e);
+                        }
+                    }
+                }
+            }
+        }
+        // Sort by updatedAt descending
+        projects.sort((a, b) => {
+            return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+        });
+        return { success: true, projects };
+    }
+    catch (err) {
+        console.error('Error scanning projects folder:', err);
         return { success: false, error: String(err) };
     }
 });

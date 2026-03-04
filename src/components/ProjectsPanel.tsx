@@ -5,6 +5,7 @@ interface ProjectsPanelProps {
     projects: BeatProject[];
     onLoad: (project: BeatProject) => void;
     onDelete: (id: string) => void;
+    onRefresh?: () => void;
     currentProjectId?: string;
     onExportAll?: () => Promise<{ success: number; failed: number }>;
 }
@@ -13,6 +14,7 @@ const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
     projects,
     onLoad,
     onDelete,
+    onRefresh,
     currentProjectId,
     onExportAll
 }) => {
@@ -70,19 +72,30 @@ const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
         <div className="card">
             <div className="card-header flex justify-between items-center">
                 <h3 className="card-title">📂 Saved Projects ({projects.length})</h3>
-                {onExportAll && (
-                    <div className="flex items-center gap-2">
-                        {exportStatus && <span className="text-xs text-green-400 fade-in">{exportStatus}</span>}
+                <div className="flex items-center gap-2">
+                    {onRefresh && (
                         <button
-                            onClick={handleBackupAll}
-                            disabled={isExporting}
-                            className="text-xs bg-[var(--bg-secondary)] hover:bg-[var(--bg-elevated)] border border-[var(--border-color)] px-2 py-1 rounded transition-colors"
-                            title="Save all projects to disk (JSON)"
+                            onClick={(e) => { e.stopPropagation(); onRefresh(); }}
+                            className="text-xs bg-[var(--bg-secondary)] hover:bg-[var(--bg-elevated)] border border-[var(--border-color)] px-2 py-1 rounded transition-colors flex items-center gap-1"
+                            title="Scan for projects on disk"
                         >
-                            {isExporting ? '⏳' : '💾 Backup All'}
+                            🔄 Refresh
                         </button>
-                    </div>
-                )}
+                    )}
+                    {onExportAll && (
+                        <>
+                            {exportStatus && <span className="text-xs text-green-400 fade-in">{exportStatus}</span>}
+                            <button
+                                onClick={handleBackupAll}
+                                disabled={isExporting}
+                                className="text-xs bg-[var(--bg-secondary)] hover:bg-[var(--bg-elevated)] border border-[var(--border-color)] px-2 py-1 rounded transition-colors"
+                                title="Save all projects to disk (JSON)"
+                            >
+                                {isExporting ? '⏳' : '💾 Backup All'}
+                            </button>
+                        </>
+                    )}
+                </div>
             </div>
             <div style={{
                 maxHeight: '300px',

@@ -124,3 +124,28 @@ export const uploadFileToComfyUI = async (filePath: string, type: 'input' = 'inp
         return null;
     }
 };
+
+/**
+ * Converts an audio file to WAV using ffmpeg (via Electron IPC).
+ * Returns the path to the temp WAV file, or null on failure.
+ */
+export const convertAudioForComfyUI = async (filePath: string): Promise<string | null> => {
+    try {
+        // @ts-ignore
+        if (window.require) {
+            // @ts-ignore
+            const { ipcRenderer } = window.require('electron');
+            const result = await ipcRenderer.invoke('convert-audio-to-wav', filePath);
+            if (result.success && result.path) {
+                return result.path;
+            }
+            console.error('Audio conversion failed:', result.error);
+            return null;
+        }
+        console.error('convertAudioForComfyUI requires Electron environment.');
+        return null;
+    } catch (error) {
+        console.error('Audio conversion error:', error);
+        return null;
+    }
+};

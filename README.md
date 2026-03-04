@@ -119,6 +119,7 @@ resolver/
 - [x] **Stem Separation**: Integrate ComfyUI to split audio into stems (drums, bass, vocals).
 - [x] **Beat Analysis per Stem**: Analyze and visualize individual rhythmic layers.
 - [x] **Video Assembler**: Specialized UI for multi-stem rhythmic syncing.
+- [ ] **Project Bundle Structure**: Refactor projects to be self-contained bundles (saving `project.json` with relative paths in dedicated `PRJ_` directories) for portability and robustness.
 - [ ] **Tap Tempo**: Manual BPM adjustment for challenging tracks.
 - [ ] **Beat Divisions**: Options for 1/2, 1/4, or double-time beat markers.
 - [ ] **Clip Randomizer**: Mode to select random clips from a bin for quick montages.
