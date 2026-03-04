@@ -1913,7 +1913,23 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     </select>
                 </div>
 
-                <div className="text-xs text-gray-500 ml-auto">
+                <div className="flex flex-col gap-1 ml-auto">
+                    <label className="text-xs text-gray-400 font-semibold uppercase text-right" title="Frames Per Second for Video Generation">Project FPS</label>
+                    <input
+                        type="number"
+                        min="1"
+                        max="60"
+                        value={activeProject?.frameRate || 20}
+                        onChange={(e) => {
+                            if (activeProject) {
+                                onUpdateProject(activeProject.id, { frameRate: Number(e.target.value) });
+                            }
+                        }}
+                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 px-2 py-1 w-20 outline-none focus:border-indigo-500 text-right"
+                    />
+                </div>
+
+                <div className="text-xs text-gray-500 ml-4 flex items-end pb-1 border-l border-gray-700 pl-4 h-full">
                     {duration > 0 && `Duration: ${duration.toFixed(2)}s`}
                 </div>
             </div>
