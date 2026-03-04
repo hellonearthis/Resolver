@@ -1992,29 +1992,32 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
 
             {/* Controls Bar */}
-            <div className="controls-bar mt-4 flex items-center gap-8 bg-[var(--bg-tertiary)] p-4 rounded border border-gray-700">
-                <div className="flex flex-col gap-2">
+            <div className="controls-bar mt-4 bg-[var(--bg-tertiary)] rounded border border-gray-700"
+                style={{ display: 'flex', alignItems: 'center', gap: '32px', padding: '16px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Zoom</label>
-                    <div className="flex items-center gap-3">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <input
                             type="range"
                             min={Math.floor(minZoom)}
                             max="200"
                             value={zoomLevel}
                             onChange={(e) => setZoomLevel(Number(e.target.value))}
-                            className="w-64 accent-indigo-500"
+                            className="accent-indigo-500"
+                            style={{ width: '260px' }}
                         />
                         <button
-                            className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-gray-300 whitespace-nowrap"
+                            className="text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-300 whitespace-nowrap"
                             onClick={() => setZoomLevel(minZoom)}
                             title="Fit to Screen"
+                            style={{ padding: '4px 10px' }}
                         >
                             Fit
                         </button>
                     </div>
                 </div>
 
-                <div className="flex flex-col gap-2">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Main Beat Source</label>
                     <select
                         value={mainBeatSource}
@@ -2022,7 +2025,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             const val = e.target.value;
                             setMainBeatSource(val === 'main' ? 'main' : Number(val));
                         }}
-                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 px-3 py-2 outline-none focus:border-indigo-500"
+                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 outline-none focus:border-indigo-500"
+                        style={{ padding: '6px 12px' }}
                     >
                         <option value="main">Main Track Analysis</option>
                         {stems.map((s, i) => (
@@ -2031,7 +2035,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     </select>
                 </div>
 
-                <div className="flex flex-col gap-2 ml-auto">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginLeft: 'auto' }}>
                     <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide text-right" title="Frames Per Second for Video Generation">Project FPS</label>
                     <input
                         type="number"
@@ -2043,11 +2047,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 onUpdateProject(activeProject.id, { frameRate: Number(e.target.value) });
                             }
                         }}
-                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 px-3 py-2 w-24 outline-none focus:border-indigo-500 text-right"
+                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 outline-none focus:border-indigo-500 text-right"
+                        style={{ padding: '6px 12px', width: '90px' }}
                     />
                 </div>
 
-                <div className="text-xs text-gray-500 flex items-end pb-0.5 border-l border-gray-700 pl-6 h-full self-end">
+                <div className="text-xs text-gray-500 border-l border-gray-700 self-stretch flex items-center"
+                    style={{ paddingLeft: '24px' }}>
                     {duration > 0 && `Duration: ${duration.toFixed(2)}s`}
                 </div>
             </div>
