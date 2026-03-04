@@ -16,6 +16,7 @@ const modules: ModuleItem[] = [
     { id: 'script-manager', label: 'Script Manager', icon: '📜', enabled: true },
     { id: 'music-video-assembler', label: 'Video Assembler', icon: '🎸', enabled: true },
     { id: 'settings', label: 'Settings', icon: '⚙️', enabled: true },
+    { id: 'ltx-test', label: 'LTX Video Test', icon: '🎥', enabled: true },
 ];
 
 const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange }) => {

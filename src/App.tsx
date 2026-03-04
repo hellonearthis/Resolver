@@ -5,6 +5,7 @@ import ScriptManagerModule from './modules/ScriptManagerModule';
 
 import MusicVideoAssemblerModule from './modules/MusicVideoAssemblerModule';
 import SettingsModule from './modules/SettingsModule';
+import LtxTestModule from './modules/LtxTestModule';
 
 
 
@@ -85,6 +86,8 @@ function App() {
             onDeleteProject={deleteProject}
           />
         );
+      case 'ltx-test':
+        return <LtxTestModule />;
       default:
         return (
           <MusicVideoAssemblerModule
