@@ -1992,20 +1992,20 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
 
             {/* Controls Bar */}
-            <div className="controls-bar mt-4 flex items-center gap-4 bg-[var(--bg-tertiary)] p-3 rounded border border-gray-700">
-                <div className="flex flex-col gap-1">
-                    <label className="text-xs text-gray-400 font-semibold uppercase">Zoom</label>
-                    <div className="flex items-center gap-2">
+            <div className="controls-bar mt-4 flex items-center gap-8 bg-[var(--bg-tertiary)] p-4 rounded border border-gray-700">
+                <div className="flex flex-col gap-2">
+                    <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Zoom</label>
+                    <div className="flex items-center gap-3">
                         <input
                             type="range"
                             min={Math.floor(minZoom)}
                             max="200"
                             value={zoomLevel}
                             onChange={(e) => setZoomLevel(Number(e.target.value))}
-                            className="w-32 accent-indigo-500"
+                            className="w-64 accent-indigo-500"
                         />
                         <button
-                            className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded text-gray-300"
+                            className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-gray-300 whitespace-nowrap"
                             onClick={() => setZoomLevel(minZoom)}
                             title="Fit to Screen"
                         >
@@ -2014,15 +2014,15 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     </div>
                 </div>
 
-                <div className="flex flex-col gap-1">
-                    <label className="text-xs text-gray-400 font-semibold uppercase">Main Beat Source</label>
+                <div className="flex flex-col gap-2">
+                    <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Main Beat Source</label>
                     <select
                         value={mainBeatSource}
                         onChange={(e) => {
                             const val = e.target.value;
                             setMainBeatSource(val === 'main' ? 'main' : Number(val));
                         }}
-                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 px-2 py-1 outline-none focus:border-indigo-500"
+                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 px-3 py-2 outline-none focus:border-indigo-500"
                     >
                         <option value="main">Main Track Analysis</option>
                         {stems.map((s, i) => (
@@ -2031,8 +2031,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     </select>
                 </div>
 
-                <div className="flex flex-col gap-1 ml-auto">
-                    <label className="text-xs text-gray-400 font-semibold uppercase text-right" title="Frames Per Second for Video Generation">Project FPS</label>
+                <div className="flex flex-col gap-2 ml-auto">
+                    <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide text-right" title="Frames Per Second for Video Generation">Project FPS</label>
                     <input
                         type="number"
                         min="1"
@@ -2043,11 +2043,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 onUpdateProject(activeProject.id, { frameRate: Number(e.target.value) });
                             }
                         }}
-                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 px-2 py-1 w-20 outline-none focus:border-indigo-500 text-right"
+                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 px-3 py-2 w-24 outline-none focus:border-indigo-500 text-right"
                     />
                 </div>
 
-                <div className="text-xs text-gray-500 ml-4 flex items-end pb-1 border-l border-gray-700 pl-4 h-full">
+                <div className="text-xs text-gray-500 flex items-end pb-0.5 border-l border-gray-700 pl-6 h-full self-end">
                     {duration > 0 && `Duration: ${duration.toFixed(2)}s`}
                 </div>
             </div>
