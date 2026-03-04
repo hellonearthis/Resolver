@@ -1503,10 +1503,49 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 return;
             }
 
-            // Update project with clips and ensure outputDir is set
+            // Build the full set of project stems (with current marker data) for saving
+            const projectStemsToSave = stems.map(s => ({
+                type: s.type,
+                path: s.path,
+                color: s.color,
+                beats: s.markers
+                    ? s.markers.filter(m => m.type === 'beat').map(m => m.time)
+                    : [],
+                markers: s.markers
+                    ? s.markers.map(m => ({
+                        timestamp: m.time,
+                        frame: Math.round(m.time * (activeProject.frameRate || 20)),
+                        color: m.color || '#ffffff',
+                        note: s.type,
+                        type: m.type as 'beat' | 'onset' | 'loudness',
+                        duration_sec: 0
+                    }))
+                    : []
+            }));
+
+            // Build main markers from current mainMarkers state
+            const mainMarkersToSave = mainMarkers.map(m => ({
+                timestamp: m.time,
+                frame: Math.round(m.time * (activeProject.frameRate || 20)),
+                color: m.color || (m.isDownbeat ? '#ff3e3e' : '#ffffff'),
+                note: '',
+                type: m.type as 'beat' | 'onset' | 'loudness',
+                duration_sec: 0
+            }));
+
+            // Update project with all available data
+            const beatOnlyMarkers = mainMarkers.filter(m => m.type === 'beat');
             onUpdateProject(activeProject.id, {
-                clips: clips,
+                clips,
                 outputDir: baseOutputDir,
+                markers: mainMarkersToSave,
+                stems: projectStemsToSave,
+                frameRate: activeProject.frameRate || 20,
+                algorithm: algorithm,
+                beatCount: beatOnlyMarkers.length || undefined,
+                bpm: beatOnlyMarkers.length > 1
+                    ? Math.round(60 / ((beatOnlyMarkers[beatOnlyMarkers.length - 1].time - beatOnlyMarkers[0].time) / (beatOnlyMarkers.length - 1)))
+                    : activeProject.bpm,
             });
             if (onStatusChange) onStatusChange(`Project saved ✓  →  ${baseOutputDir}`);
         } catch (e) {
