@@ -1878,7 +1878,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 >
                     <div className="flex flex-row gap-0">
                         {/* Left column — Generation Actions */}
-                        <div className="flex flex-col gap-6 flex-1 pr-6">
+                        <div className="flex flex-col gap-6 flex-1" style={{ paddingRight: '8px' }}>
                             <div className="flex flex-col gap-2">
                                 <button
                                     onClick={handleRunSeparation}
@@ -1945,8 +1945,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         </div>
 
                         {/* Right column — Analysis Configuration */}
-                        <div className="border-t-0 border-l border-gray-700/50 pl-6 flex-1">
-                            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">Analysis Configuration</h4>
+                        <div className="flex-1 pl-6">
+                            <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-3">Analysis Configuration</h4>
                             <div className="flex flex-col gap-4">
                                 {/* Algorithm Selection */}
                                 <div>
@@ -1954,7 +1954,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                     <select
                                         value={algorithm}
                                         onChange={(e) => setAlgorithm(e.target.value as BeatAlgorithm)}
-                                        className="w-full bg-[var(--bg-elevated)] border border-[var(--border-color)] rounded p-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                                        className="w-full bg-[var(--bg-elevated)] border border-[var(--border-color)] rounded py-3 px-3 text-base text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
                                     >
                                         <option value="degara">Degara (Complex rhythm)</option>
                                         <option value="multifeature">Multi-feature (Electronic/Dance)</option>
