@@ -625,22 +625,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         color: m.color
                     };
                 });
-
-                // If all are beats, apply downbeat logic retrospectively?
-                // Or just trust the marker types.
                 setMainMarkers(audioMarkers);
             } else {
-                // Fallback to basic analysis if no markers found
-                if (onStatusChange) onStatusChange("Analyzing main track beats...");
-                const rawBeats = await analyzeAudio(blob);
-                const audioMarkers: AudioMarker[] = rawBeats.map((t, i) => ({
-                    time: t,
-                    type: 'beat',
-                    isDownbeat: i % 4 === 0
-                }));
-                setMainMarkers(audioMarkers);
+                // Do not auto-analyze beats anymore. Just prepare an empty list.
+                setMainMarkers([]);
             }
 
+            if (onStatusChange) onStatusChange("Ready.");
             // 4. Load Clips
             if (project.clips) {
                 setClips(project.clips);
@@ -667,6 +658,57 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         }
     };
 
+    const handleRunMainBeatAnalysis = async () => {
+        if (!activeProject || !audioFile?.path) {
+            if (onStatusChange) onStatusChange("No active project or audio file.");
+            return;
+        }
+
+        setIsProcessing(true);
+        if (onStatusChange) onStatusChange("Analyzing main track beats...");
+        setDetectionStatus("Analyzing main track...");
+
+        try {
+            // @ts-ignore
+            const fs = window.require('fs');
+            const buffer = fs.readFileSync(audioFile.path);
+            const blob = new Blob([buffer], { type: 'audio/mpeg' });
+
+            const rawBeats = await analyzeAudio(blob);
+            const audioMarkers: AudioMarker[] = rawBeats.map((t, i) => ({
+                time: t,
+                type: 'beat',
+                isDownbeat: i % 4 === 0
+            }));
+
+            setMainMarkers(audioMarkers);
+            setDetectionStatus(`Complete: ${rawBeats.length} beats.`);
+            if (onStatusChange) onStatusChange("Main track beat analysis complete!");
+
+            // Save to project explicitly so it persists
+            onUpdateProject(activeProject.id, {
+                markers: audioMarkers.map(m => ({
+                    timestamp: m.time,
+                    frame: Math.round(m.time * (activeProject.frameRate || 20)),
+                    color: m.color || (m.isDownbeat ? '#ff3e3e' : '#ffffff'),
+                    note: '',
+                    type: m.type as any,
+                    duration_sec: 0
+                }))
+            });
+
+        } catch (err: any) {
+            console.error("Main track analysis failed:", err);
+            setDetectionStatus("Analysis failed.");
+            if (onStatusChange) onStatusChange(`Error analyzing main track: ${err.message}`);
+        } finally {
+            setIsProcessing(false);
+            setTimeout(() => {
+                setDetectionStatus('');
+                if (onStatusChange) onStatusChange('');
+            }, 4000);
+        }
+    };
 
     // ------------------------------------------------------------------------------------------------
     // Timeline Generation Logic
@@ -1799,6 +1841,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             ) : (
                                 <>Start Stem Separation</>
                             )}
+                        </button>
+                        <button
+                            onClick={handleRunMainBeatAnalysis}
+                            disabled={isProcessing || !activeProject || !audioFile?.path}
+                            className={`btn w-full mt-2 ${isProcessing || !activeProject || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                        >
+                            {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
                         </button>
                     </div>
                 </CollapsibleCard>
