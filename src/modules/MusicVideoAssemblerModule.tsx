@@ -226,8 +226,17 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
 
             if (!loadNodeKey) throw new Error('Could not find LoadAudio node');
+
+            // Upload the audio file to ComfyUI's input directory so LoadAudio can access it
+            if (onStatusChange) onStatusChange('Uploading audio to ComfyUI...');
+            const uploaded = await uploadFileToComfyUI(audioFile.path);
+            if (!uploaded) {
+                throw new Error('Failed to upload audio file to ComfyUI. Check that ComfyUI is running and accessible.');
+            }
+            if (onStatusChange) onStatusChange(`Audio uploaded: ${uploaded.name}`);
+
             // @ts-ignore
-            prompt[loadNodeKey].inputs.audio = audioFile.path;
+            prompt[loadNodeKey].inputs.audio = uploaded.name;
 
             const runId = Date.now().toString();
             const prefix = `stem_${runId}`;

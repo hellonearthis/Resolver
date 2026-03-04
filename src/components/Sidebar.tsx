@@ -59,8 +59,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
                     <span>System Log</span>
                 </div>
                 <div
-                    className="status-log-window bg-gray-900/50 rounded p-2 overflow-y-auto text-xs font-mono text-gray-400"
-                    style={{ maxHeight: '150px', display: 'flex', flexDirection: 'column', gap: '4px' }}
+                    className="status-log-window bg-gray-900/50 rounded p-2 overflow-y-auto font-mono text-gray-400"
+                    style={{ maxHeight: '150px', display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '9px' }}
                 >
                     {(!statusLogs || statusLogs.length === 0) && <span>No messages yet...</span>}
                     {statusLogs?.map((log, i) => (
