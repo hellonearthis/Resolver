@@ -25,6 +25,7 @@ interface MusicVideoAssemblerModuleProps {
     onCreateProject: (file: File, preferredOutputDir?: string) => BeatProject;
     onUpdateProject: (id: string, updates: Partial<BeatProject>) => void;
     onDeleteProject: (id: string) => void;
+    onStatusChange?: (msg: string) => void;
 }
 
 import type { VideoClip, SelectionState, AudioMarker, StemData } from '../types/assembler';
@@ -50,7 +51,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     onSelectProject,
     onCreateProject,
     onDeleteProject,
-    onUpdateProject
+    onUpdateProject,
+    onStatusChange
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const wavesurfer = useRef<WaveSurfer | null>(null);
@@ -61,7 +63,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [clips, setClips] = useState<VideoClip[]>([]);
     const [workflow, setWorkflow] = useState<any | null>(null);
-    const [statusMessage, setStatusMessage] = useState('');
     const [stems, setStems] = useState<StemData[]>([]);
     const stemSurfers = useRef<WaveSurfer[]>([]);
     const stemRegionsRefs = useRef<Map<number, any>>(new Map());
@@ -163,7 +164,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             const pathStr = (file as any).path;
 
             if (!pathStr) {
-                setStatusMessage("Error: Could not read file path.");
+                if (onStatusChange) onStatusChange("Error: Could not read file path.");
                 return;
             }
 
@@ -187,7 +188,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
             if (!activeProject || activeProject.audioPath !== pathStr) {
                 onCreateProject(file, finalOutputDir || undefined);
-                setStatusMessage(`Project created for ${file.name}`);
+                if (onStatusChange) onStatusChange(`Project created for ${file.name}`);
             }
         }
     };
@@ -195,7 +196,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     // --- Core Logic: Run & Poll ---
     const handleRunSeparation = async () => {
         if (!comfyConnected || !workflow || !audioFile?.path || !outputDir) {
-            setStatusMessage('Missing setup (Audio, Workflow, or Output Folder)');
+            if (onStatusChange) onStatusChange('Missing setup (Audio, Workflow, or Output Folder)');
             return;
         }
 
@@ -209,7 +210,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         } catch (e) { /* ignore */ }
 
         setIsProcessing(true);
-        setStatusMessage('Preparing workflow...');
+        if (onStatusChange) onStatusChange('Preparing workflow...');
         const startTime = Date.now(); // Capture start time to find new files
 
         try {
@@ -247,10 +248,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 throw new Error('Failed to queue prompt');
             }
 
-            setStatusMessage(`Processing... (ID: ${result.prompt_id})`);
+            if (onStatusChange) onStatusChange(`Processing... (ID: ${result.prompt_id})`);
             await waitForGeneration(result.prompt_id);
 
-            setStatusMessage('Moving files...');
+            if (onStatusChange) onStatusChange('Moving files...');
 
             const movedFiles = await moveFilesToProject(outputDir, startTime, prefix);
 
@@ -284,11 +285,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 });
             }
 
-            setStatusMessage(newStems.length > 0 ? 'Separation Complete!' : 'Warning: No output files found.');
+            if (onStatusChange) onStatusChange(newStems.length > 0 ? 'Separation Complete!' : 'Warning: No output files found.');
 
         } catch (err: any) {
             console.error(err);
-            setStatusMessage(`Error: ${err.message}`);
+            if (onStatusChange) onStatusChange(`Error: ${err.message}`);
         } finally {
             setIsProcessing(false);
         }
@@ -307,11 +308,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         const isRunning = queue.queue_running && queue.queue_running.some((i: any) => i[1] === promptId);
 
                         if (isPending) {
-                            setStatusMessage(`Queued... (Position: ${queue.queue_pending.findIndex((i: any) => i[1] === promptId) + 1})`);
+                            if (onStatusChange) onStatusChange(`Queued... (Position: ${queue.queue_pending.findIndex((i: any) => i[1] === promptId) + 1})`);
                             return;
                         }
                         if (isRunning) {
-                            setStatusMessage('Processing... (Running in ComfyUI)');
+                            if (onStatusChange) onStatusChange('Processing... (Running in ComfyUI)');
                         }
                     }
 
@@ -393,7 +394,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
     const runBeatAnalysis = async (audioPath: string, stemType: string) => {
         setIsProcessing(true);
-        setStatusMessage(`Analyzing beats for ${stemType} (${algorithm})…`);
+        if (onStatusChange) onStatusChange(`Analyzing beats for ${stemType} (${algorithm})…`);
         setDetectionStatus(`Analyzing ${stemType}...`);
 
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -493,17 +494,19 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
 
             setDetectionStatus(`Complete: ${beatsOnly.length} beats @${Math.round(beatResult.bpm)} BPM`);
+            if (onStatusChange) onStatusChange(`Analysis for ${stemType} complete!`);
 
-        } catch (err) {
+        } catch (err: any) {
             console.error('Analysis failed:', err);
             setDetectionStatus(`Analysis failed for ${stemType}.`);
+            if (onStatusChange) onStatusChange(`Error analyzing stem: ${err.message}`);
         } finally {
             setIsProcessing(false);
             audioContext.close().catch(() => { });
 
             setTimeout(() => {
                 setDetectionStatus('');
-                setStatusMessage('');
+                if (onStatusChange) onStatusChange('');
             }, 4000);
         }
     };
@@ -513,8 +516,12 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     };
 
     const loadProjectAudio = async (project: BeatProject) => {
+        if (onStatusChange) onStatusChange(`Loading project audio: ${project.audioFileName}`);
         setIsAnalyzing(true);
-        setStatusMessage("Loading audio files...");
+        setDuration(0);
+        setClips([]);
+        setStems([]);
+        setMainMarkers([]);
 
         // Track updates needed for the project
         let stemsUpdated = false;
@@ -608,7 +615,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 // For now, map all project markers
                 const audioMarkers: AudioMarker[] = project.markers.map(m => {
                     // Refine isDownbeat logic if not present
-                    // Try to deduce isDownbeat if we have a sequence of beats? 
+                    // Try to deduce isDownbeat if we have a sequence of beats?
                     // ProjectMarker doesn't strictly have isDownbeat, but we can infer or pass it.
                     // For now, simplify: if type is beat, we might need to re-analyze or just treat as plain beats.
                     return {
@@ -624,7 +631,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 setMainMarkers(audioMarkers);
             } else {
                 // Fallback to basic analysis if no markers found
-                setStatusMessage("Analyzing main track beats...");
+                if (onStatusChange) onStatusChange("Analyzing main track beats...");
                 const rawBeats = await analyzeAudio(blob);
                 const audioMarkers: AudioMarker[] = rawBeats.map((t, i) => ({
                     time: t,
@@ -641,7 +648,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 setClips([]);
             }
 
-            setStatusMessage("Ready.");
+            if (onStatusChange) onStatusChange("Ready.");
 
             // Save updates if any analysis happened
             if (stemsUpdated) {
@@ -654,7 +661,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         } catch (e) {
             console.error("Failed to load project audio", e);
-            setStatusMessage(`Error loading project: ${e}`);
+            if (onStatusChange) onStatusChange(`Error loading project: ${e}`);
         } finally {
             setIsAnalyzing(false);
         }
@@ -668,17 +675,17 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const handleGenerateTimelineClip = async (clipId: string) => {
         const clipToUpdate = clips.find(c => c.id === clipId);
         if (!clipToUpdate) {
-            setStatusMessage("Clip not found.");
+            if (onStatusChange) onStatusChange("Clip not found.");
             return;
         }
 
         if (!comfyConnected) {
-            setStatusMessage('Cannot generate: ComfyUI is not connected.');
+            if (onStatusChange) onStatusChange('Cannot generate: ComfyUI is not connected.');
             return;
         }
 
         if (!activeProject) {
-            setStatusMessage("No active project.");
+            if (onStatusChange) onStatusChange("No active project.");
             return;
         }
 
@@ -687,7 +694,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             setClips(prev => prev.map(c => c.id === clipId ? { ...c, status: 'generating' } : c));
             const frameRate = activeProject.frameRate || 20;
 
-            setStatusMessage(`Uploading Image & Audio for clip "${clipToUpdate.label}"...`);
+            if (onStatusChange) onStatusChange(`Uploading Image & Audio for clip "${clipToUpdate.label}"...`);
 
             // 1. Upload Start Image
             let finalImageName = "";
@@ -723,7 +730,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 }
             }
 
-            setStatusMessage(`Queuing generation for "${clipToUpdate.label}"...`);
+            if (onStatusChange) onStatusChange(`Queuing generation for "${clipToUpdate.label}"...`);
 
             // 3. Clone and Inject Workflow
             const workflow = JSON.parse(JSON.stringify(workflowJsonTemplate));
@@ -781,7 +788,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 throw new Error('Failed to queue prompt');
             }
 
-            setStatusMessage(`Generating Video (ID: ${result.prompt_id})...`);
+            if (onStatusChange) onStatusChange(`Generating Video (ID: ${result.prompt_id})...`);
 
             // 5. Poll for completion
             await waitForGeneration(result.prompt_id);
@@ -832,7 +839,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 return c;
             }));
 
-            setStatusMessage(`Successfully generated video for "${clipToUpdate.label}"`);
+            if (onStatusChange) onStatusChange(`Successfully generated video for "${clipToUpdate.label}"`);
 
             // Save state
             setTimeout(() => {
@@ -841,7 +848,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         } catch (err: any) {
             console.error('Generation Error:', err);
-            setStatusMessage(`Error generating clip: ${err.message}`);
+            if (onStatusChange) onStatusChange(`Error generating clip: ${err.message}`);
             setClips(prev => prev.map(c => c.id === clipId ? { ...c, status: 'error' } : c));
         }
     };
@@ -1371,7 +1378,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     break;
                 case 'c': // Cut (Add Segment)
                     e.preventDefault();
-                    // trigger visually clicking the Add Segment button requires either state changes or button ref. 
+                    // trigger visually clicking the Add Segment button requires either state changes or button ref.
                     // Better to just call a ref to our handleAddSegment function, but since it depends on state, we might hit stale closures if not careful.
                     // We'll dispatch a custom event and catch it.
                     document.dispatchEvent(new CustomEvent('NLE_ADD_SEGMENT'));
@@ -1396,7 +1403,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     // Add the current selection as a segment to the timeline (no ComfyUI generation)
     const handleAddSegment = () => {
         if (!activeSelection) {
-            setStatusMessage('Select a region on a waveform first.');
+            if (onStatusChange) onStatusChange('Select a region on a waveform first.');
             return;
         }
         const { start, end, source, stemIndex } = activeSelection;
@@ -1422,7 +1429,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         if (wsRegions.current) wsRegions.current.clearRegions();
         stemRegionsRefs.current.forEach(r => r.clearRegions());
 
-        setStatusMessage(`Segment added: ${formatTime(start)} – ${formatTime(end)}`);
+        if (onStatusChange) onStatusChange(`Segment added: ${formatTime(start)} – ${formatTime(end)}`);
     };
 
     // Remove a clip/segment from the timeline
@@ -1433,7 +1440,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     // Save clips to the active project
     const handleSaveToProject = async () => {
         if (!activeProject) {
-            setStatusMessage('No project selected.');
+            if (onStatusChange) onStatusChange('No project selected.');
             return;
         }
         try {
@@ -1450,7 +1457,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
 
             if (!baseOutputDir) {
-                setStatusMessage('No output folder configured. Set one in Settings → Defaults.');
+                if (onStatusChange) onStatusChange('No output folder configured. Set one in Settings → Defaults.');
                 return;
             }
 
@@ -1459,17 +1466,17 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 clips: clips,
                 outputDir: baseOutputDir,
             });
-            setStatusMessage(`Project saved ✓  →  ${baseOutputDir}`);
+            if (onStatusChange) onStatusChange(`Project saved ✓  →  ${baseOutputDir}`);
         } catch (e) {
             console.error('Save failed:', e);
-            setStatusMessage('Error saving project.');
+            if (onStatusChange) onStatusChange('Error saving project.');
         }
     };
 
     // Image picker for start/end images
     const handlePickImage = (clipId: string, field: 'startImagePath' | 'endImagePath') => {
         if (!activeProject?.outputDir) {
-            setStatusMessage('No project folder available. Save the project first.');
+            if (onStatusChange) onStatusChange('No project folder available. Save the project first.');
             return;
         }
         const input = document.createElement('input');
@@ -1537,7 +1544,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
     const handleGenerateClipFromRegion = async () => {
         if (!activeSelection) {
-            setStatusMessage("Please select a region on the waveform first.");
+            if (onStatusChange) onStatusChange("Please select a region on the waveform first.");
             return;
         }
 
@@ -1589,7 +1596,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
     const generateClipInComfy = async (clip: VideoClip, frames: number, width: number, height: number, audioPath: string) => {
         if (!workflowJsonTemplate || !audioPath) {
-            setStatusMessage("Workflow or Audio not loaded.");
+            if (onStatusChange) onStatusChange("Workflow or Audio not loaded.");
             return;
         }
 
@@ -1658,7 +1665,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 // Poll for completion (similar to StemSeparation logic)
                 // For brevity/robustness, we'll reuse the polling logic or import it.
                 // Ideally, we wait for the file to appear in output.
-                setStatusMessage(`Started generation for Clip ${clip.id}`);
+                if (onStatusChange) onStatusChange(`Started generation for Clip ${clip.id}`);
             }
 
         } catch (e) {
@@ -1683,9 +1690,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
         const result = await ipcRenderer.invoke('save-manifest', manifest);
         if (result.success) {
-            setStatusMessage(`Manifest saved to ${result.path}`);
+            if (onStatusChange) onStatusChange(`Manifest saved to ${result.path}`);
         } else {
-            setStatusMessage(`Error saving manifest: ${result.error}`);
+            if (onStatusChange) onStatusChange(`Error saving manifest: ${result.error}`);
         }
     };
 
@@ -1793,11 +1800,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 <>Start Stem Separation</>
                             )}
                         </button>
-                        {statusMessage && (
-                            <div className="mt-2 text-center text-xs font-mono text-[var(--accent-primary)]">
-                                {statusMessage}
-                            </div>
-                        )}
                     </div>
                 </CollapsibleCard>
 
@@ -1972,7 +1974,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-gray-900/80 rounded backdrop-blur-sm pointer-events-none">
                         <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2"></div>
                         <span className="text-xl font-bold text-white shadow-sm">Analyzing Audio</span>
-                        <span className="text-sm font-semibold text-indigo-300 mt-2">{statusMessage}</span>
+                        <span className="text-sm font-semibold text-indigo-300 mt-2">{detectionStatus}</span>
                     </div>
                 )}
 
@@ -2182,11 +2184,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     onRemoveClip={handleRemoveClip}
                     onPickImage={handlePickImage}
                     onGenerateClip={handleGenerateTimelineClip}
-                    onError={setStatusMessage}
+                    onError={(msg) => onStatusChange && onStatusChange(`Table Error: ${msg}`)}
                 />
             </div>
-
-            {statusMessage && <div className="status-bar mt-4 text-xs text-gray-400 italic text-center">{statusMessage}</div>}
 
             {/* Custom Floating Tooltip */}
             {

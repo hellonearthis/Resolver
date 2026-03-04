@@ -22,6 +22,17 @@ declare global {
 function App() {
   const [activeModule, setActiveModule] = useState('music-video-assembler');
 
+  // --- Global Status Logs ---
+  const [statusLogs, setStatusLogs] = useState<{ time: Date, msg: string }[]>([]);
+
+  const addLog = (msg: string) => {
+    setStatusLogs(prev => {
+      const newLogs = [...prev, { time: new Date(), msg }];
+      if (newLogs.length > 100) return newLogs.slice(newLogs.length - 100);
+      return newLogs;
+    });
+  };
+
   // --- Global Project State ---
   const { projects, saveProject, updateProject, deleteProject } = useProjectStorage();
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -84,6 +95,7 @@ function App() {
             onCreateProject={handleCreateProject}
             onUpdateProject={handleUpdateProject}
             onDeleteProject={deleteProject}
+            onStatusChange={addLog}
           />
         );
       case 'ltx-test':
@@ -103,7 +115,7 @@ function App() {
   };
 
   return (
-    <Layout activeModule={activeModule} onModuleChange={setActiveModule}>
+    <Layout activeModule={activeModule} onModuleChange={setActiveModule} statusLogs={statusLogs}>
       {activeProject && (
         <div className="bg-blue-900/30 border-b border-blue-900/50 px-4 py-2 text-xs text-blue-200 flex justify-between items-center">
           <span>📂 Active Project: <strong>{activeProject.name}</strong></span>
