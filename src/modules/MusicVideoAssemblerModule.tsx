@@ -1812,11 +1812,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 />
             </CollapsibleCard>
 
-            {/* Stem Separation Configuration & Action */}
-            <div className="grid-2 mt-4">
+            {/* Consolidated Audio Analysis & Stem Generation */}
+            <div className="mt-4">
                 <CollapsibleCard
-                    title="Stem Generation"
-                    defaultOpen={false}
+                    title="Audio Analysis & Stem Generation"
+                    defaultOpen={true}
                     headerRight={
                         <div className="flex gap-2">
                             <span className={`status-badge ${comfyConnected ? 'success' : 'error'}`}>
@@ -1828,99 +1828,107 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         </div>
                     }
                 >
-
-                    <div className="flex flex-col gap-4">
-
-                        <button
-                            onClick={handleRunSeparation}
-                            disabled={isProcessing || !comfyConnected || !audioFile?.path || !workflow}
-                            className={`btn w-full mt-2 ${isProcessing || !comfyConnected || !audioFile?.path || !workflow ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
-                        >
-                            {isProcessing ? (
-                                <>Processing Music File...</>
-                            ) : (
-                                <>Start Stem Separation</>
-                            )}
-                        </button>
-                        <button
-                            onClick={handleRunMainBeatAnalysis}
-                            disabled={isProcessing || !activeProject || !audioFile?.path}
-                            className={`btn w-full mt-2 ${isProcessing || !activeProject || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
-                        >
-                            {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
-                        </button>
-                    </div>
-                </CollapsibleCard>
-
-                <CollapsibleCard title="Beat & Onset Analysis configuration" defaultOpen={false}>
-                    <div className="flex flex-col gap-4">
-                        <div>
-                            <label className="block text-sm text-gray-400 mb-1">Beat Tracking Algorithm</label>
-                            <select
-                                value={algorithm}
-                                onChange={(e) => setAlgorithm(e.target.value as BeatAlgorithm)}
-                                className="w-full bg-[var(--bg-elevated)] border border-[var(--border-color)] rounded p-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                    <div className="flex flex-col gap-6">
+                        {/* 1. Generation Actions */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <button
+                                onClick={handleRunSeparation}
+                                disabled={isProcessing || !comfyConnected || !audioFile?.path || !workflow}
+                                className={`btn w-full ${isProcessing || !comfyConnected || !audioFile?.path || !workflow ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
                             >
-                                <option value="degara">Degara (Complex rhythm)</option>
-                                <option value="multifeature">Multi-feature (Electronic/Dance)</option>
-                            </select>
+                                {isProcessing && !detectionStatus.includes("main") ? (
+                                    <>Processing Music File...</>
+                                ) : (
+                                    <>Start Stem Separation</>
+                                )}
+                            </button>
+                            <button
+                                onClick={handleRunMainBeatAnalysis}
+                                disabled={isProcessing || !activeProject || !audioFile?.path}
+                                className={`btn w-full ${isProcessing || !activeProject || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                            >
+                                {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
+                            </button>
                         </div>
-                        <div className="flex flex-col gap-2">
-                            <label className="flex items-center gap-2 text-sm text-gray-300">
-                                <input
-                                    type="checkbox"
-                                    checked={enableOnsets}
-                                    onChange={(e) => setEnableOnsets(e.target.checked)}
-                                    className="accent-[var(--accent-primary)]"
-                                />
-                                Extract Onsets (Granular events)
-                            </label>
-                            <label className="flex items-center gap-2 text-sm text-gray-300">
-                                <input
-                                    type="checkbox"
-                                    checked={enableLoudness}
-                                    onChange={(e) => setEnableLoudness(e.target.checked)}
-                                    className="accent-[var(--accent-primary)]"
-                                />
-                                Extract Loudness Envelopes
-                            </label>
+
+                        <div className="border-t border-gray-700/50 pt-4">
+                            <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">Analysis Configuration</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Algorithm Selection */}
+                                <div>
+                                    <label className="block text-xs text-gray-400 mb-2 uppercase">Beat Tracking Algorithm</label>
+                                    <select
+                                        value={algorithm}
+                                        onChange={(e) => setAlgorithm(e.target.value as BeatAlgorithm)}
+                                        className="w-full bg-[var(--bg-elevated)] border border-[var(--border-color)] rounded p-2 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                                    >
+                                        <option value="degara">Degara (Complex rhythm)</option>
+                                        <option value="multifeature">Multi-feature (Electronic/Dance)</option>
+                                    </select>
+                                </div>
+
+                                {/* Feature Toggles */}
+                                <div className="flex flex-col justify-center gap-3">
+                                    <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer hover:text-white transition-colors">
+                                        <input
+                                            type="checkbox"
+                                            checked={enableOnsets}
+                                            onChange={(e) => setEnableOnsets(e.target.checked)}
+                                            className="accent-[var(--accent-primary)]"
+                                        />
+                                        Extract Onsets (Granular events)
+                                    </label>
+                                    <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer hover:text-white transition-colors">
+                                        <input
+                                            type="checkbox"
+                                            checked={enableLoudness}
+                                            onChange={(e) => setEnableLoudness(e.target.checked)}
+                                            className="accent-[var(--accent-primary)]"
+                                        />
+                                        Extract Loudness Envelopes
+                                    </label>
+                                </div>
+                            </div>
                         </div>
+
+                        {/* Individual Stem Analysis Section */}
                         {stems.length > 0 && (
-                            <div className="flex flex-col mt-2 pt-4 border-t border-[var(--border-color)]" style={{ gap: '3px' }}>
-                                <label className="block text-sm text-gray-400 mb-1">Run Analysis on Generated Stems</label>
-                                <button
-                                    className="btn w-full btn-primary justify-center"
-                                    style={{ border: '1px solid #818cf8', marginBottom: '3px' }}
-                                    onClick={async () => {
-                                        for (const s of stems) {
-                                            await handleAnalyzeLocal(s.path, s.type);
-                                        }
-                                    }}
-                                    disabled={isProcessing}
-                                    title="Analyze All Stems"
-                                >
-                                    {isProcessing ? 'Analyzing...' : 'Analyze All Stems'}
-                                </button>
-                                <div className="flex flex-col w-full" style={{ gap: '3px' }}>
-                                    {stems.map((stem, index) => (
-                                        <button
-                                            key={index}
-                                            className="btn w-full btn-primary flex justify-center items-center gap-2"
-                                            style={{ border: '1px solid #818cf8' }}
-                                            onClick={() => handleAnalyzeLocal(stem.path, stem.type)}
-                                            disabled={isProcessing}
-                                            title={`Run Analysis on ${stem.type}`}
-                                        >
-                                            <span style={{ color: stem.color, fontSize: '10px' }}>⬤</span>
-                                            {isProcessing ? 'Analyzing...' : `Analyze ${stem.type}`}
-                                        </button>
-                                    ))}
+                            <div className="border-t border-gray-700/50 pt-4">
+                                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">Run Analysis on Generated Stems</h4>
+                                <div className="flex flex-col gap-2">
+                                    <button
+                                        className="btn w-full btn-secondary justify-center border border-indigo-500/30 hover:border-indigo-500/80"
+                                        onClick={async () => {
+                                            for (const s of stems) {
+                                                await handleAnalyzeLocal(s.path, s.type);
+                                            }
+                                        }}
+                                        disabled={isProcessing}
+                                    >
+                                        {isProcessing ? 'Analyzing...' : 'Analyze All Stems'}
+                                    </button>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                        {stems.map((stem, index) => (
+                                            <button
+                                                key={index}
+                                                className="btn btn-secondary text-xs py-1 px-2 border border-gray-700 hover:border-indigo-500/50 flex justify-center items-center gap-2"
+                                                onClick={() => handleAnalyzeLocal(stem.path, stem.type)}
+                                                disabled={isProcessing}
+                                                title={`Run Analysis on ${stem.type}`}
+                                            >
+                                                <span style={{ color: stem.color, fontSize: '8px' }}>⬤</span>
+                                                {stem.type}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
                         )}
+
                         {detectionStatus && (
-                            <div className="text-xs text-[var(--text-secondary)] bg-[var(--bg-elevated)] p-2 rounded">
-                                Status: <span className="text-[var(--accent-primary)]">{detectionStatus}</span>
+                            <div className="text-xs text-[var(--text-secondary)] bg-black/20 p-2 rounded border border-white/5">
+                                <span className="text-gray-500 uppercase font-bold mr-2">Status:</span>
+                                <span className="text-[var(--accent-primary)] font-mono">{detectionStatus}</span>
                             </div>
                         )}
                     </div>
