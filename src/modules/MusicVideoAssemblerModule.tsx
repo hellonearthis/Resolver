@@ -1876,34 +1876,78 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         </div>
                     }
                 >
-                    <div className="flex flex-col gap-6">
-                        {/* 1. Generation Actions */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <button
-                                onClick={handleRunSeparation}
-                                disabled={isProcessing || !comfyConnected || !audioFile?.path || !workflow}
-                                className={`btn w-full ${isProcessing || !comfyConnected || !audioFile?.path || !workflow ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
-                                style={{ marginBottom: '5px' }}
-                            >
-                                {isProcessing && !detectionStatus.includes("main") ? (
-                                    <>Processing Music File...</>
-                                ) : (
-                                    <>Start Stem Separation</>
-                                )}
-                            </button>
-                            <button
-                                onClick={handleRunMainBeatAnalysis}
-                                disabled={isProcessing || !activeProject || !audioFile?.path}
-                                className={`btn w-full ${isProcessing || !activeProject || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
-                                style={{ marginBottom: '5px' }}
-                            >
-                                {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
-                            </button>
+                    <div className="flex flex-row gap-6">
+                        {/* Left column — Generation Actions */}
+                        <div className="flex flex-col gap-6 flex-1">
+                            <div className="flex flex-col gap-2">
+                                <button
+                                    onClick={handleRunSeparation}
+                                    disabled={isProcessing || !comfyConnected || !audioFile?.path || !workflow}
+                                    className={`btn w-full ${isProcessing || !comfyConnected || !audioFile?.path || !workflow ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                                    style={{ marginBottom: '5px' }}
+                                >
+                                    {isProcessing && !detectionStatus.includes("main") ? (
+                                        <>Processing Music File...</>
+                                    ) : (
+                                        <>Start Stem Separation</>
+                                    )}
+                                </button>
+                                <button
+                                    onClick={handleRunMainBeatAnalysis}
+                                    disabled={isProcessing || !activeProject || !audioFile?.path}
+                                    className={`btn w-full ${isProcessing || !activeProject || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                                    style={{ marginBottom: '5px' }}
+                                >
+                                    {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
+                                </button>
+                            </div>
+
+                            {/* Individual Stem Analysis Section */}
+                            {stems.length > 0 && (
+                                <div className="border-t border-gray-700/50 pt-3">
+                                    <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Stem Analysis</h4>
+                                    <div className="flex flex-col gap-2">
+                                        <button
+                                            className="btn w-full btn-secondary justify-center border border-indigo-500/30 hover:border-indigo-500/80"
+                                            onClick={async () => {
+                                                for (const s of stems) {
+                                                    await handleAnalyzeLocal(s.path, s.type);
+                                                }
+                                            }}
+                                            disabled={isProcessing}
+                                        >
+                                            {isProcessing ? 'Analyzing...' : 'Analyze All Stems'}
+                                        </button>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {stems.map((stem, index) => (
+                                                <button
+                                                    key={index}
+                                                    className="btn btn-secondary text-xs py-1 px-2 border border-gray-700 hover:border-indigo-500/50 flex justify-center items-center gap-2"
+                                                    onClick={() => handleAnalyzeLocal(stem.path, stem.type)}
+                                                    disabled={isProcessing}
+                                                    title={`Run Analysis on ${stem.type}`}
+                                                >
+                                                    <span style={{ color: stem.color, fontSize: '8px' }}>⬤</span>
+                                                    {stem.type}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {detectionStatus && (
+                                <div className="text-xs text-[var(--text-secondary)] bg-black/20 p-2 rounded border border-white/5">
+                                    <span className="text-gray-500 uppercase font-bold mr-2">Status:</span>
+                                    <span className="text-[var(--accent-primary)] font-mono">{detectionStatus}</span>
+                                </div>
+                            )}
                         </div>
 
-                        <div className="border-t border-gray-700/50 pt-4">
+                        {/* Right column — Analysis Configuration */}
+                        <div className="border-t-0 border-l border-gray-700/50 pl-6 flex-1">
                             <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">Analysis Configuration</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="flex flex-col gap-4">
                                 {/* Algorithm Selection */}
                                 <div>
                                     <label className="block text-xs text-gray-400 mb-2 uppercase">Beat Tracking Algorithm</label>
@@ -1918,7 +1962,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 </div>
 
                                 {/* Feature Toggles */}
-                                <div className="flex flex-col justify-center gap-3">
+                                <div className="flex flex-col gap-3">
                                     <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer hover:text-white transition-colors">
                                         <input
                                             type="checkbox"
@@ -1940,47 +1984,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 </div>
                             </div>
                         </div>
-
-                        {/* Individual Stem Analysis Section */}
-                        {stems.length > 0 && (
-                            <div className="border-t border-gray-700/50 pt-4">
-                                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">Run Analysis on Generated Stems</h4>
-                                <div className="flex flex-col gap-2">
-                                    <button
-                                        className="btn w-full btn-secondary justify-center border border-indigo-500/30 hover:border-indigo-500/80"
-                                        onClick={async () => {
-                                            for (const s of stems) {
-                                                await handleAnalyzeLocal(s.path, s.type);
-                                            }
-                                        }}
-                                        disabled={isProcessing}
-                                    >
-                                        {isProcessing ? 'Analyzing...' : 'Analyze All Stems'}
-                                    </button>
-                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                        {stems.map((stem, index) => (
-                                            <button
-                                                key={index}
-                                                className="btn btn-secondary text-xs py-1 px-2 border border-gray-700 hover:border-indigo-500/50 flex justify-center items-center gap-2"
-                                                onClick={() => handleAnalyzeLocal(stem.path, stem.type)}
-                                                disabled={isProcessing}
-                                                title={`Run Analysis on ${stem.type}`}
-                                            >
-                                                <span style={{ color: stem.color, fontSize: '8px' }}>⬤</span>
-                                                {stem.type}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {detectionStatus && (
-                            <div className="text-xs text-[var(--text-secondary)] bg-black/20 p-2 rounded border border-white/5">
-                                <span className="text-gray-500 uppercase font-bold mr-2">Status:</span>
-                                <span className="text-[var(--accent-primary)] font-mono">{detectionStatus}</span>
-                            </div>
-                        )}
                     </div>
                 </CollapsibleCard>
             </div>
