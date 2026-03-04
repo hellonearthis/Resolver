@@ -60,6 +60,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [mainMarkers, setMainMarkers] = useState<AudioMarker[]>([]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [clips, setClips] = useState<VideoClip[]>([]);
+    const [workflow, setWorkflow] = useState<any | null>(null);
     const [statusMessage, setStatusMessage] = useState('');
     const [stems, setStems] = useState<StemData[]>([]);
     const stemSurfers = useRef<WaveSurfer[]>([]);
@@ -125,8 +126,16 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     };
 
     const loadWorkflow = async () => {
-        // We will now load the workflow directly from the JSON import, saving the need for IPC here, 
-        // but we'll leave the connection check.
+        try {
+            // @ts-ignore
+            const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+            const result = await ipcRenderer.invoke('load-default-workflow');
+            if (result.success) {
+                setWorkflow(result.workflow);
+            }
+        } catch (e) {
+            console.error("Failed to load stem separation workflow", e);
+        }
     };
 
     // Load Project Audio when activeProject changes
@@ -185,8 +194,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
     // --- Core Logic: Run & Poll ---
     const handleRunSeparation = async () => {
-        if (!comfyConnected || !audioFile?.path || !outputDir) {
-            setStatusMessage('Missing setup (Audio, or Output Folder)');
+        if (!comfyConnected || !workflow || !audioFile?.path || !outputDir) {
+            setStatusMessage('Missing setup (Audio, Workflow, or Output Folder)');
             return;
         }
 
@@ -204,10 +213,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const startTime = Date.now(); // Capture start time to find new files
 
         try {
-            // Since we're dropping 'workflow' state, we'll reuse the imported template!
-            // Wait, this function runs stem separation using the same video ltx template? No, the previous logic assumed the default workflow loaded via IPC was for stems. 
-            // We'll skip fixing stem separation for now as the goal is the timeline generation.
-            const prompt = JSON.parse(JSON.stringify(workflowJsonTemplate)); // fallback, but might break if stem separation requires a different workflow natively.
+            const prompt = JSON.parse(JSON.stringify(workflow));
 
             let loadNodeKey: string | null = null;
             for (const [key, node] of Object.entries(prompt)) {
@@ -1767,8 +1773,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             <span className={`status-badge ${comfyConnected ? 'success' : 'error'}`}>
                                 {comfyConnected ? 'Connected' : 'Disconnected'}
                             </span>
-                            <span className={`status-badge ${workflowJsonTemplate ? 'success' : 'warning'}`}>
-                                {workflowJsonTemplate ? 'Ready' : 'No Workflow'}
+                            <span className={`status-badge ${workflow ? 'success' : 'warning'}`}>
+                                {workflow ? 'Ready' : 'No Workflow'}
                             </span>
                         </div>
                     }
@@ -1778,8 +1784,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
                         <button
                             onClick={handleRunSeparation}
-                            disabled={isProcessing || !comfyConnected || !audioFile?.path || !workflowJsonTemplate}
-                            className={`btn w-full mt-2 ${isProcessing || !comfyConnected || !audioFile?.path || !workflowJsonTemplate ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                            disabled={isProcessing || !comfyConnected || !audioFile?.path || !workflow}
+                            className={`btn w-full mt-2 ${isProcessing || !comfyConnected || !audioFile?.path || !workflow ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
                         >
                             {isProcessing ? (
                                 <>Processing Music File...</>
