@@ -1876,9 +1876,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         </div>
                     }
                 >
-                    <div className="flex flex-row gap-6">
+                    <div className="flex flex-row gap-0">
                         {/* Left column — Generation Actions */}
-                        <div className="flex flex-col gap-6 flex-1">
+                        <div className="flex flex-col gap-6 flex-1 pr-6">
                             <div className="flex flex-col gap-2">
                                 <button
                                     onClick={handleRunSeparation}
