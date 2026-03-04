@@ -271,6 +271,25 @@ These parameters control generation quality and are typically left at defaults:
 
 ---
 
+## VRAM Management
+
+ComfyUI executes workflows one by one and automatically handles loading/unloading models from VRAM as needed between different jobs. 
+
+However, if you want to explicitly clear VRAM and system memory between large batches or if you intend to run other heavy applications, you can trigger ComfyUI's `/free` endpoint:
+
+```typescript
+// Example: POST to /free to unload models
+await fetch('http://127.0.0.1:8188/free', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ unload_models: true, free_memory: true })
+});
+```
+
+*(This functionality is available via the "🧹 Clear VRAM" button on the LTX Test Page.)*
+
+---
+
 ## Troubleshooting
 
 -   **"ComfyUI: Disconnected"** — Ensure ComfyUI is running at `http://127.0.0.1:8188`.

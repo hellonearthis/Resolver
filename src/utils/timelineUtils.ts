@@ -130,3 +130,18 @@ export const buildTimelineRows = (clips: VideoClip[], trackDuration: number): Ti
 
     return rows;
 };
+
+/**
+ * Calculates the number of frames for an audio selection and snaps it
+ * to the nearest valid LTX-Video frame count ((n * 8) + 1).
+ *
+ * @param durationSeconds The duration of the selected chunk in seconds
+ * @param fps The frame rate (e.g., 24, 25, 30, 60)
+ * @returns The nearest valid LTX frame count that loosely matches the duration
+ */
+export const getValidLtxFrameCount = (durationSeconds: number, fps: number): number => {
+    const exactFrames = durationSeconds * fps;
+    let n = Math.round((exactFrames - 1) / 8);
+    if (n < 1) n = 1;
+    return (n * 8) + 1;
+};

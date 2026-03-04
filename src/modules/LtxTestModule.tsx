@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import workflowJson from '../../comfyui_workflows/video_ltx2_i2v.json';
 import DropZone from '../components/DropZone';
+import { getValidLtxFrameCount } from '../utils/timelineUtils';
 
 // Helper to get IPC renderer
 const getIpcRenderer = () => {
@@ -21,9 +22,42 @@ export default function LtxTestModule() {
     const [audioFile, setAudioFile] = useState<string>('Bob Marly-Get Up, Stand Up_Vocals.mp3');
 
     const [isGenerating, setIsGenerating] = useState(false);
+    const [isClearingVram, setIsClearingVram] = useState(false);
     const [statusMessage, setStatusMessage] = useState('');
 
     const duration = (frameCount / fps).toFixed(2);
+
+    const handleClearVram = async () => {
+        const ipcRenderer = getIpcRenderer();
+        if (!ipcRenderer) {
+            setStatusMessage('Error: Electron IPC not found.');
+            return;
+        }
+
+        setIsClearingVram(true);
+        setStatusMessage('Clearing ComfyUI VRAM...');
+
+        try {
+            const response = await ipcRenderer.invoke('comfy-fetch', 'http://127.0.0.1:8188/free', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ unload_models: true, free_memory: true })
+            });
+
+            if (response.success) {
+                setStatusMessage('Successfully cleared ComfyUI VRAM and unloaded models.');
+            } else {
+                setStatusMessage(`Error clearing VRAM: ${response.error || 'Unknown error'}`);
+            }
+        } catch (error: any) {
+            console.error('Clear VRAM Error:', error);
+            setStatusMessage(`Error: ${error.message || String(error)}`);
+        } finally {
+            setIsClearingVram(false);
+        }
+    };
 
     const handleGenerate = async () => {
         const ipcRenderer = getIpcRenderer();
@@ -239,10 +273,33 @@ export default function LtxTestModule() {
                                 </div>
                                 <p className="text-xs text-gray-500 mt-2">Must be (n × 8) + 1.</p>
                             </div>
+
+                            {/* NEW: Calculate from Duration */}
+                            <div className="md:col-span-2 mt-2 pt-3 border-t border-gray-700/50">
+                                <label className="block text-sm font-medium text-blue-300 mb-1">Calculate from Audio Selection Duration (seconds)</label>
+                                <div className="flex gap-3 items-center">
+                                    <input
+                                        type="number"
+                                        placeholder="e.g. 4.2"
+                                        step="0.1"
+                                        min="0.1"
+                                        onChange={e => {
+                                            const val = Number(e.target.value);
+                                            if (val > 0) {
+                                                setFrameCount(getValidLtxFrameCount(val, fps));
+                                            }
+                                        }}
+                                        className="flex-1 bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors max-w-[200px]"
+                                    />
+                                    <p className="text-xs text-gray-400">
+                                        Type a chunk duration to auto-select the nearest valid LTX frame count above.
+                                    </p>
+                                </div>
+                            </div>
                         </div>
 
-                        <div className="mt-3 bg-indigo-900/20 text-indigo-300 border border-indigo-800/50 px-3 py-2 rounded text-sm flex justify-between items-center">
-                            <span>Estimated Duration:</span>
+                        <div className="mt-4 bg-indigo-900/20 text-indigo-300 border border-indigo-800/50 px-3 py-2 rounded text-sm flex justify-between items-center">
+                            <span>Final Generated Duration:</span>
                             <span className="font-bold text-indigo-200">{duration} seconds</span>
                         </div>
                     </div>
@@ -260,7 +317,15 @@ export default function LtxTestModule() {
                     </div>
 
                     {/* Actions */}
-                    <div className="pt-4 border-t border-gray-700/50 flex justify-end">
+                    <div className="pt-4 border-t border-gray-700/50 flex justify-between items-center">
+                        <button
+                            onClick={handleClearVram}
+                            disabled={isClearingVram || isGenerating}
+                            className={`text-sm text-gray-400 hover:text-white transition-colors flex items-center gap-1 ${isClearingVram ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            title="Unload models and free ComfyUI VRAM"
+                        >
+                            {isClearingVram ? '🧹 Clearing...' : '🧹 Clear VRAM'}
+                        </button>
                         <button
                             onClick={handleGenerate}
                             disabled={isGenerating}
