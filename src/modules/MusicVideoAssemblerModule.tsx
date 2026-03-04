@@ -1992,11 +1992,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
 
             {/* Controls Bar */}
-            <div className="controls-bar mt-4 bg-[var(--bg-tertiary)] rounded border border-gray-700"
-                style={{ display: 'flex', alignItems: 'center', gap: '32px', padding: '16px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div className="controls-bar mt-4 bg-[var(--bg-tertiary)] rounded border border-gray-700">
+                <div className="controls-bar-group">
                     <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Zoom</label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div className="controls-bar-zoom">
                         <input
                             type="range"
                             min={Math.floor(minZoom)}
@@ -2004,20 +2003,18 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             value={zoomLevel}
                             onChange={(e) => setZoomLevel(Number(e.target.value))}
                             className="accent-indigo-500"
-                            style={{ width: '260px' }}
                         />
                         <button
                             className="text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-300 whitespace-nowrap"
                             onClick={() => setZoomLevel(minZoom)}
                             title="Fit to Screen"
-                            style={{ padding: '4px 10px' }}
                         >
                             Fit
                         </button>
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div className="controls-bar-group">
                     <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Main Beat Source</label>
                     <select
                         value={mainBeatSource}
@@ -2025,8 +2022,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             const val = e.target.value;
                             setMainBeatSource(val === 'main' ? 'main' : Number(val));
                         }}
-                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 outline-none focus:border-indigo-500"
-                        style={{ padding: '6px 12px' }}
+                        className="controls-bar-select bg-gray-800 text-white text-sm rounded border border-gray-600 outline-none focus:border-indigo-500"
                     >
                         <option value="main">Main Track Analysis</option>
                         {stems.map((s, i) => (
@@ -2035,7 +2031,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     </select>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginLeft: 'auto' }}>
+                <div className="controls-bar-group ml-auto">
                     <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide text-right" title="Frames Per Second for Video Generation">Project FPS</label>
                     <input
                         type="number"
@@ -2047,13 +2043,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 onUpdateProject(activeProject.id, { frameRate: Number(e.target.value) });
                             }
                         }}
-                        className="bg-gray-800 text-white text-sm rounded border border-gray-600 outline-none focus:border-indigo-500 text-right"
-                        style={{ padding: '6px 12px', width: '90px' }}
+                        className="controls-bar-input bg-gray-800 text-white text-sm rounded border border-gray-600 outline-none focus:border-indigo-500 text-right"
                     />
                 </div>
 
-                <div className="text-xs text-gray-500 border-l border-gray-700 self-stretch flex items-center"
-                    style={{ paddingLeft: '24px' }}>
+                <div className="controls-bar-duration text-xs text-gray-500 border-l border-gray-700">
                     {duration > 0 && `Duration: ${duration.toFixed(2)}s`}
                 </div>
             </div>

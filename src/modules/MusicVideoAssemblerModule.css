@@ -52,3 +52,50 @@
     display: flex;
     gap: 8px;
 }
+
+.controls-bar {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    padding: 16px;
+}
+
+.controls-bar-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.controls-bar-group.ml-auto {
+    margin-left: auto;
+}
+
+.controls-bar-zoom {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.controls-bar-zoom input[type="range"] {
+    width: 260px;
+}
+
+.controls-bar-zoom button {
+    padding: 4px 10px;
+}
+
+.controls-bar-select {
+    padding: 6px 12px;
+}
+
+.controls-bar-input {
+    padding: 6px 12px;
+    width: 90px;
+}
+
+.controls-bar-duration {
+    padding-left: 24px;
+    display: flex;
+    align-items: center;
+    align-self: stretch;
+}
