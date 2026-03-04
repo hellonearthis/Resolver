@@ -2335,7 +2335,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 </CollapsibleCard>
                             </div>
 
-                        </div> {/* end stems-list */ }
+                        </div>
                     );
                 })()
             }
