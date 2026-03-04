@@ -47,7 +47,7 @@ function App() {
       name: file.name.replace(/\.[^/.]+$/, ""), // Remove extension
       audioPath: (file as any).path,
       audioFileName: file.name,
-      frameRate: 24, // Default
+      frameRate: 20, // Default to 20 fps for cleaner math in LTX
       stemType: 'master', // Default
       stems: [],
       outputDir: initialOutputDir

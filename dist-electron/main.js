@@ -547,6 +547,37 @@ electron_1.ipcMain.handle('comfy-fetch', async (_event, url, options) => {
         return { success: false, error: message };
     }
 });
+// Proxy ComfyUI file uploads (multipart/form-data)
+electron_1.ipcMain.handle('comfy-upload-file', async (_event, api_url, filePath, type, overwrite) => {
+    console.log(`Uploading file to ComfyUI: ${filePath}`);
+    try {
+        if (!fs_1.default.existsSync(filePath)) {
+            return { success: false, error: "File does not exist locally" };
+        }
+        const formData = new FormData();
+        const fileContent = fs_1.default.readFileSync(filePath);
+        const fileName = path_1.default.basename(filePath);
+        const blob = new Blob([fileContent]);
+        formData.append('image', blob, fileName);
+        formData.append('type', type);
+        formData.append('overwrite', overwrite.toString());
+        const response = await fetch(`${api_url}/upload/image`, {
+            method: 'POST',
+            body: formData
+        });
+        if (!response.ok) {
+            console.error(`ComfyUI Upload Error: ${response.status} ${response.statusText}`);
+            return { success: false, status: response.status, error: response.statusText };
+        }
+        const data = await response.json();
+        return { success: true, data };
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('ComfyUI Upload Error:', message);
+        return { success: false, error: message };
+    }
+});
 // Config Persistence
 const CONFIG_PATH = path_1.default.join(electron_1.app.getPath('userData'), 'config.json');
 electron_1.ipcMain.handle('get-config', async () => {

@@ -11,6 +11,7 @@ interface ProjectTimelineTableProps {
     onUpdateClipLabel: (clipId: string, newLabel: string) => void;
     onRemoveClip: (clipId: string) => void;
     onPickImage: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
+    onGenerateClip: (clipId: string) => void;
     onError: (msg: string) => void;
 }
 
@@ -24,6 +25,7 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
     onUpdateClipLabel,
     onRemoveClip,
     onPickImage,
+    onGenerateClip,
     onError
 }) => {
     // Inline label editing
@@ -72,7 +74,8 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                         <th className="p-2">Status</th>
                         <th className="p-2">Start Image</th>
                         <th className="p-2">End Image</th>
-                        <th className="p-2">Video</th>
+                        <th className="p-2">Generate</th>
+                        <th className="p-2">Video Links</th>
                         <th className="p-2"></th>
                     </tr>
                 </thead>
@@ -172,11 +175,58 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                 )}
                             </td>
                             <td className="p-2">
-                                {row.clip?.videoPath ? (
+                                {row.clip ? (
+                                    <button
+                                        className={`text-xs px-2 py-0.5 rounded font-bold uppercase transition-colors ${!row.clip.startImagePath
+                                                ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                                : row.clip.status === 'generating'
+                                                    ? 'bg-indigo-600 text-white animate-pulse cursor-wait'
+                                                    : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                                            }`}
+                                        onClick={() => {
+                                            if (!row.clip!.startImagePath) {
+                                                onError('A Start Image is required to generate a video.');
+                                                return;
+                                            }
+                                            if (row.clip!.status !== 'generating') {
+                                                onGenerateClip(row.clip!.id);
+                                            }
+                                        }}
+                                        disabled={row.clip.status === 'generating'}
+                                    >
+                                        {row.clip.status === 'generating' ? 'Generating...' : '▶ Generate'}
+                                    </button>
+                                ) : (
+                                    <span className="text-gray-700">—</span>
+                                )}
+                            </td>
+                            <td className="p-2">
+                                {row.clip?.generatedVideos && row.clip.generatedVideos.length > 0 ? (
+                                    <div className="flex items-center gap-1">
+                                        <select
+                                            className="text-xs bg-gray-800 border-none text-indigo-300 w-24 rounded p-1"
+                                            onChange={(e) => {
+                                                const url = e.target.value;
+                                                if (url) {
+                                                    // Optional: handle opening the URL or showing a preview modal
+                                                }
+                                            }}
+                                        >
+                                            <option value="">{row.clip.generatedVideos.length} Videos ▼</option>
+                                            {row.clip.generatedVideos.map((vid, idx) => (
+                                                <option key={idx} value={vid}>
+                                                    Take {idx + 1}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                ) : row.clip?.videoPath ? (
+                                    // Fallback for older projects
                                     <a
                                         href="#"
                                         className="text-indigo-400 hover:text-indigo-300 text-xs underline"
                                         onClick={(e) => { e.preventDefault(); }}
+                                        title={row.clip.videoPath}
                                     >
                                         View Video
                                     </a>

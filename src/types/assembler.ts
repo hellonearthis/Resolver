@@ -10,6 +10,7 @@ export interface VideoClip {
     track: number; // 1 or 2 for checkerboarding
     status: 'pending' | 'generating' | 'done' | 'error';
     videoPath?: string;
+    generatedVideos?: string[]; // Array of generated video paths
     promptText?: string;
     source: 'main' | 'stem';
     stemName?: string;
