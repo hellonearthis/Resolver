@@ -8,6 +8,11 @@ if (require('electron-squirrel-startup')) {
     app.quit();
 }
 
+// Register custom protocol as privileged to support Fetch API
+protocol.registerSchemesAsPrivileged([
+    { scheme: 'media', privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
+]);
+
 const getResolveScriptsDir = () => {
     const programData = process.env.PROGRAMDATA || 'C:\\ProgramData';
     return path.join(
@@ -132,6 +137,50 @@ ipcMain.handle('open-audio-dialog', async (_event, defaultPath?: string) => {
     }
     return result.filePaths[0];
 });
+
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: open-image-dialog
+ * Opens a native file dialog to select an image file.
+ * Returns the absolute path of the selected file, or null if canceled.
+ * ---------------------------------------------------------------------------
+ */
+ipcMain.handle('open-image-dialog', async (_event, defaultPath?: string) => {
+    let dialogOptions: Electron.OpenDialogOptions = {
+        title: 'Select Image File',
+        filters: [
+            { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] },
+            { name: 'All Files', extensions: ['*'] },
+        ],
+        properties: ['openFile'],
+    };
+
+    if (defaultPath && fs.existsSync(defaultPath)) {
+        dialogOptions.defaultPath = defaultPath;
+    }
+
+    const result = await dialog.showOpenDialog(dialogOptions);
+    if (result.canceled || result.filePaths.length === 0) {
+        return null;
+    }
+    return result.filePaths[0];
+});
+
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: open-folder
+ * Opens the system file explorer to the specified path.
+ * ---------------------------------------------------------------------------
+ */
+ipcMain.handle('open-folder', async (_event, folderPath: string) => {
+    if (fs.existsSync(folderPath)) {
+        require('electron').shell.showItemInFolder(folderPath);
+        return true;
+    }
+    return false;
+});
+
+
 
 /**
  * ---------------------------------------------------------------------------

@@ -11,6 +11,10 @@ const child_process_1 = require("child_process");
 if (require('electron-squirrel-startup')) {
     electron_1.app.quit();
 }
+// Register custom protocol as privileged to support Fetch API
+electron_1.protocol.registerSchemesAsPrivileged([
+    { scheme: 'media', privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
+]);
 const getResolveScriptsDir = () => {
     const programData = process.env.PROGRAMDATA || 'C:\\ProgramData';
     return path_1.default.join(programData, 'Blackmagic Design', 'DaVinci Resolve', 'Fusion', 'Scripts', 'Comp');
@@ -106,6 +110,31 @@ electron_1.ipcMain.handle('open-audio-dialog', async (_event, defaultPath) => {
         if (fs_1.default.existsSync(dir)) {
             dialogOptions.defaultPath = defaultPath;
         }
+    }
+    const result = await electron_1.dialog.showOpenDialog(dialogOptions);
+    if (result.canceled || result.filePaths.length === 0) {
+        return null;
+    }
+    return result.filePaths[0];
+});
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: open-image-dialog
+ * Opens a native file dialog to select an image file.
+ * Returns the absolute path of the selected file, or null if canceled.
+ * ---------------------------------------------------------------------------
+ */
+electron_1.ipcMain.handle('open-image-dialog', async (_event, defaultPath) => {
+    let dialogOptions = {
+        title: 'Select Image File',
+        filters: [
+            { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] },
+            { name: 'All Files', extensions: ['*'] },
+        ],
+        properties: ['openFile'],
+    };
+    if (defaultPath && fs_1.default.existsSync(defaultPath)) {
+        dialogOptions.defaultPath = defaultPath;
     }
     const result = await electron_1.dialog.showOpenDialog(dialogOptions);
     if (result.canceled || result.filePaths.length === 0) {

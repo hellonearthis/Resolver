@@ -25,3 +25,4 @@ dist-electron
 *.sw?
 
 output/
+non_api_comfyui_workflows/

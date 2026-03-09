@@ -60,3 +60,32 @@ Since you are using mocked data to run example tests, consider setting up a test
 
 ## 5. Negative Prompting for Transitions
 If you plan to stitch these exported chunks back together in the NLE assembler later, consider adding terms like `"fade, crossfade, transition, black screen, title sequence"` to your Negative Prompt for the test. LTX-Video has a tendency to generate "movie endings" (fading to black) if it thinks the chunk is finishing, which makes stitching them seamlessly a nightmare.
+
+---
+
+Here is a Mermaid chart that maps out exactly where the memory cleaning (Purge VRAM) node should be placed within a basic two-stage multi-scale LTX-2 workflow.
+It is best positioned immediately after your Stage 1 "low pass" generation and right before your Stage 2 "upscale pass" begins.
+
+```mermaid
+graph TD
+    A[Load LTX-2 Models & Text Prompts] --> B[Stage 1: Setup & Merge Audio/Video Latents]
+    B --> C[Stage 1: Low-Resolution Sampler<br>Low Pass Generation]
+    
+    C -->|Output Low-Res Latent| D{Purge VRAM Node}
+    style D fill:#fba,stroke:#e05,stroke-width:4px,color:#000
+    
+    D -->|Clear Memory| E[Stage 2: Split Latents &<br>Latent Upsampler]
+    E --> F[Stage 2: High-Resolution Sampler<br>Upscale Pass]
+    F --> G[Merge Latents &<br>Tiled Decoding]
+    G --> H[Save Final Video]
+```
+
+**Why it goes here:**
+During Stage 1, ComfyUI uses a chunk of your VRAM to generate the initial 960x540 video. By inserting the Purge VRAM node right after this sampler finishes, you force ComfyUI to flush out all the cached data from that first generation. This frees up your 16GB GPU so it has a clean slate to handle the much heavier Stage 2 upscale to 1080p.
+
+Would you like me to detail how to set up the Tiled Decoding node at the end of the workflow to save even more memory during the final saving step?
+
+
+Why it goes here:
+During Stage 1, ComfyUI uses a chunk of your VRAM to generate the initial 960x540 video. By inserting the Purge VRAM node right after this sampler finishes, you force ComfyUI to flush out all the cached data from that first generation. This frees up your 16GB GPU so it has a clean slate to handle the much heavier Stage 2 upscale to 1080p.
+Would you like me to detail how to set up the Tiled Decoding node at the end of the workflow to save even more memory during the final saving step?

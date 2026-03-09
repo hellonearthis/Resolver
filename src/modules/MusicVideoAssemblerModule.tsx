@@ -1,3 +1,4 @@
+const { ipcRenderer } = window.require('electron');
 import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
@@ -219,15 +220,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             if (onStatusChange) onStatusChange('Missing setup (Audio, Workflow, or Output Folder)');
             return;
         }
-
-        // Save config when running (just in case)
-        try {
-            // @ts-ignore
-            const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
-            if (ipcRenderer) {
-                ipcRenderer.invoke('save-config', { comfyOutputDir, projectOutputDir: outputDir });
-            }
-        } catch (e) { /* ignore */ }
 
         setIsProcessing(true);
         if (onStatusChange) onStatusChange('Preparing workflow...');
@@ -550,7 +542,23 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     };
 
     const handleAnalyzeLocal = async (path: string, type: string) => {
-        await runBeatAnalysis(path, type);
+        // Resolve relative paths (like ./stems/...) against project output directory
+        let finalPath = path;
+        try {
+            // @ts-ignore
+            const pathModule = window.require ? window.require('path') : null;
+            if (pathModule && !pathModule.isAbsolute(path)) {
+                // Determine best base directory
+                const baseDir = activeProject?.outputDir || outputDir || '';
+                if (baseDir) {
+                    finalPath = pathModule.resolve(baseDir, path);
+                    console.log(`[handleAnalyzeLocal] Resolved ${path} -> ${finalPath}`);
+                }
+            }
+        } catch (e) {
+            console.error("[handleAnalyzeLocal] Path resolution error:", e);
+        }
+        await runBeatAnalysis(finalPath, type);
     };
 
     const loadProjectAudio = async (project: BeatProject) => {
@@ -812,11 +820,39 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             // 1. Upload Start Image
             let finalImageName = "";
             if (clipToUpdate.startImagePath) {
-                const uploadResult = await uploadFileToComfyUI(clipToUpdate.startImagePath);
+                let absoluteImagePath = clipToUpdate.startImagePath;
+                // Remove file:/// protocol if present
+                absoluteImagePath = absoluteImagePath.replace(/^file:\/\/\/?/i, '');
+                absoluteImagePath = decodeURI(absoluteImagePath);
+
+                const path = window.require('path');
+                const fs = window.require('fs');
+
+                if (!path.isAbsolute(absoluteImagePath)) {
+                    const targetDir = activeProject.outputDir || outputDir || '';
+                    const possiblePathImages = path.resolve(targetDir, 'images', absoluteImagePath);
+                    const possiblePathRoot = path.resolve(targetDir, absoluteImagePath);
+
+                    if (targetDir && fs.existsSync(possiblePathImages)) {
+                        absoluteImagePath = possiblePathImages;
+                    } else if (targetDir && fs.existsSync(possiblePathRoot)) {
+                        absoluteImagePath = possiblePathRoot;
+                    } else if (targetDir) {
+                        absoluteImagePath = possiblePathImages; // Default guess for error message
+                    }
+                }
+
+                console.log(`[handleGenerateTimelineClip] Resolving start image to: ${absoluteImagePath}`);
+
+                if (!fs.existsSync(absoluteImagePath)) {
+                    throw new Error(`Start image not found at: ${absoluteImagePath}. Please select the image again.`);
+                }
+
+                const uploadResult = await uploadFileToComfyUI(absoluteImagePath);
                 if (uploadResult && uploadResult.name) {
                     finalImageName = uploadResult.name;
                 } else {
-                    throw new Error("Failed to upload start image to ComfyUI.");
+                    throw new Error(`Failed to upload start image from ${absoluteImagePath} to ComfyUI.`);
                 }
             } else {
                 throw new Error("Start image missing. Aborting generation.");
@@ -835,11 +871,32 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
 
             if (sourceAudioPath) {
-                const uploadResult = await uploadFileToComfyUI(sourceAudioPath);
+                let absoluteAudioPath = sourceAudioPath;
+                // Remove file:/// protocol if present
+                absoluteAudioPath = absoluteAudioPath.replace(/^file:\/\/\/?/i, '');
+                absoluteAudioPath = decodeURI(absoluteAudioPath);
+
+                const path = window.require('path');
+                const fs = window.require('fs');
+
+                if (!path.isAbsolute(absoluteAudioPath)) {
+                    const targetDir = activeProject.outputDir || outputDir || '';
+                    if (targetDir) {
+                        absoluteAudioPath = path.resolve(targetDir, absoluteAudioPath);
+                    }
+                }
+
+                console.log(`[handleGenerateTimelineClip] Resolving audio to: ${absoluteAudioPath}`);
+
+                if (!fs.existsSync(absoluteAudioPath)) {
+                    throw new Error(`Audio file not found at: ${absoluteAudioPath}.`);
+                }
+
+                const uploadResult = await uploadFileToComfyUI(absoluteAudioPath);
                 if (uploadResult && uploadResult.name) {
                     finalAudioName = uploadResult.name;
                 } else {
-                    throw new Error("Failed to upload audio to ComfyUI.");
+                    throw new Error(`Failed to upload audio from ${absoluteAudioPath} to ComfyUI.`);
                 }
             }
 
@@ -912,31 +969,49 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 throw new Error("No output directory set for the project.");
             }
 
-            const prefix = "video/LTX_2.0_i2v";
-            const movedFiles = await moveFilesToProject(targetDir, Date.now() - 3600000 /* 1h buffer */, prefix);
+            const fs = window.require('fs');
+            const path = window.require('path');
 
             let finalVideoPath = "";
-            let generatedMp4 = movedFiles.find(f => f.type === 'Other' || f.path.endsWith('.mp4'));
+            let latestSourcePath = "";
 
-            if (generatedMp4) {
-                finalVideoPath = generatedMp4.path;
-            } else {
-                // Try to locate it directly from ComfyUI output
-                const fs = window.require('fs');
-                const path = window.require('path');
+            // Check the video subdirectory first (where ComfyUI usually puts prefix video/LTX_2.0_i2v)
+            const videoOutDir = path.join(comfyOutputDir, 'video');
+            if (fs.existsSync(videoOutDir)) {
+                const outFiles = fs.readdirSync(videoOutDir).filter((f: string) => f.includes('LTX_2.0_i2v') && f.endsWith('.mp4'));
+                if (outFiles.length > 0) {
+                    const latest = outFiles.sort((a: string, b: string) => fs.statSync(path.join(videoOutDir, b)).mtimeMs - fs.statSync(path.join(videoOutDir, a)).mtimeMs)[0];
+                    latestSourcePath = path.join(videoOutDir, latest);
+                }
+            }
+
+            // Fallback to the root output directory
+            if (!latestSourcePath && fs.existsSync(comfyOutputDir)) {
                 const outFiles = fs.readdirSync(comfyOutputDir).filter((f: string) => f.includes('LTX_2.0_i2v') && f.endsWith('.mp4'));
                 if (outFiles.length > 0) {
-                    // Get latest
                     const latest = outFiles.sort((a: string, b: string) => fs.statSync(path.join(comfyOutputDir, b)).mtimeMs - fs.statSync(path.join(comfyOutputDir, a)).mtimeMs)[0];
-                    const destPath = path.join(targetDir, latest);
-                    fs.copyFileSync(path.join(comfyOutputDir, latest), destPath);
-                    finalVideoPath = destPath;
+                    latestSourcePath = path.join(comfyOutputDir, latest);
                 }
+            }
+
+            if (latestSourcePath) {
+                // Determine destination directory
+                const destVideosDir = path.join(targetDir, 'videos');
+                if (!fs.existsSync(destVideosDir)) fs.mkdirSync(destVideosDir, { recursive: true });
+
+                const existingTakes = clipToUpdate.generatedVideos ? clipToUpdate.generatedVideos.length : 0;
+                const safeLabel = clipToUpdate.label.replace(/[^a-z0-9]/gi, '_');
+                const destFilename = `${safeLabel}_take${existingTakes + 1}.mp4`;
+                const destPath = path.join(destVideosDir, destFilename);
+
+                fs.copyFileSync(latestSourcePath, destPath);
+                finalVideoPath = destPath;
             }
 
             if (!finalVideoPath) {
                 throw new Error("Generated video file not found after completion.");
             }
+
 
             // Success Update
             setClips(prev => prev.map(c => {
@@ -1232,8 +1307,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             stemSurfers.current = [];
         };
 
-        // Initial cleanup
-        cleanupStems();
+        // We no longer clear all stems on every render.
+        // Re-initialization only happens when paths actually change.
 
         if (stems.length === 0) return;
 
@@ -1370,7 +1445,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 stemRafRef.current = null;
             }
         };
-    }, [stems]);
+    }, [stems.map(s => s.path + s.type).join(',')]);
 
     // Auto-select Bass as main beat source if available
     useEffect(() => {
@@ -1654,26 +1729,28 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     };
 
     // Image picker for start/end images
-    const handlePickImage = (clipId: string, field: 'startImagePath' | 'endImagePath') => {
+    const handlePickImage = async (clipId: string, field: 'startImagePath' | 'endImagePath') => {
         if (!activeProject?.outputDir) {
             if (onStatusChange) onStatusChange('No project folder available. Save the project first.');
             return;
         }
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'image/*';
-        input.onchange = (e: any) => {
-            const file = e.target.files?.[0];
-            if (file) {
-                const filePath = file.path || file.name;
-                setClips(prev => prev.map(c => c.id === clipId ? { ...c, [field]: filePath } : c));
-            }
-        };
-        input.click();
+
+        const path = window.require('path');
+        const imagesDir = path.join(activeProject.outputDir, 'images');
+
+        const filePath = await ipcRenderer.invoke('open-image-dialog', imagesDir);
+
+        if (filePath) {
+            setClips(prev => prev.map(c => c.id === clipId ? { ...c, [field]: filePath } : c));
+        }
     };
 
     const handleUpdateClipLabel = (clipId: string, newLabel: string) => {
         setClips(prev => prev.map(c => c.id === clipId ? { ...c, label: newLabel } : c));
+    };
+
+    const handleUpdateClipPrompt = (clipId: string, newPrompt: string) => {
+        setClips(prev => prev.map(c => c.id === clipId ? { ...c, promptText: newPrompt } : c));
     };
 
     // Render saved clip regions on the appropriate waveform whenever clips change
@@ -2410,6 +2487,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                     clips={clips}
                                     duration={duration}
                                     onUpdateClipLabel={handleUpdateClipLabel}
+                                    onUpdateClipPrompt={handleUpdateClipPrompt}
                                     onRemoveClip={handleRemoveClip}
                                     onPickImage={handlePickImage}
                                     onGenerateClip={handleGenerateTimelineClip}

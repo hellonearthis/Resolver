@@ -9,6 +9,7 @@ interface ProjectTimelineTableProps {
     clips: VideoClip[];
     duration: number;
     onUpdateClipLabel: (clipId: string, newLabel: string) => void;
+    onUpdateClipPrompt: (clipId: string, newPrompt: string) => void;
     onRemoveClip: (clipId: string) => void;
     onPickImage: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     onGenerateClip: (clipId: string) => void;
@@ -23,6 +24,7 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
     clips,
     duration,
     onUpdateClipLabel,
+    onUpdateClipPrompt,
     onRemoveClip,
     onPickImage,
     onGenerateClip,
@@ -67,6 +69,7 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                     <tr className="text-xs text-gray-400 uppercase bg-gray-900/60">
                         <th className="p-2 pl-3">#</th>
                         <th className="p-2">Label</th>
+                        <th className="p-2">Prompt (AI)</th>
                         <th className="p-2">Start</th>
                         <th className="p-2">End</th>
                         <th className="p-2">Duration</th>
@@ -112,9 +115,22 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                         >
                                             {row.label}
                                         </span>
-                                    )
-                                ) : (
+                                    )) : (
                                     <span className="text-xs text-gray-600 italic">Unselected</span>
+                                )}
+                            </td>
+                            <td className="p-2">
+                                {row.type === 'clip' && row.clip ? (
+                                    <input
+                                        type="text"
+                                        placeholder="AI Prompt (optional)..."
+                                        value={row.clip.promptText || ''}
+                                        onChange={(e) => onUpdateClipPrompt(row.clip!.id, e.target.value)}
+                                        className="bg-gray-900/50 border border-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded outline-none w-48 focus:border-indigo-500 focus:bg-gray-900 transition-all"
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                ) : (
+                                    <span className="text-gray-700">—</span>
                                 )}
                             </td>
                             <td className="p-2 font-mono text-xs">{formatTime(row.startTime)}</td>
@@ -146,30 +162,58 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                             </td>
                             <td className="p-2">
                                 {row.clip ? (
-                                    <button
-                                        className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-0.5 rounded truncate max-w-[120px]"
-                                        onClick={() => onPickImage(row.clip!.id, 'startImagePath')}
-                                        title={row.clip.startImagePath || 'Click to select'}
-                                    >
-                                        {row.clip.startImagePath
-                                            ? row.clip.startImagePath.split(/[\\/]/).pop()
-                                            : '📷 Select'}
-                                    </button>
+                                    row.clip.startImagePath ? (
+                                        <div
+                                            className="w-16 h-10 bg-gray-800 border border-gray-600 rounded overflow-hidden cursor-pointer hover:border-indigo-400 group relative"
+                                            onClick={() => onPickImage(row.clip!.id, 'startImagePath')}
+                                            title={row.clip.startImagePath}
+                                        >
+                                            <img
+                                                src={`file://${row.clip.startImagePath}?t=${Date.now()}`}
+                                                alt="Start"
+                                                className="w-full h-full object-cover"
+                                            />
+                                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                                <span className="text-white text-[10px]">Change</span>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-0.5 rounded truncate max-w-[120px]"
+                                            onClick={() => onPickImage(row.clip!.id, 'startImagePath')}
+                                        >
+                                            📷 Select
+                                        </button>
+                                    )
                                 ) : (
                                     <span className="text-gray-700">—</span>
                                 )}
                             </td>
                             <td className="p-2">
                                 {row.clip ? (
-                                    <button
-                                        className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-0.5 rounded truncate max-w-[120px]"
-                                        onClick={() => onPickImage(row.clip!.id, 'endImagePath')}
-                                        title={row.clip.endImagePath || 'Click to select'}
-                                    >
-                                        {row.clip.endImagePath
-                                            ? row.clip.endImagePath.split(/[\\/]/).pop()
-                                            : '📷 Select'}
-                                    </button>
+                                    row.clip.endImagePath ? (
+                                        <div
+                                            className="w-16 h-10 bg-gray-800 border border-gray-600 rounded overflow-hidden cursor-pointer hover:border-indigo-400 group relative"
+                                            onClick={() => onPickImage(row.clip!.id, 'endImagePath')}
+                                            title={row.clip.endImagePath}
+                                        >
+                                            <img
+                                                src={`file://${row.clip.endImagePath}?t=${Date.now()}`}
+                                                alt="End"
+                                                className="w-full h-full object-cover"
+                                            />
+                                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                                <span className="text-white text-[10px]">Change</span>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-0.5 rounded truncate max-w-[120px]"
+                                            onClick={() => onPickImage(row.clip!.id, 'endImagePath')}
+                                        >
+                                            📷 Select
+                                        </button>
+                                    )
                                 ) : (
                                     <span className="text-gray-700">—</span>
                                 )}
@@ -178,10 +222,10 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                 {row.clip ? (
                                     <button
                                         className={`text-xs px-2 py-0.5 rounded font-bold uppercase transition-colors ${!row.clip.startImagePath
-                                                ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                                                : row.clip.status === 'generating'
-                                                    ? 'bg-indigo-600 text-white animate-pulse cursor-wait'
-                                                    : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                                            ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                                            : row.clip.status === 'generating'
+                                                ? 'bg-indigo-600 text-white animate-pulse cursor-wait'
+                                                : 'bg-indigo-600 hover:bg-indigo-500 text-white'
                                             }`}
                                         onClick={() => {
                                             if (!row.clip!.startImagePath) {
@@ -204,12 +248,22 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                 {row.clip?.generatedVideos && row.clip.generatedVideos.length > 0 ? (
                                     <div className="flex items-center gap-1">
                                         <select
-                                            className="text-xs bg-gray-800 border-none text-indigo-300 w-24 rounded p-1"
-                                            onChange={(e) => {
+                                            className="text-xs bg-gray-800 border-none text-indigo-300 w-24 rounded p-1 cursor-pointer hover:bg-gray-700"
+                                            onChange={async (e) => {
                                                 const url = e.target.value;
                                                 if (url) {
-                                                    // Optional: handle opening the URL or showing a preview modal
+                                                    try {
+                                                        // @ts-ignore
+                                                        const { ipcRenderer } = window.require('electron');
+                                                        // @ts-ignore
+                                                        const path = window.require('path');
+                                                        const dir = path.dirname(url);
+                                                        await ipcRenderer.invoke('open-folder', dir);
+                                                    } catch (err) {
+                                                        console.error(err);
+                                                    }
                                                 }
+                                                e.target.value = ""; // reset
                                             }}
                                         >
                                             <option value="">{row.clip.generatedVideos.length} Videos ▼</option>
@@ -224,11 +278,23 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                     // Fallback for older projects
                                     <a
                                         href="#"
-                                        className="text-indigo-400 hover:text-indigo-300 text-xs underline"
-                                        onClick={(e) => { e.preventDefault(); }}
-                                        title={row.clip.videoPath}
+                                        className="text-indigo-400 hover:text-indigo-300 text-xs underline cursor-pointer"
+                                        onClick={async (e) => {
+                                            e.preventDefault();
+                                            try {
+                                                // @ts-ignore
+                                                const { ipcRenderer } = window.require('electron');
+                                                // @ts-ignore
+                                                const path = window.require('path');
+                                                const dir = path.dirname(row.clip!.videoPath!);
+                                                await ipcRenderer.invoke('open-folder', dir);
+                                            } catch (err) {
+                                                console.error(err);
+                                            }
+                                        }}
+                                        title="Open Videos Folder"
                                     >
-                                        View Video
+                                        View Videos
                                     </a>
                                 ) : row.type === 'clip' ? (
                                     <span className="text-gray-600 text-xs">No video</span>
