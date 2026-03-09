@@ -10,7 +10,7 @@ export interface VideoClip {
     track: number; // 1 or 2 for checkerboarding
     status: 'pending' | 'generating' | 'done' | 'error';
     videoPath?: string;
-    generatedVideos?: string[]; // Array of generated video paths
+    generatedVideos?: string[]; // Array of generated video paths, if multiple variations exist
     promptText?: string;
     source: 'main' | 'stem';
     stemName?: string;
@@ -20,8 +20,8 @@ export interface VideoClip {
 }
 
 /**
- * Represents a single row in the timeline UI, which can either be an active
- * clip or an unselected gap between clips.
+ * Represents a single row in the timeline UI rendering, which can either be an active
+ * clip or an unselected gap between clips. Used to build a contiguous sequence of blocks.
  */
 export interface TimelineRow {
     type: 'clip' | 'unselected';
@@ -34,7 +34,7 @@ export interface TimelineRow {
 
 /**
  * Defines the user's current time selection on the waveform.
- * Used to dictate what segment will be sent for video generation.
+ * Used to dictate what segment will be sent for video generation or playback ranges.
  */
 export interface SelectionState {
     source: 'main' | 'stem';
@@ -45,18 +45,18 @@ export interface SelectionState {
 
 /**
  * Represents an audio feature marker such as a beat or onset.
- * Rendered on the WaveSurfer timeline to help with syncing.
+ * Rendered on the WaveSurfer timeline to help with syncing video clips to music.
  */
 export interface AudioMarker {
     time: number;
     type: 'beat' | 'onset' | 'loudness' | string;
     isDownbeat?: boolean;
-    color?: string;
+    color?: string; // Hex or rgba color string for rendering
 }
 
 /**
  * Contains metadata and audio marker data for a specific stem track
- * (e.g., vocals, drums, bass).
+ * (e.g., vocals, drums, bass) resulting from source separation.
  */
 export interface StemData {
     type: string;

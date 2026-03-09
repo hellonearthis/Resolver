@@ -84,9 +84,13 @@ electron_1.ipcMain.on('sync-to-resolve', (event, data) => {
         }
     });
 });
-// ---------------------------------------------------------------------------
-// File dialog with default path — used when loading a project's audio file
-// ---------------------------------------------------------------------------
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: open-audio-dialog
+ * Opens a native file dialog to select an audio file.
+ * Returns the absolute path of the selected file, or null if canceled.
+ * ---------------------------------------------------------------------------
+ */
 electron_1.ipcMain.handle('open-audio-dialog', async (_event, defaultPath) => {
     let dialogOptions = {
         title: 'Select Audio File',
@@ -109,9 +113,13 @@ electron_1.ipcMain.handle('open-audio-dialog', async (_event, defaultPath) => {
     }
     return result.filePaths[0];
 });
-// ---------------------------------------------------------------------------
-// Video Sync - Generate standalone script for Free Version
-// ---------------------------------------------------------------------------
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: stage-video-sync
+ * Generates a Python script that can be executed inside DaVinci Resolve (Free)
+ * to automatically import an audio track and a set of video clips onto a timeline.
+ * ---------------------------------------------------------------------------
+ */
 electron_1.ipcMain.handle('stage-video-sync', async (_event, data) => {
     try {
         const resolveScriptsDir = getResolveScriptsDir();
@@ -612,7 +620,12 @@ electron_1.ipcMain.handle('convert-audio-to-wav', async (_event, inputPath) => {
         });
     });
 });
-// Config Persistence
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: get-config / save-config
+ * Handles persistent configuration settings for the app.
+ * ---------------------------------------------------------------------------
+ */
 const CONFIG_PATH = path_1.default.join(electron_1.app.getPath('userData'), 'config.json');
 electron_1.ipcMain.handle('get-config', async () => {
     try {
@@ -663,7 +676,13 @@ electron_1.ipcMain.handle('save-manifest', async (_event, manifest) => {
         return { success: false, error: String(err) };
     }
 });
-// Scan projects folder for *_data.json files
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: scan-projects-folder
+ * Scans a given folder path for directories starting with 'PRJ_'.
+ * Reads inside each for a project.json and surfaces the data to the UI.
+ * ---------------------------------------------------------------------------
+ */
 electron_1.ipcMain.handle('scan-projects-folder', async (_event, folderPath) => {
     try {
         if (!fs_1.default.existsSync(folderPath)) {
@@ -676,22 +695,22 @@ electron_1.ipcMain.handle('scan-projects-folder', async (_event, folderPath) => 
             const itemPath = path_1.default.join(folderPath, item);
             const stat = fs_1.default.statSync(itemPath);
             if (stat.isDirectory() && item.startsWith('PRJ_')) {
-                // Look for the *_data.json file inside the project folder
-                const subFiles = fs_1.default.readdirSync(itemPath);
-                for (const subFile of subFiles) {
-                    if (subFile.endsWith('_data.json')) {
-                        try {
-                            const dataPath = path_1.default.join(itemPath, subFile);
-                            const content = fs_1.default.readFileSync(dataPath, 'utf8');
-                            const project = JSON.parse(content);
-                            if (project.id && project.name) {
-                                projects.push(project);
-                            }
-                        }
-                        catch (e) {
-                            console.error(`Error reading project file in ${itemPath}:`, e);
+                // Look for the project.json file inside the project folder
+                try {
+                    const dataPath = path_1.default.join(itemPath, 'project.json');
+                    if (fs_1.default.existsSync(dataPath)) {
+                        const content = fs_1.default.readFileSync(dataPath, 'utf8');
+                        const project = JSON.parse(content);
+                        if (project.id && project.name) {
+                            // Enforce dynamic outputDir based on the actual folder path
+                            // This guarantees project bundles stay portable if moved to another drive/PC
+                            project.outputDir = itemPath;
+                            projects.push(project);
                         }
                     }
+                }
+                catch (e) {
+                    console.error(`Error reading project file in ${itemPath}:`, e);
                 }
             }
         }

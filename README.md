@@ -1,4 +1,4 @@
-# DaVinci Resolve Production Dashboard
+# DaVinci Resolve Tools Dashboard
 
 A modular production tool for DaVinci Resolve featuring **beat synchronization**, **stem separation**, and **marker automation** — powered by **Essentia.js** WASM-based audio analysis.
 
@@ -116,10 +116,12 @@ resolver/
 
 ## Roadmap & Ideas
 
+> 💡 **ComfyUI Workflow Standard**: When designing custom workflows for the application (like LTX Video generation or Stem Separation), ensure that nodes requiring dynamic data injection from the app have their title renamed to include `[input]` (e.g., *LoadAudio [input]*), and nodes generating final results have their title renamed to include `[output]` (e.g., *SaveImage [output]*).
+
 - [x] **Stem Separation**: Integrate ComfyUI to split audio into stems (drums, bass, vocals).
 - [x] **Beat Analysis per Stem**: Analyze and visualize individual rhythmic layers.
 - [x] **Video Assembler**: Specialized UI for multi-stem rhythmic syncing.
-- [ ] **Project Bundle Structure**: Refactor projects to be self-contained bundles (saving `project.json` with relative paths in dedicated `PRJ_` directories) for portability and robustness.
+- [x] **Project Bundle Structure**: Refactor projects to be self-contained bundles (saving `project.json` with relative paths in dedicated `PRJ_` directories) for portability and robustness.
 - [ ] **Tap Tempo**: Manual BPM adjustment for challenging tracks.
 - [ ] **Beat Divisions**: Options for 1/2, 1/4, or double-time beat markers.
 - [ ] **Clip Randomizer**: Mode to select random clips from a bin for quick montages.

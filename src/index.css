@@ -1,37 +1,64 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-:root {
-
+@theme {
   /* Color Palette */
-  --bg-primary: #0d0d0f;
-  --bg-secondary: #141418;
-  --bg-tertiary: #1a1a1f;
-  --bg-elevated: #222228;
+  --color-bg-primary: #0d0d0f;
+  --color-bg-secondary: #141418;
+  --color-bg-tertiary: #1a1a1f;
+  --color-bg-elevated: #222228;
 
-  --accent-primary: #6366f1;
-  --accent-secondary: #8b5cf6;
-  --accent-gradient: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  --color-accent-primary: #6366f1;
+  --color-accent-secondary: #8b5cf6;
+  --color-accent-gradient: linear-gradient(135deg, var(--color-accent-primary), var(--color-accent-secondary));
 
-  --text-primary: rgba(255, 255, 255, 0.95);
-  --text-secondary: rgba(255, 255, 255, 0.65);
-  --text-muted: rgba(255, 255, 255, 0.4);
+  --color-text-primary: rgba(255, 255, 255, 0.95);
+  --color-text-secondary: rgba(255, 255, 255, 0.65);
+  --color-text-muted: rgba(255, 255, 255, 0.4);
 
-  --border-color: rgba(255, 255, 255, 0.08);
-  --border-active: rgba(99, 102, 241, 0.5);
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-active: rgba(99, 102, 241, 0.5);
 
-  --success: #10b981;
-  --warning: #f59e0b;
-  --error: #ef4444;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
 
   /* Sizing */
-  --sidebar-width: 260px;
-  --border-radius: 12px;
-  --border-radius-sm: 8px;
+  --spacing-sidebar: 260px;
+  --radius-xl: 12px;
+  --radius-sm: 8px;
 
   /* Typography */
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+:root {
+  /* Legacy/Direct CSS variables if needed by JS */
+  --bg-primary: var(--color-bg-primary);
+  --bg-secondary: var(--color-bg-secondary);
+  --bg-tertiary: var(--color-bg-tertiary);
+  --bg-elevated: var(--color-bg-elevated);
+
+  --accent-primary: var(--color-accent-primary);
+  --accent-secondary: var(--color-accent-secondary);
+  --accent-gradient: var(--color-accent-gradient);
+
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+
+  --border-color: var(--color-border);
+  --border-active: var(--color-border-active);
+
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --error: var(--color-error);
+
+  --sidebar-width: var(--spacing-sidebar);
+  --border-radius: var(--radius-xl);
+  --border-radius-sm: var(--radius-sm);
+
+  /* Typography Base */
+  font-family: var(--font-sans);
   line-height: 1.5;
   font-weight: 400;
   font-synthesis: none;

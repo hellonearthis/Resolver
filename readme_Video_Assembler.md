@@ -1,6 +1,6 @@
 # 🎬 Video Assembler Module
 
-The **Video Assembler** is the central hub for building rhythmically perfect music videos. It integrates stem separation, beat analysis, and multi-track editing into a single unified workflow — from raw audio to a finished DaVinci Resolve timeline.
+The **Video Assembler** is a central module of the **Resolve Tools Dashboard**. It enables building rhythmically perfect music videos by integrating stem separation, beat analysis, and multi-track editing into a single unified workflow — from raw audio to a finished DaVinci Resolve timeline.
 
 ---
 
@@ -135,12 +135,12 @@ Use the **Script Manager** to automatically load these into Resolve.
 ## Developer Architecture
 
 -   **`src/modules/MusicVideoAssemblerModule.tsx`** — Main module integrating stem separation, beat analysis, and timeline editing.
--   **`src/types/assembler.ts`** — Shared interfaces (`VideoClip`, `TimelineRow`, `AudioMarker`, `StemData`).
--   **`src/utils/timelineUtils.ts`** — Pure helper functions for timeline manipulation, rendering, and time formatting.
--   **`src/components/ProjectTimelineTable.tsx`** — Decoupled timeline table with editing state.
--   **`src/components/CollapsibleCard.tsx`** — Expandable card UI component used for grouping configuration sections.
--   **`src/services/essentiaService.ts`** — Essentia.js WASM integration for beat, onset, and loudness analysis.
--   **`src/services/comfyService.ts`** — ComfyUI API communication for stem separation.
+-   **`src/types/assembler.ts`** — Shared interfaces for timelines and project properties.
+-   **`src/utils/timelineUtils.ts`** — Pure helper functions for formatting and rendering.
+-   **`src/components/ProjectTimelineTable.tsx`** — Decoupled timeline viewer with selection capabilities.
+-   **`src/components/CollapsibleCard.tsx`** — Expandable card component wrapper.
+-   **`src/services/essentiaService.ts`** — Essentia.js WASM integration for feature detection.
+-   **`src/services/comfyService.ts`** — ComfyUI API API facade for managing stem extraction requests.
 
 ---
 

@@ -7,7 +7,10 @@ interface ProjectsPanelProps {
     onDelete: (id: string) => void;
     onRefresh?: () => void;
     currentProjectId?: string;
-    onExportAll?: () => Promise<{ success: number; failed: number }>;
+    onExportAll?: () => Promise<{ success: number; failed: number; errors: string[] }>;
+    exportStatus?: string;
+    isExporting?: boolean;
+    onCreateBlankProject?: (name?: string) => Promise<BeatProject>;
 }
 
 const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
@@ -16,10 +19,12 @@ const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
     onDelete,
     onRefresh,
     currentProjectId,
-    onExportAll
+    onExportAll,
+    onCreateBlankProject
 }) => {
     const [exportStatus, setExportStatus] = React.useState<string>('');
     const [isExporting, setIsExporting] = React.useState(false);
+    const [blankProjectName, setBlankProjectName] = React.useState('');
 
     const handleBackupAll = async (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -53,14 +58,10 @@ const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                 <div className="card-header">
                     <h3 className="card-title">📂 Saved Projects</h3>
                 </div>
-                <div style={{
-                    padding: '24px',
-                    textAlign: 'center',
-                    color: 'var(--text-muted)'
-                }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📭</div>
+                <div className="p-6 text-center text-[var(--text-muted)]">
+                    <div className="text-4xl mb-2">📭</div>
                     <p>No saved projects yet.</p>
-                    <p style={{ fontSize: '0.85rem', marginTop: '4px' }}>
+                    <p className="text-sm mt-1">
                         Analyze an audio file and click "Save Project" to store it here.
                     </p>
                 </div>
@@ -95,130 +96,128 @@ const ProjectsPanel: React.FC<ProjectsPanelProps> = ({
                             </button>
                         </>
                     )}
+                    {onCreateBlankProject && (
+                        <div
+                            className="flex items-center gap-1 bg-indigo-900/10 border border-indigo-800/30 rounded p-0.5 relative z-20"
+                            onClick={e => e.stopPropagation()}
+                            onMouseDown={e => e.stopPropagation()}
+                        >
+                            <input
+                                autoFocus
+                                type="text"
+                                value={blankProjectName}
+                                onChange={(e) => setBlankProjectName(e.target.value)}
+                                onKeyDown={e => e.stopPropagation()}
+                                placeholder="Project Name..."
+                                className="bg-transparent border border-transparent hover:border-indigo-800/50 focus:border-indigo-500 rounded text-xs text-indigo-100 px-2 py-1 w-32 focus:outline-none placeholder-indigo-400 transition-colors"
+                            />
+                            <button
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    await onCreateBlankProject(blankProjectName.trim() || undefined);
+                                    setBlankProjectName('');
+                                }}
+                                className="text-xs bg-indigo-600/50 hover:bg-indigo-500/70 border border-indigo-400/50 px-2 py-1 rounded transition-colors"
+                                title="Create a new blank project timeline"
+                            >
+                                ➕ Blank Project
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
-            <div style={{
-                maxHeight: '300px',
-                overflowY: 'auto',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px'
-            }}>
-                {projects.map(project => (
-                    <div
-                        key={project.id}
-                        style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '12px',
-                            padding: '12px 16px',
-                            background: project.id === currentProjectId
-                                ? 'var(--accent-primary)'
-                                : 'var(--bg-tertiary)',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease'
-                        }}
-                        onClick={() => onLoad(project)}
-                    >
-                        <div style={{ fontSize: '1.5rem' }}>🎵</div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{
-                                fontWeight: 600,
-                                color: 'var(--text-primary)',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap'
-                            }}>
-                                {project.name}
-                            </div>
-                            <div style={{
-                                fontSize: '0.8rem',
-                                color: 'var(--text-muted)',
-                                display: 'flex',
-                                gap: '12px',
-                                marginTop: '4px'
-                            }}>
-                                <span>{project.bpm} BPM</span>
-                                <span>{project.beatCount} beats</span>
-                                <span>{project.frameRate} fps</span>
-                            </div>
-                            <div style={{
-                                fontSize: '0.75rem',
-                                color: 'var(--text-muted)',
-                                marginTop: '2px'
-                            }}>
-                                {formatDate(project.updatedAt)}
-                            </div>
-                        </div>
+            <div className="relative">
+                {/* TOP FADE */}
+                <div className="pointer-events-none absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-[var(--bg-primary)] to-transparent z-10 rounded-t-lg"></div>
 
-                        {/* Status Badges */}
-                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                            {/* CSV Badge */}
-                            {project.csvPath && (
-                                <span
-                                    className="status-badge success"
-                                    style={{ fontSize: '0.65rem', padding: '2px 6px' }}
-                                    title="Has exported CSV"
-                                >
-                                    CSV
-                                </span>
-                            )}
-
-                            {/* Stems Badge */}
-                            {project.stems && project.stems.length > 0 && (
-                                <span
-                                    className="status-badge"
-                                    style={{
-                                        fontSize: '0.65rem',
-                                        padding: '2px 6px',
-                                        background: 'rgba(99, 102, 241, 0.2)', // Indigo tint
-                                        color: '#818cf8',
-                                        border: '1px solid rgba(99, 102, 241, 0.3)'
-                                    }}
-                                    title={`${project.stems.length} Stems Available`}
-                                >
-                                    STEMS
-                                </span>
-                            )}
-
-                            {/* Beat Data Badge */}
-                            {(project.beatCount && project.beatCount > 0) || (project.markers && project.markers.length > 0) ? (
-                                <span
-                                    className="status-badge"
-                                    style={{
-                                        fontSize: '0.65rem',
-                                        padding: '2px 6px',
-                                        background: 'rgba(16, 185, 129, 0.15)', // Green tint
-                                        color: '#34d399', // Green text
-                                        border: '1px solid rgba(16, 185, 129, 0.2)'
-                                    }}
-                                    title="Has Beat Detection Data"
-                                >
-                                    BEATS
-                                </span>
-                            ) : null}
-                        </div>
-                        <button
-                            className="btn btn-secondary"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onDelete(project.id);
-                            }}
-                            style={{
-                                padding: '6px 10px',
-                                fontSize: '0.85rem',
-                                minWidth: 'auto'
-                            }}
-                            title="Delete project"
+                {/* SCROLL AREA */}
+                <div className="scrollbar max-h-[300px] overflow-y-auto scroll-smooth flex flex-col gap-3 p-2">
+                    {projects.map(project => (
+                        <div
+                            key={project.id}
+                            className={`group flex items-center gap-3 py-3 px-4 rounded-lg cursor-pointer transition-all duration-200 border-l-4 hover:-translate-y-[2px] hover:shadow-md hover:bg-[#62411f] hover:border-l-indigo-400 ${project.id === currentProjectId ? 'border-l-indigo-500 bg-[#62411f] shadow-md' : 'border-transparent bg-[var(--bg-tertiary)]'}`}
+                            onClick={() => onLoad(project)}
                         >
-                            🗑️
-                        </button>
-                    </div>
-                ))
-                }
-            </div >
-        </div >
+                            <div className={`text-2xl transition-transform duration-200 group-hover:scale-110 ${project.id === currentProjectId ? 'playing-icon' : ''}`}>🎵</div>
+                            <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-[var(--text-primary)] overflow-hidden text-ellipsis whitespace-nowrap">
+                                    {project.name}
+                                </div>
+                                <div className="text-xs text-[var(--text-muted)] flex gap-3 mt-1">
+                                    <span>{project.bpm} BPM</span>
+                                    <span>{project.beatCount} beats</span>
+                                    <span>{project.frameRate} fps</span>
+                                </div>
+                                <div className="text-[10px] text-[var(--text-muted)] mt-[2px]">
+                                    {formatDate(project.updatedAt)}
+                                </div>
+                            </div>
+
+                            {/* Status Badges */}
+                            <div className="flex gap-1 items-center">
+                                {/* CSV Badge */}
+                                {project.csvPath && (
+                                    <span
+                                        className="status-badge success"
+                                        style={{ fontSize: '0.65rem', padding: '2px 6px' }}
+                                        title="Has exported CSV"
+                                    >
+                                        CSV
+                                    </span>
+                                )}
+
+                                {/* Stems Badge */}
+                                {project.stems && project.stems.length > 0 && (
+                                    <span
+                                        className="status-badge"
+                                        style={{
+                                            fontSize: '0.65rem',
+                                            padding: '2px 6px',
+                                            background: 'rgba(99, 102, 241, 0.2)', // Indigo tint
+                                            color: '#818cf8',
+                                            border: '1px solid rgba(99, 102, 241, 0.3)'
+                                        }}
+                                        title={`${project.stems.length} Stems Available`}
+                                    >
+                                        STEMS
+                                    </span>
+                                )}
+
+                                {/* Beat Data Badge */}
+                                {(project.beatCount && project.beatCount > 0) || (project.markers && project.markers.length > 0) ? (
+                                    <span
+                                        className="status-badge"
+                                        style={{
+                                            fontSize: '0.65rem',
+                                            padding: '2px 6px',
+                                            background: 'rgba(16, 185, 129, 0.15)', // Green tint
+                                            color: '#34d399', // Green text
+                                            border: '1px solid rgba(16, 185, 129, 0.2)'
+                                        }}
+                                        title="Has Beat Detection Data"
+                                    >
+                                        BEATS
+                                    </span>
+                                ) : null}
+                            </div>
+                            <button
+                                className="btn btn-secondary px-2 py-1 text-sm min-w-0"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onDelete(project.id);
+                                }}
+                                title="Delete project"
+                            >
+                                🗑️
+                            </button>
+                        </div>
+                    ))}
+                </div>
+
+                {/* BOTTOM FADE */}
+                <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-[var(--bg-primary)] to-transparent z-10 rounded-b-lg"></div>
+            </div>
+        </div>
     );
 };
 

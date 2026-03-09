@@ -5,7 +5,7 @@ import ScriptManagerModule from './modules/ScriptManagerModule';
 
 import MusicVideoAssemblerModule from './modules/MusicVideoAssemblerModule';
 import SettingsModule from './modules/SettingsModule';
-import LtxTestModule from './modules/LtxTestModule';
+import WorkflowAnalyzerModule from './modules/WorkflowAnalyzerModule';
 
 
 
@@ -38,6 +38,42 @@ function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
   const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : undefined;
+
+  const handleCreateBlankProject = async (projectName?: string) => {
+    let initialOutputDir = undefined;
+    try {
+      // @ts-ignore
+      const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+      if (ipcRenderer) {
+        const configRes = await ipcRenderer.invoke('get-config');
+        if (configRes.success && configRes.config.projectOutputDir) {
+          initialOutputDir = configRes.config.projectOutputDir;
+        }
+      }
+    } catch (e) {
+      console.warn("Could not determine default output dir for blank project", e);
+    }
+
+    if (!initialOutputDir) {
+      try {
+        // @ts-ignore
+        const path = window.require('path');
+        initialOutputDir = path.resolve('./output');
+      } catch (e) { }
+    }
+
+    const finalName = projectName || `Blank Project ${new Date().toLocaleDateString().replace(/\//g, '-')}`;
+    const newProject = saveProject({
+      name: finalName,
+      frameRate: 20,
+      stemType: 'master',
+      stems: [],
+      outputDir: initialOutputDir
+    });
+
+    setActiveProjectId(newProject.id);
+    return newProject;
+  };
 
   const handleCreateProject = (file: File, preferredOutputDir?: string) => {
     // Try to calculate an initial outputDir if possible (useful for Electron)
@@ -114,6 +150,8 @@ function App() {
 
       case 'settings':
         return <SettingsModule onSave={refreshProjects} />;
+      case 'workflow-analyzer':
+        return <WorkflowAnalyzerModule onStatusChange={addLog} />;
       case 'music-video-assembler':
         return (
           <MusicVideoAssemblerModule
@@ -121,14 +159,14 @@ function App() {
             activeProject={activeProject}
             onSelectProject={handleSelectProject}
             onCreateProject={handleCreateProject}
+            onCreateBlankProject={handleCreateBlankProject}
             onUpdateProject={handleUpdateProject}
             onDeleteProject={deleteProject}
             onRefreshProjects={refreshProjects}
             onStatusChange={addLog}
           />
         );
-      case 'ltx-test':
-        return <LtxTestModule />;
+
       default:
         return (
           <MusicVideoAssemblerModule
@@ -136,6 +174,7 @@ function App() {
             activeProject={activeProject}
             onSelectProject={handleSelectProject}
             onCreateProject={handleCreateProject}
+            onCreateBlankProject={handleCreateBlankProject}
             onUpdateProject={handleUpdateProject}
             onDeleteProject={deleteProject}
             onRefreshProjects={refreshProjects}
@@ -145,18 +184,12 @@ function App() {
   };
 
   return (
-    <Layout activeModule={activeModule} onModuleChange={setActiveModule} statusLogs={statusLogs}>
-      {activeProject && (
-        <div className="bg-blue-900/30 border-b border-blue-900/50 px-4 py-2 text-xs text-blue-200 flex justify-between items-center">
-          <span>📂 Active Project: <strong>{activeProject.name}</strong></span>
-          <button
-            onClick={() => setActiveProjectId(null)}
-            className="hover:text-white"
-          >
-            ✖ Close
-          </button>
-        </div>
-      )}
+    <Layout
+      activeModule={activeModule}
+      onModuleChange={setActiveModule}
+      statusLogs={statusLogs}
+      activeProjectName={activeProject?.name}
+    >
       {renderModule()}
     </Layout>
   );

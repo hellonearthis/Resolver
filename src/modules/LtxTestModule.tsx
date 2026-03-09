@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import workflowJson from '../../comfyui_workflows/video_ltx2_i2v.json';
 import DropZone from '../components/DropZone';
 import { getValidLtxFrameCount } from '../utils/timelineUtils';

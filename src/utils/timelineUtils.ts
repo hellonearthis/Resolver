@@ -1,5 +1,46 @@
 import type { VideoClip, TimelineRow } from '../types/assembler';
 
+/**
+ * Dynamically generates a silent WAV audio blob of the specified duration.
+ * This ensures WaveSurfer instances can mount and allow timeline interactions
+ * even in "Blank" projects that lack a source audio file.
+ */
+export const createSilentAudioBlob = (durationSec: number): Blob => {
+    const sampleRate = 44100;
+    const numChannels = 1;
+    const numSamples = durationSec * sampleRate;
+    const blockAlign = numChannels * 2;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = numSamples * blockAlign;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+
+    const writeString = (v: DataView, offset: number, str: string) => {
+        for (let i = 0; i < str.length; i++) {
+            v.setUint8(offset + i, str.charCodeAt(i));
+        }
+    };
+
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    return new Blob([buffer], { type: 'audio/wav' });
+};
+
+/** 
+ * Standardized colors for different types of audio markers on the timeline. 
+ */
 export const MARKER_COLORS = {
     downbeat: 'rgba(6, 182, 212, 0.9)', // Cyan
     offbeat: 'rgba(255, 255, 255, 0.5)', // Dim White
@@ -8,6 +49,9 @@ export const MARKER_COLORS = {
     default: 'rgba(156, 163, 175, 0.8)'   // Gray
 };
 
+/** 
+ * Default visual colors corresponding to common source separation stem types. 
+ */
 export const STEM_COLORS: Record<string, string> = {
     'drums': '#ef4444', // Red
     'bass': '#f59e0b', // Amber/Yellow
@@ -15,8 +59,13 @@ export const STEM_COLORS: Record<string, string> = {
     'vocals': '#3b82f6', // Blue
     'piano': '#8b5cf6', // Violet
     'guitar': '#ec4899', // Pink
-}; export const DEFAULT_STEM_COLOR = '#6b7280'; // Gray
+};
 
+export const DEFAULT_STEM_COLOR = '#6b7280'; // Gray
+
+/** 
+ * Maps stem types to semantic Tailwind color names used by UI components (e.g., badges). 
+ */
 export const THEME_STEM_MAPPING: Record<string, { base: string, light: string }> = {
     'beat': { base: 'Blue', light: 'Sky' },      // Default / Bass-like
     'bass': { base: 'Blue', light: 'Sky' },
@@ -25,6 +74,10 @@ export const THEME_STEM_MAPPING: Record<string, { base: string, light: string }>
     'other': { base: 'Yellow', light: 'Amber' }
 };
 
+/**
+ * Gets the configured theme colors for a given stem type, falling back to 'other' if unknown.
+ * @param type The string stem identifier (e.g. 'vocals', 'drums')
+ */
 export const getStemTheme = (type: string) => {
     return THEME_STEM_MAPPING[type.toLowerCase()] || THEME_STEM_MAPPING['other'];
 };

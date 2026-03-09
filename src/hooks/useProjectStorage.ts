@@ -35,8 +35,8 @@ export interface ProjectMarker {
 export interface BeatProject {
     id: string;
     name: string;
-    audioPath: string;
-    audioFileName: string;
+    audioPath?: string;
+    audioFileName?: string;
     csvPath?: string;
     frameRate: number;
     bpm?: number;
@@ -98,6 +98,12 @@ export function useProjectStorage() {
         refreshProjects();
     }, [refreshProjects]);
 
+    /**
+     * Internal helper to commit a project object to the filesystem as a project.json bundle.
+     * Determines or creates the PRJ_ folder output directory.
+     * @param project The project data to save
+     * @returns The updated project data with a resolved outputDir
+     */
     const saveProjectFile = (project: BeatProject): BeatProject => {
         let currentOutputDir = project.outputDir;
 
@@ -129,7 +135,8 @@ export function useProjectStorage() {
 
             // Determine if outputDir already IS the per-project bundle folder
             // Use startsWith('PRJ_') to prevent infinite nesting if the project name gets slightly altered
-            const isAlreadyBundle = dirBasename.startsWith('PRJ_') || dirBasename === safeProjectName;
+            // Check BOTH the basename and the full path just to be safe if it's already a bundle directory
+            const isAlreadyBundle = dirBasename.startsWith('PRJ_') || dirBasename === safeProjectName || currentOutputDir.includes('PRJ_');
             const bundleDirectory = isAlreadyBundle
                 ? normalizedOutputDir
                 : path.join(normalizedOutputDir, bundleName);
@@ -153,6 +160,11 @@ export function useProjectStorage() {
         }
     };
 
+    /**
+     * Creates a new project, saves it to the filesystem, and adds it to state.
+     * @param project The initial project data (without ID or timestamps)
+     * @returns The newly created project with generated ID and paths
+     */
     const saveProject = useCallback((project: Omit<BeatProject, 'id' | 'createdAt' | 'updatedAt'>) => {
         const now = new Date().toISOString();
         const newProject: BeatProject = {
@@ -173,6 +185,11 @@ export function useProjectStorage() {
         return finalProject;
     }, []);
 
+    /**
+     * Updates an existing project by ID with partial data and commits changes to disk.
+     * @param id The ID of the project to update
+     * @param updates The new data to merge into the project
+     */
     const updateProject = useCallback((id: string, updates: Partial<BeatProject>) => {
         console.log(`[useProjectStorage] updateProject called for ${id}`, Object.keys(updates));
         setProjects(prev => prev.map(p => {
@@ -186,6 +203,10 @@ export function useProjectStorage() {
         }));
     }, []);
 
+    /**
+     * Deletes a project from state and attempts to remove its project.json file from disk.
+     * @param id The ID of the project to delete
+     */
     const deleteProject = useCallback((id: string) => {
         setProjects(prev => {
             const project = prev.find(p => p.id === id);
@@ -208,10 +229,20 @@ export function useProjectStorage() {
         });
     }, []);
 
+    /**
+     * Retrieves a project directly from the current state by its ID.
+     * @param id The ID of the project to find
+     * @returns The project object, or undefined if not found
+     */
     const getProject = useCallback((id: string) => {
         return projects.find(p => p.id === id);
     }, [projects]);
 
+    /**
+     * Forces a re-export of all currently loaded projects to their respective directories.
+     * Useful for batch migrations or recovery.
+     * @returns An object detailing success/failure counts and specific error messages
+     */
     const exportAllProjects = useCallback(async () => {
         let successCount = 0;
         let failCount = 0;

@@ -23,6 +23,7 @@ interface MusicVideoAssemblerModuleProps {
     activeProject?: BeatProject;
     onSelectProject: (id: string) => void;
     onCreateProject: (file: File, preferredOutputDir?: string) => BeatProject;
+    onCreateBlankProject: (name?: string) => Promise<BeatProject>;
     onUpdateProject: (id: string, updates: Partial<BeatProject>) => void;
     onDeleteProject: (id: string) => void;
     onRefreshProjects: () => void;
@@ -37,7 +38,8 @@ import {
     hexToRgba,
     adjustColorBrightness,
     formatTime,
-    getStemTheme
+    getStemTheme,
+    createSilentAudioBlob
 } from '../utils/timelineUtils';
 
 /**
@@ -51,6 +53,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     activeProject,
     onSelectProject,
     onCreateProject,
+    onCreateBlankProject,
     onDeleteProject,
     onUpdateProject,
     onRefreshProjects,
@@ -98,6 +101,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [zoomLevel, setZoomLevel] = useState(50); // minPxPerSec
     const [minZoom, setMinZoom] = useState(1);
     const [mainBeatSource, setMainBeatSource] = useState<'main' | number>('main'); // 'main' or index of stem
+    const [waveSurfersReady, setWaveSurfersReady] = useState(0); // Trigger for re-rendering regions
 
     useEffect(() => {
         checkConnection();
@@ -145,7 +149,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
     // Load Project Audio when activeProject changes
     useEffect(() => {
-        if (activeProject && activeProject.audioPath) {
+        if (activeProject) {
             loadProjectAudio(activeProject);
 
             // Auto defaults for older projects without frameRate
@@ -154,6 +158,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
         } else if (!activeProject) {
             lastProjectIdRef.current = null;
+            setClips([]);
+            setDuration(0);
+            setAudioUrl(null);
+            setStems([]);
         }
     }, [
         activeProject?.id,
@@ -572,16 +580,28 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 setStems([]);
                 setMainMarkers([]);
 
-                // @ts-ignore
-                const pathModule = window.require('path');
-                const absoluteAudioPath = pathModule.resolve(project.outputDir || '', project.audioPath);
+                if (project.audioPath) {
+                    // @ts-ignore
+                    const pathModule = window.require('path');
+                    const absoluteAudioPath = pathModule.resolve(project.outputDir || '', project.audioPath);
 
-                const buffer = fs.readFileSync(absoluteAudioPath);
-                const blob = new Blob([buffer], { type: 'audio/mpeg' });
-                const url = URL.createObjectURL(blob);
+                    const buffer = fs.readFileSync(absoluteAudioPath);
+                    const blob = new Blob([buffer], { type: 'audio/mpeg' });
+                    const url = URL.createObjectURL(blob);
 
-                setAudioUrl(url);
-                setAudioFile({ name: project.audioFileName, path: absoluteAudioPath }); // Keep absolute in state for FFmpeg
+                    setAudioUrl(url);
+                    setAudioFile({ name: project.audioFileName || 'Unknown', path: absoluteAudioPath }); // Keep absolute in state for FFmpeg
+                } else {
+                    // Generate a silent audio blob so WaveSurfer can initialize and allow timeline selection
+                    const blankDuration = 60 * 5; // 5 minutes
+                    const silentBlob = createSilentAudioBlob(blankDuration);
+                    const url = URL.createObjectURL(silentBlob);
+
+                    setAudioUrl(url);
+                    setAudioFile(null);
+                    setDuration(blankDuration);
+                }
+
                 if (project.outputDir) setOutputDir(project.outputDir);
             }
 
@@ -1077,6 +1097,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             // Render beat markers inside WaveSurfer wrapper
             const currentMarkers = mainBeatSource === 'main' ? mainMarkers : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].markers : []);
             renderBeatMarkers(ws, currentMarkers, dur);
+
+            // Trigger region render
+            setWaveSurfersReady(prev => prev + 1);
         });
 
         // Register Regions Plugin
@@ -1326,6 +1349,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         if (stem.markers && stem.markers.length > 0 && durToUse > 0) {
                             renderBeatMarkers(ws, stem.markers, durToUse);
                         }
+
+                        // Trigger region render
+                        setWaveSurfersReady(prev => prev + 1);
                     });
 
                     stemSurfers.current.push(ws);
@@ -1692,9 +1718,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         };
 
         // Small delay to let WaveSurfer finish any pending updates
-        const timer = setTimeout(renderSavedRegions, 100);
+        const timer = setTimeout(renderSavedRegions, 250);
         return () => clearTimeout(timer);
-    }, [clips, stems, duration]);
+    }, [clips, stems, duration, waveSurfersReady]);
 
     const handleGenerateClipFromRegion = async () => {
         if (!activeSelection) {
@@ -1922,6 +1948,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     onDelete={onDeleteProject}
                     onRefresh={onRefreshProjects}
                     currentProjectId={activeProject?.id}
+                    onCreateBlankProject={onCreateBlankProject}
                 />
             </CollapsibleCard>
 

@@ -101,9 +101,13 @@ ipcMain.on('sync-to-resolve', (event, data) => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// File dialog with default path — used when loading a project's audio file
-// ---------------------------------------------------------------------------
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: open-audio-dialog
+ * Opens a native file dialog to select an audio file.
+ * Returns the absolute path of the selected file, or null if canceled.
+ * ---------------------------------------------------------------------------
+ */
 ipcMain.handle('open-audio-dialog', async (_event, defaultPath?: string) => {
     let dialogOptions: Electron.OpenDialogOptions = {
         title: 'Select Audio File',
@@ -129,9 +133,13 @@ ipcMain.handle('open-audio-dialog', async (_event, defaultPath?: string) => {
     return result.filePaths[0];
 });
 
-// ---------------------------------------------------------------------------
-// Video Sync - Generate standalone script for Free Version
-// ---------------------------------------------------------------------------
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: stage-video-sync
+ * Generates a Python script that can be executed inside DaVinci Resolve (Free)
+ * to automatically import an audio track and a set of video clips onto a timeline.
+ * ---------------------------------------------------------------------------
+ */
 ipcMain.handle('stage-video-sync', async (_event, data: {
     audioPath: string;
     videoPaths: string[];
@@ -269,9 +277,13 @@ if __name__ == '__main__':
     }
 });
 
-// ---------------------------------------------------------------------------
-// Script Manager — generate self-contained Python script for Resolve Free
-// ---------------------------------------------------------------------------
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: stage-for-resolve
+ * Generates a standalone Python script to be run from Resolve's Scripts menu.
+ * Embeds marker data directly to avoid needing an external CSV at runtime.
+ * ---------------------------------------------------------------------------
+ */
 interface MarkerEntry {
     frame: number;
     timestamp: number;
@@ -687,7 +699,12 @@ ipcMain.handle('convert-audio-to-wav', async (_event, inputPath: string) => {
     });
 });
 
-// Config Persistence
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: get-config / save-config
+ * Handles persistent configuration settings for the app.
+ * ---------------------------------------------------------------------------
+ */
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
 
 ipcMain.handle('get-config', async () => {
@@ -740,7 +757,13 @@ ipcMain.handle('save-manifest', async (_event, manifest: any) => {
     }
 });
 
-// Scan projects folder for *_data.json files
+/**
+ * ---------------------------------------------------------------------------
+ * IPC: scan-projects-folder
+ * Scans a given folder path for directories starting with 'PRJ_'.
+ * Reads inside each for a project.json and surfaces the data to the UI.
+ * ---------------------------------------------------------------------------
+ */
 ipcMain.handle('scan-projects-folder', async (_event, folderPath: string) => {
     try {
         if (!fs.existsSync(folderPath)) {
@@ -763,6 +786,9 @@ ipcMain.handle('scan-projects-folder', async (_event, folderPath: string) => {
                         const content = fs.readFileSync(dataPath, 'utf8');
                         const project = JSON.parse(content);
                         if (project.id && project.name) {
+                            // Enforce dynamic outputDir based on the actual folder path
+                            // This guarantees project bundles stay portable if moved to another drive/PC
+                            project.outputDir = itemPath;
                             projects.push(project);
                         }
                     }

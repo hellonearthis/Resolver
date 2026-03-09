@@ -4,6 +4,7 @@ interface SidebarProps {
     activeModule: string;
     onModuleChange: (module: string) => void;
     statusLogs?: { time: Date, msg: string }[];
+    activeProjectName?: string;
 }
 
 interface ModuleItem {
@@ -16,11 +17,11 @@ interface ModuleItem {
 const modules: ModuleItem[] = [
     { id: 'script-manager', label: 'Script Manager', icon: '📜', enabled: true },
     { id: 'music-video-assembler', label: 'Video Assembler', icon: '🎸', enabled: true },
+    { id: 'workflow-analyzer', label: 'Workflow Analyzer', icon: '🔀', enabled: true },
     { id: 'settings', label: 'Settings', icon: '⚙️', enabled: true },
-    { id: 'ltx-test', label: 'LTX Video Test', icon: '🎥', enabled: true },
 ];
 
-const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusLogs }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusLogs, activeProjectName }) => {
     const logsEndRef = useRef<HTMLDivElement>(null);
 
     // Auto-scroll to bottom of logs on new message
@@ -54,6 +55,16 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
             </nav>
 
             <div className="sidebar-footer" style={{ borderTop: '1px solid #334155', paddingTop: '10px', marginTop: 'auto' }}>
+                {activeProjectName && (
+                    <div className="mb-4 bg-indigo-900/20 border border-indigo-800/40 p-2 rounded-md text-xs text-indigo-200">
+                        <div className="opacity-70 text-[10px] uppercase tracking-widest mb-1 flex items-center gap-1 font-semibold">
+                            <span>📂</span> Active Project
+                        </div>
+                        <div className="font-bold truncate text-[13px] text-indigo-100" title={activeProjectName}>
+                            {activeProjectName}
+                        </div>
+                    </div>
+                )}
                 <div className="sidebar-status mb-2">
                     <span className="status-dot"></span>
                     <span>System Log</span>

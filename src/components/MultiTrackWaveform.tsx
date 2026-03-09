@@ -42,7 +42,7 @@ const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers 
             // Label
             const label = document.createElement('div');
             // Try explicit match first, then lowercase match for debug count
-            label.className = 'stem-label';
+            label.className = 'absolute top-1 left-1 z-10 text-[10px] px-1 py-0.5 rounded bg-black/70 text-white pointer-events-none';
             let debugCount = 0;
             const stemType = stem.type;
             let m = markers[stemType];
@@ -53,18 +53,8 @@ const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers 
             }
             if (m) debugCount = m.length;
 
-            label.innerHTML = `<strong>${stem.type}</strong> <span style="opacity:0.7; font-size:9px">(${debugCount} markers)</span>`;
+            label.innerHTML = `<strong>${stem.type}</strong> <span class="opacity-70 text-[9px]">(${debugCount} markers)</span>`;
 
-            label.style.position = 'absolute';
-            label.style.top = '4px';
-            label.style.left = '4px';
-            label.style.zIndex = '10';
-            label.style.fontSize = '10px';
-            label.style.padding = '2px 4px';
-            label.style.borderRadius = '3px';
-            label.style.background = 'rgba(0,0,0,0.7)';
-            label.style.color = '#fff';
-            label.style.pointerEvents = 'none';
             wrapper.appendChild(label);
 
             const div = document.createElement('div');
@@ -198,7 +188,7 @@ const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers 
                     const wrapper = containerRef.current.children[index];
                     const label = wrapper.querySelector('.stem-label');
                     if (label) {
-                        label.innerHTML = `<strong>${stem.type}</strong> <span style="opacity:0.7; font-size:9px">(${stemMarkers.length} markers)</span>`;
+                        label.innerHTML = `<strong>${stem.type}</strong> <span class="opacity-70 text-[9px]">(${stemMarkers.length} markers)</span>`;
                     }
                 }
 
