@@ -124,8 +124,30 @@ export default function ScriptManagerModule() {
         }
     };
 
+    const handleOpenFolder = async (scriptPath: string) => {
+        if (!ipcRenderer) return;
+        try {
+            // Get the directory containing the script
+            const dir = (window as any).require('path').dirname(scriptPath);
+            await ipcRenderer.invoke('open-folder', dir);
+        } catch (err) {
+            console.error('Failed to open folder:', err);
+            setStatus('Error opening folder.');
+        }
+    };
+
+    const handleOpenParentFolder = async (dirPath: string) => {
+        if (!ipcRenderer) return;
+        try {
+            await ipcRenderer.invoke('open-folder', dirPath);
+        } catch (err) {
+            console.error('Failed to open folder:', err);
+            setStatus('Error opening folder.');
+        }
+    };
+
     useEffect(() => {
-        const cleanup = loadScripts(); // loadScripts now returns a promise that resolves to a cleanup function (or void)
+        const cleanup = loadScripts(); 
         return () => {
             cleanup.then(c => c && c());
         };
@@ -181,16 +203,24 @@ export default function ScriptManagerModule() {
                     </button>
                 </div>
 
-                <p style={{
-                    fontFamily: 'monospace',
-                    background: 'var(--bg-tertiary)',
-                    padding: '8px 12px',
-                    borderRadius: '4px',
-                    fontSize: '0.85rem',
-                    color: 'var(--text-secondary)',
-                    marginBottom: '20px',
-                    overflowWrap: 'break-word'
-                }}>
+                <p 
+                    onClick={() => handleOpenParentFolder(resolvePath)}
+                    style={{
+                        fontFamily: 'monospace',
+                        background: 'var(--bg-tertiary)',
+                        padding: '8px 12px',
+                        borderRadius: '4px',
+                        fontSize: '0.85rem',
+                        color: 'var(--text-secondary)',
+                        marginBottom: '20px',
+                        overflowWrap: 'break-word',
+                        cursor: 'pointer',
+                        border: '1px solid transparent',
+                    }}
+                    onMouseOver={(e) => (e.currentTarget.style.borderColor = 'var(--accent-primary)')}
+                    onMouseOut={(e) => (e.currentTarget.style.borderColor = 'transparent')}
+                    title="Click to open folder in explorer"
+                >
                     {resolvePath}
                 </p>
 
@@ -227,7 +257,11 @@ export default function ScriptManagerModule() {
                             <tbody>
                                 {scripts.map((script) => (
                                     <tr key={script.name} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                        <td style={{ padding: '12px 8px', fontWeight: 500 }}>
+                                        <td 
+                                            style={{ padding: '12px 8px', fontWeight: 500, cursor: 'pointer' }}
+                                            onClick={() => handleOpenFolder(script.path)}
+                                            title="Click to open folder"
+                                        >
                                             {script.name}
                                         </td>
                                         <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import workflowJson from '../../comfyui_workflows/video_ltx2_i2v.json';
 import DropZone from '../components/DropZone';
 import { getValidLtxFrameCount } from '../utils/timelineUtils';
-import { uploadFileToComfyUI } from '../services/comfyService';
+import { uploadFileToComfyUI, waitForPromptWebSocket } from '../services/comfyService';
+import PromptEditorModal from '../components/PromptEditorModal';
 
 // Helper to get IPC renderer
 const getIpcRenderer = () => {
@@ -23,6 +24,15 @@ export default function LtxTestModule() {
     const [outputPrefix, setOutputPrefix] = useState<string>('video/LTX_2.0_i2v');
     const [audioFile, setAudioFile] = useState<string>('Bob Marly-Get Up, Stand Up_Vocals.mp3');
     const [audioFilePath, setAudioFilePath] = useState<string | null>(null);
+
+    // Prompt Editor Modal
+    const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+    const [modalConfig, setModalConfig] = useState<{ title: string, value: string, onSave: (val: string) => void } | null>(null);
+
+    const openPromptEditor = (title: string, value: string, onSave: (val: string) => void) => {
+        setModalConfig({ title, value, onSave });
+        setIsPromptModalOpen(true);
+    };
 
     const [isGenerating, setIsGenerating] = useState(false);
     const [isClearingVram, setIsClearingVram] = useState(false);
@@ -162,6 +172,15 @@ export default function LtxTestModule() {
             if (response.success) {
                 const promptId = response.data?.prompt_id;
                 setStatusMessage(`Success! Task queued. Prompt ID: ${promptId}`);
+
+                // Wait for the actual generation while showing progress
+                await waitForPromptWebSocket(
+                    promptId,
+                    workflow,
+                    (status) => setStatusMessage(status)
+                );
+                
+                setStatusMessage('Generation complete!');
             } else {
                 setStatusMessage(`Error: ${response.error || 'Failed to queue prompt'}`);
             }
@@ -247,7 +266,18 @@ export default function LtxTestModule() {
                     {/* Prompt Settings */}
                     <div className="bg-gray-800/40 p-4 rounded border border-gray-700/50 space-y-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-300 mb-1">Positive Prompt</label>
+                            <div className="flex justify-between items-center mb-1">
+                                <label className="block text-sm font-medium text-gray-300">Positive Prompt</label>
+                                <button
+                                    onClick={() => openPromptEditor("Positive Prompt", positivePrompt, setPositivePrompt)}
+                                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
+                                >
+                                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                                    </svg>
+                                    Expand
+                                </button>
+                            </div>
                             <textarea
                                 value={positivePrompt}
                                 onChange={e => setPositivePrompt(e.target.value)}
@@ -256,7 +286,18 @@ export default function LtxTestModule() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-300 mb-1">Negative Prompt</label>
+                            <div className="flex justify-between items-center mb-1">
+                                <label className="block text-sm font-medium text-gray-300">Negative Prompt</label>
+                                <button
+                                    onClick={() => openPromptEditor("Negative Prompt", negativePrompt, setNegativePrompt)}
+                                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
+                                >
+                                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                                    </svg>
+                                    Expand
+                                </button>
+                            </div>
                             <textarea
                                 value={negativePrompt}
                                 onChange={e => setNegativePrompt(e.target.value)}
@@ -375,6 +416,19 @@ export default function LtxTestModule() {
 
                 </div>
             </div>
+
+            {modalConfig && (
+                <PromptEditorModal
+                    isOpen={isPromptModalOpen}
+                    initialValue={modalConfig.value}
+                    onSave={(newVal) => {
+                        modalConfig.onSave(newVal);
+                        setIsPromptModalOpen(false);
+                    }}
+                    onCancel={() => setIsPromptModalOpen(false)}
+                    title={modalConfig.title}
+                />
+            )}
         </div>
     );
 }

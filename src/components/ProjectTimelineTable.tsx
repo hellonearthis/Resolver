@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { VideoClip } from '../types/assembler';
 import { formatTime, buildTimelineRows } from '../utils/timelineUtils';
+import PromptEditorModal from './PromptEditorModal';
 
 /**
  * Props for the ProjectTimelineTable component.
@@ -33,6 +34,23 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
     // Inline label editing
     const [editingClipId, setEditingClipId] = useState<string | null>(null);
     const [editingLabel, setEditingLabel] = useState('');
+
+    // Prompt Editor Modal
+    const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+    const [activePromptClip, setActivePromptClip] = useState<{ id: string, text: string } | null>(null);
+
+    const openPromptEditor = (clipId: string, currentText: string) => {
+        setActivePromptClip({ id: clipId, text: currentText });
+        setIsPromptModalOpen(true);
+    };
+
+    const handleSavePrompt = (newPrompt: string) => {
+        if (activePromptClip) {
+            onUpdateClipPrompt(activePromptClip.id, newPrompt);
+        }
+        setIsPromptModalOpen(false);
+        setActivePromptClip(null);
+    };
 
     const startEditLabel = (clipId: string, currentLabel: string) => {
         setEditingClipId(clipId);
@@ -121,14 +139,25 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                             </td>
                             <td className="p-2">
                                 {row.type === 'clip' && row.clip ? (
-                                    <input
-                                        type="text"
-                                        placeholder="AI Prompt (optional)..."
-                                        value={row.clip.promptText || ''}
-                                        onChange={(e) => onUpdateClipPrompt(row.clip!.id, e.target.value)}
-                                        className="bg-gray-900/50 border border-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded outline-none w-48 focus:border-indigo-500 focus:bg-gray-900 transition-all"
-                                        onClick={(e) => e.stopPropagation()}
-                                    />
+                                    <div className="flex items-center gap-1">
+                                        <input
+                                            type="text"
+                                            placeholder="AI Prompt (optional)..."
+                                            value={row.clip.promptText || ''}
+                                            onChange={(e) => onUpdateClipPrompt(row.clip!.id, e.target.value)}
+                                            className="bg-gray-900/50 border border-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded outline-none w-48 focus:border-indigo-500 focus:bg-gray-900 transition-all"
+                                            onClick={(e) => e.stopPropagation()}
+                                        />
+                                        <button
+                                            onClick={() => openPromptEditor(row.clip!.id, row.clip!.promptText || '')}
+                                            className="text-gray-500 hover:text-indigo-400 transition-colors p-1"
+                                            title="Expand editor"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                                            </svg>
+                                        </button>
+                                    </div>
                                 ) : (
                                     <span className="text-gray-700">—</span>
                                 )}
@@ -169,7 +198,7 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                             title={row.clip.startImagePath}
                                         >
                                             <img
-                                                src={`file://${row.clip.startImagePath}?t=${Date.now()}`}
+                                                src={`media://${row.clip.startImagePath}?t=${Date.now()}`}
                                                 alt="Start"
                                                 className="w-full h-full object-cover"
                                             />
@@ -198,7 +227,7 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                             title={row.clip.endImagePath}
                                         >
                                             <img
-                                                src={`file://${row.clip.endImagePath}?t=${Date.now()}`}
+                                                src={`media://${row.clip.endImagePath}?t=${Date.now()}`}
                                                 alt="End"
                                                 className="w-full h-full object-cover"
                                             />
@@ -317,6 +346,14 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                     ))}
                 </tbody>
             </table>
+
+            <PromptEditorModal
+                isOpen={isPromptModalOpen}
+                initialValue={activePromptClip?.text || ''}
+                onSave={handleSavePrompt}
+                onCancel={() => setIsPromptModalOpen(false)}
+                title={`Edit Prompt for Clip: ${clips.find(c => c.id === activePromptClip?.id)?.label || ''}`}
+            />
         </div>
     );
 };

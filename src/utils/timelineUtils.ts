@@ -198,3 +198,19 @@ export const getValidLtxFrameCount = (durationSeconds: number, fps: number): num
     if (n < 1) n = 1;
     return (n * 8) + 1;
 };
+
+/**
+ * Returns the duration (in seconds) rounded UP to the nearest valid LTX frame boundary.
+ * Valid LTX frame counts are (n * 8) + 1 where n >= 1.
+ *
+ * @param durationSeconds The raw duration in seconds
+ * @param fps The frame rate (e.g. 20, 24, 25)
+ * @returns The snapped duration in seconds (always >= the original)
+ */
+export const getLtxAlignedDuration = (durationSeconds: number, fps: number): number => {
+    const exactFrames = durationSeconds * fps;
+    let n = Math.ceil((exactFrames - 1) / 8);
+    if (n < 1) n = 1;
+    const alignedFrames = (n * 8) + 1;
+    return alignedFrames / fps;
+};

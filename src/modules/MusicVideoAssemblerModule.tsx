@@ -6,9 +6,9 @@ import { analyzeBeats, analyzeOnsets, analyzeLoudness, type BeatAlgorithm, initE
 
 import DropZone from '../components/DropZone';
 import ProjectsPanel from '../components/ProjectsPanel';
-import { checkComfyConnection, queuePrompt, uploadFileToComfyUI, convertAudioForComfyUI } from '../services/comfyService';
+import { checkComfyConnection, queuePrompt, uploadFileToComfyUI, convertAudioForComfyUI, waitForPromptWebSocket } from '../services/comfyService';
 import workflowJsonTemplate from '../../comfyui_workflows/video_ltx2_i2v.json';
-import { getValidLtxFrameCount } from '../utils/timelineUtils';
+import { getValidLtxFrameCount, getLtxAlignedDuration } from '../utils/timelineUtils';
 import type { BeatProject, ProjectMarker } from '../hooks/useProjectStorage';
 import ProjectTimelineTable from '../components/ProjectTimelineTable';
 import CollapsibleCard from '../components/CollapsibleCard';
@@ -325,53 +325,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     };
 
     const waitForGeneration = async (promptId: string): Promise<any> => {
-        return new Promise((resolve, reject) => {
-            const interval = setInterval(async () => {
-                try {
-                    // @ts-ignore
-                    const { ipcRenderer } = window.require('electron');
-                    const queueRes = await ipcRenderer.invoke('comfy-fetch', 'http://127.0.0.1:8188/queue');
-                    if (queueRes.success) {
-                        const queue = queueRes.data;
-                        const isPending = queue.queue_pending && queue.queue_pending.some((i: any) => i[1] === promptId);
-                        const isRunning = queue.queue_running && queue.queue_running.some((i: any) => i[1] === promptId);
-
-                        if (isPending) {
-                            if (onStatusChange) onStatusChange(`Queued... (Position: ${queue.queue_pending.findIndex((i: any) => i[1] === promptId) + 1})`);
-                            return;
-                        }
-                        if (isRunning) {
-                            if (onStatusChange) onStatusChange('Processing... (Running in ComfyUI)');
-                        }
-                    }
-
-                    const res = await ipcRenderer.invoke('comfy-fetch', 'http://127.0.0.1:8188/history');
-                    if (!res.success) return;
-
-                    const history = res.data;
-                    if (history[promptId]) {
-                        clearInterval(interval);
-                        if (history[promptId].status && history[promptId].status.status_str === 'error') {
-                            const errorDetails = history[promptId].status.messages;
-                            let errorMsg = "ComfyUI reported an error";
-                            if (errorDetails) {
-                                const errorData = errorDetails[1];
-                                if (errorData && errorData.exception_message) {
-                                    errorMsg = `ComfyUI Error (${errorData.node_type}): ${errorData.exception_message}`;
-                                } else {
-                                    errorMsg = `ComfyUI Error: ${JSON.stringify(errorDetails)}`;
-                                }
-                            }
-                            reject(new Error(errorMsg));
-                        } else {
-                            resolve(history[promptId].outputs);
-                        }
-                    }
-                } catch (e) {
-                    console.error("Polling error", e);
-                }
-            }, 1000);
-        });
+        return waitForPromptWebSocket(
+            promptId,
+            workflow,
+            (status) => {
+                if (onStatusChange) onStatusChange(status);
+            }
+        );
     };
 
     const moveFilesToProject = async (targetDir: string, _startTime: number, runPrefix: string) => {
@@ -1623,14 +1583,20 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             return;
         }
         const { start, end, source, stemIndex } = activeSelection;
-        const segDuration = end - start;
+
+        // Snap duration UP to the nearest valid LTX frame boundary
+        const rawDuration = end - start;
+        const fps = activeProject?.frameRate || 20;
+        const alignedDuration = getLtxAlignedDuration(rawDuration, fps);
+        const alignedEnd = start + alignedDuration;
+
         const track = (clips.length % 2) + 1;
 
         const newClip: VideoClip = {
             id: Date.now().toString(),
             startTime: start,
-            endTime: end,
-            duration: segDuration,
+            endTime: alignedEnd,
+            duration: alignedDuration,
             track,
             status: 'pending',
             source,
@@ -1645,7 +1611,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         if (wsRegions.current) wsRegions.current.clearRegions();
         stemRegionsRefs.current.forEach(r => r.clearRegions());
 
-        if (onStatusChange) onStatusChange(`Segment added: ${formatTime(start)} – ${formatTime(end)}`);
+        const frames = getValidLtxFrameCount(rawDuration, fps);
+        if (onStatusChange) onStatusChange(`Segment added: ${formatTime(start)} – ${formatTime(alignedEnd)} (${frames} frames @ ${fps}fps, ${alignedDuration.toFixed(2)}s)`);
     };
 
     // Remove a clip/segment from the timeline
@@ -1931,25 +1898,172 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         }
     };
 
-    const handleExportManifest = async () => {
-        // Generate JSON
-        const manifest = {
-            project_fps: activeProject?.frameRate || 24,
-            clips: clips.map(c => ({
-                path: c.videoPath || `C:/VJ_Project/clips/clip_${c.id}.mp4`, // Placeholder if not done
-                start_seconds: c.startTime,
-                track: c.track
-            }))
-        };
+    const handleExportMarkers = async () => {
+        if (!activeProject) {
+            if (onStatusChange) onStatusChange('No project selected.');
+            return;
+        }
 
-        // Save via IPC
+        // Collect all markers: main track + all stems
+        const allMarkers: any[] = [];
+        
+        // Main Track Markers
+        mainMarkers.forEach(m => {
+            allMarkers.push({
+                time: m.time,
+                timestamp: m.time, // stage-for-resolve expects timestamp
+                frame: Math.round(m.time * (activeProject.frameRate || 24)),
+                type: m.type,
+                color: m.color || (m.isDownbeat ? '#ff0000' : '#ffff00'),
+                note: m.isDownbeat ? 'DOWNBEAT' : 'BEAT',
+                duration_sec: 0
+            });
+        });
+
+        // Stem Markers
+        stems.forEach(s => {
+            if (s.markers) {
+                s.markers.forEach(m => {
+                    allMarkers.push({
+                        time: m.time,
+                        timestamp: m.time,
+                        frame: Math.round(m.time * (activeProject.frameRate || 24)),
+                        type: m.type,
+                        color: s.color || '#00ff00',
+                        note: `${s.type.toUpperCase()}: ${m.type}`,
+                        duration_sec: 0
+                    });
+                });
+            }
+        });
+
+        if (allMarkers.length === 0) {
+            if (onStatusChange) onStatusChange('No markers found to export.');
+            return;
+        }
+
         // @ts-ignore
         const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
-        const result = await ipcRenderer.invoke('save-manifest', manifest);
+        const path = window.require('path');
+        
+        // Resolve audio path to absolute
+        let resolvedAudioPath = activeProject.audioPath || (audioFile as any)?.path;
+        if (resolvedAudioPath && !path.isAbsolute(resolvedAudioPath) && activeProject.outputDir) {
+            resolvedAudioPath = path.resolve(activeProject.outputDir, resolvedAudioPath);
+        }
+
+        const exportData = {
+            projectName: activeProject.name || 'Untitled Project',
+            audioPath: resolvedAudioPath,
+            csvPath: '', // Embedded in script
+            markers: allMarkers
+        };
+
+        if (onStatusChange) onStatusChange('Generating Resolve Markers script...');
+        const result = await ipcRenderer.invoke('stage-for-resolve', exportData);
+        
         if (result.success) {
-            if (onStatusChange) onStatusChange(`Manifest saved to ${result.path}`);
+            if (onStatusChange) onStatusChange(`Markers script generated: ${result.scriptPath}`);
         } else {
-            if (onStatusChange) onStatusChange(`Error saving manifest: ${result.error}`);
+            if (onStatusChange) onStatusChange(`Marker export failed: ${result.error}`);
+        }
+    };
+
+    const handleExportMediaOnly = async () => {
+        if (!activeProject || !audioFile?.path) {
+            if (onStatusChange) onStatusChange('No project or audio file selected.');
+            return;
+        }
+
+        // @ts-ignore
+        const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+        const path = window.require('path');
+
+        // Resolve paths to absolute
+        let resolvedAudioPath = activeProject.audioPath || (audioFile as any)?.path;
+        if (resolvedAudioPath && !path.isAbsolute(resolvedAudioPath) && activeProject.outputDir) {
+            resolvedAudioPath = path.resolve(activeProject.outputDir, resolvedAudioPath);
+        }
+
+        const videoPaths = clips
+            .filter(c => c.videoPath)
+            .map(c => {
+                let vp = c.videoPath!;
+                if (!path.isAbsolute(vp) && activeProject.outputDir) {
+                    vp = path.resolve(activeProject.outputDir, vp);
+                }
+                return vp;
+            });
+
+        const exportData = {
+            projectName: activeProject.name,
+            audioPath: resolvedAudioPath,
+            videoPaths,
+            beats: [] // No beats needed for pure import
+        };
+
+        if (onStatusChange) onStatusChange('Generating Resolve Load Media script...');
+        const result = await ipcRenderer.invoke('stage-video-sync', exportData);
+        
+        if (result.success) {
+            if (onStatusChange) onStatusChange(`Load Media script generated: ${result.scriptPath}`);
+        } else {
+            if (onStatusChange) onStatusChange(`Load Media export failed: ${result.error}`);
+        }
+    };
+
+    const handleExportManifest = async () => {
+        if (!activeProject) {
+            if (onStatusChange) onStatusChange('No project selected.');
+            return;
+        }
+
+        const projectClips = clips.filter(c => c.videoPath);
+        if (projectClips.length === 0) {
+            if (onStatusChange) onStatusChange('No generated clips found in the timeline.');
+            return;
+        }
+
+        // @ts-ignore
+        const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+        const path = window.require('path');
+
+        // Resolve paths to absolute
+        let resolvedAudioPath = activeProject.audioPath || (audioFile as any)?.path;
+        if (resolvedAudioPath && !path.isAbsolute(resolvedAudioPath) && activeProject.outputDir) {
+            resolvedAudioPath = path.resolve(activeProject.outputDir, resolvedAudioPath);
+        }
+
+        const resolvedClips = projectClips.map(clip => {
+            let vp = clip.videoPath!;
+            if (!path.isAbsolute(vp) && activeProject.outputDir) {
+                vp = path.resolve(activeProject.outputDir, vp);
+            }
+            return {
+                ...clip,
+                videoPath: vp,
+                path: vp // Ensure both keys are consistent for the handler
+            };
+        });
+        
+        // Prepare data for reconstruction script
+        const exportData = {
+            projectName: activeProject.name || 'Untitled Project',
+            audioPath: resolvedAudioPath,
+            frameRate: activeProject.frameRate || 24,
+            clips: resolvedClips
+        };
+
+        if (onStatusChange) onStatusChange('Generating Resolve export script...');
+
+        const result = await ipcRenderer.invoke('stage-timeline-to-resolve', exportData);
+        
+        if (result.success) {
+            if (onStatusChange) onStatusChange(`Resolve script generated: ${result.scriptPath}`);
+            // Optionally open the folder
+        } else {
+            console.error('Export failed:', result.error);
+            if (onStatusChange) onStatusChange(`Export failed: ${result.error}`);
         }
     };
 
@@ -2440,13 +2554,38 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             </>)} {/* end stems.length > 0 */}
 
                             {/* Controls */}
-                            <div className="controls-container flex gap-4 mt-6">
+                            <div className="controls-container flex flex-wrap gap-4 mt-6">
                                 <button className="btn btn-primary" onClick={handleGenerateClipFromRegion} disabled={!activeSelection || isAnalyzing}>
                                     Generate Clip from Selection
                                 </button>
-                                <button className="btn btn-secondary" onClick={handleExportManifest} disabled={clips.length === 0}>
-                                    Export Manifest for Resolve
-                                </button>
+                                
+                                <div className="flex gap-2">
+                                    <button 
+                                        className="btn bg-indigo-700 hover:bg-indigo-600 text-white border-none rounded font-bold text-sm" 
+                                        onClick={handleExportMediaOnly} 
+                                        disabled={clips.length === 0}
+                                        title="Step 1: Load all media into Resolve bin (Audio & Video)"
+                                    >
+                                        🎬 (1) Export Load Media Script
+                                    </button>
+                                    <button 
+                                        className="btn bg-indigo-800 hover:bg-indigo-700 text-white border-none rounded font-bold text-sm" 
+                                        onClick={handleExportManifest} 
+                                        disabled={clips.length === 0}
+                                        title="Step 2: Place media items from bin onto timeline at designed positions"
+                                    >
+                                        🎨 (2) Place Media Script
+                                    </button>
+                                    <button 
+                                        className="btn bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded font-bold text-sm" 
+                                        onClick={handleExportMarkers} 
+                                        disabled={mainMarkers.length === 0 && stems.length === 0}
+                                        title="Step 3: Set all detected beat markers and onsets onto the Resolve timeline"
+                                    >
+                                        🚩 (3) Set Beat Markers
+                                    </button>
+                                </div>
+
                                 <button
                                     className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm"
                                     onClick={handleSaveToProject}
@@ -2460,26 +2599,31 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             <div className="mt-8">
                                 {/* Selection Status — positioned just above the table */}
                                 {activeSelection && (
-                                    <div className="selection-status mb-3 p-2 bg-indigo-900/30 border border-indigo-500/50 rounded flex justify-between items-center text-sm">
-                                        <div>
-                                            <span className="text-gray-400 uppercase text-xs font-bold mr-2">Selection Source:</span>
-                                            <span className="text-white font-semibold">
-                                                {activeSelection.source === 'main' ? 'MAIN TRACK' : `STEM: ${stems[activeSelection.stemIndex!]?.type.toUpperCase()}`}
-                                            </span>
+                                    <div className="selection-status mb-8 px-10 py-6 bg-indigo-900/40 border-2 border-indigo-500/50 rounded-2xl flex justify-between items-center shadow-2xl transition-all duration-300">
+                                        <div className="flex flex-col gap-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-indigo-400 uppercase text-[10px] font-black tracking-widest">Selection Source</span>
+                                                <span className="bg-indigo-500/20 text-indigo-200 px-2 py-0.5 rounded text-[10px] font-bold border border-indigo-500/30">
+                                                    {activeSelection.source === 'main' ? 'MAIN TRACK' : `STEM: ${stems[activeSelection.stemIndex!]?.type.toUpperCase()}`}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-3 mt-1">
+                                                <span className="text-white text-2xl font-black font-mono tracking-tighter">
+                                                    {activeSelection.start.toFixed(2)}s <span className="text-indigo-500 mx-1">→</span> {activeSelection.end.toFixed(2)}s
+                                                </span>
+                                                <span className="bg-emerald-500/20 text-emerald-400 px-3 py-1 rounded-lg text-sm font-black border border-emerald-500/30">
+                                                    {(activeSelection.end - activeSelection.start).toFixed(2)}s TOTAL
+                                                </span>
+                                            </div>
                                         </div>
-                                        <div className="flex items-center gap-3">
-                                            <span className="text-gray-400 text-xs mr-2">Range:</span>
-                                            <span className="text-indigo-300 font-mono">
-                                                {activeSelection.start.toFixed(2)}s - {activeSelection.end.toFixed(2)}s
-                                                <span className="ml-2 text-white">({(activeSelection.end - activeSelection.start).toFixed(2)}s)</span>
-                                            </span>
-                                            <button
-                                                className="ml-3 bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-xs font-bold uppercase tracking-wide"
-                                                onClick={handleAddSegment}
-                                            >
-                                                + Add Segment
-                                            </button>
-                                        </div>
+
+                                        <button
+                                            className="btn-huge bg-emerald-600 hover:bg-emerald-500 text-white pulse-green border-none flex items-center gap-3 group"
+                                            onClick={handleAddSegment}
+                                        >
+                                            <span className="text-3xl group-hover:scale-125 transition-transform duration-200">+</span>
+                                            <span>Add Segment</span>
+                                        </button>
                                     </div>
                                 )}
                                 <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">📋 Project Timeline</h3>
