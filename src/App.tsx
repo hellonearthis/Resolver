@@ -6,6 +6,7 @@ import ScriptManagerModule from './modules/ScriptManagerModule';
 import MusicVideoAssemblerModule from './modules/MusicVideoAssemblerModule';
 import SettingsModule from './modules/SettingsModule';
 import WorkflowAnalyzerModule from './modules/WorkflowAnalyzerModule';
+import StoryboardModule from './modules/StoryboardModule';
 
 
 
@@ -166,6 +167,14 @@ function App() {
         return <SettingsModule onSave={refreshProjects} />;
       case 'workflow-analyzer':
         return <WorkflowAnalyzerModule onStatusChange={addLog} />;
+      case 'storyboard':
+        return (
+          <StoryboardModule
+            activeProject={activeProject}
+            onUpdateProject={handleUpdateProject}
+            onStatusChange={addLog}
+          />
+        );
       case 'music-video-assembler':
         return (
             <MusicVideoAssemblerModule

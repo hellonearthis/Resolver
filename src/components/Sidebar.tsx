@@ -26,6 +26,7 @@ interface ModuleItem {
 const modules: ModuleItem[] = [
     { id: 'script-manager', label: 'Script Manager', icon: '📜', enabled: true },
     { id: 'music-video-assembler', label: 'Video Assembler', icon: '🎸', enabled: true },
+    { id: 'storyboard', label: 'Story Board', icon: '🎨', enabled: true },
     { id: 'workflow-analyzer', label: 'Workflow Analyzer', icon: '🔀', enabled: true },
     { id: 'settings', label: 'Settings', icon: '⚙️', enabled: true },
 ];
