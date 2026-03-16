@@ -1,13 +1,13 @@
 import React from 'react';
-import type { StoryboardCard } from '../../types/storyboard';
+import type { VideoClip } from '../../types/assembler';
 
 interface AnimaticTimelineProps {
-    cards: StoryboardCard[];
+    cards: VideoClip[];
     onSelectCard: (id: string) => void;
 }
 
 const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ cards, onSelectCard }) => {
-    const totalDuration = cards.reduce((sum, card) => sum + card.calculatedDuration, 0);
+    const totalDuration = cards.reduce((sum, card) => sum + (card.duration || 0), 0);
 
     return (
         <div className="flex flex-col h-full bg-[#050508] rounded-2xl border border-gray-800/80 overflow-hidden shadow-2xl">
@@ -36,7 +36,7 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ cards, onSelectCard
 
                     {cards.map((card, index) => {
                         // Width relative to duration (e.g. 100px per second)
-                        const width = card.calculatedDuration * 80;
+                        const width = (card.duration || 2.0) * 80;
                         
                         return (
                             <div 
@@ -48,13 +48,13 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ cards, onSelectCard
                                 {/* Thumbnail Label */}
                                 <div className="absolute top-0 left-0 right-0 bg-indigo-500/10 border-l border-indigo-500/30 px-2 py-1 flex justify-between items-center">
                                     <span className="text-[10px] font-bold text-indigo-300">{card.sceneNumber}{card.shotLetter}</span>
-                                    <span className="text-[9px] text-indigo-500/70 font-mono">{card.calculatedDuration.toFixed(1)}s</span>
+                                    <span className="text-[9px] text-indigo-500/70 font-mono">{(card.duration || 0).toFixed(1)}s</span>
                                 </div>
 
                                 {/* Frame Image */}
                                 <div className="flex-1 bg-black/40 border border-gray-800 group-hover:border-indigo-500/50 transition-colors overflow-hidden rounded-t-lg mt-8 flex items-center justify-center">
-                                    {card.imageUrl ? (
-                                        <img src={card.imageUrl} alt="" className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
+                                    {card.startImagePath ? (
+                                        <img src={card.startImagePath} alt="" className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
                                     ) : (
                                         <span className="text-xl opacity-20">🖼️</span>
                                     )}
@@ -85,7 +85,7 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ cards, onSelectCard
             {/* Global Timeline Rail */}
             <div className="h-12 bg-black border-t border-gray-800/80 px-6 flex items-center gap-1 overflow-hidden">
                  {cards.map(card => {
-                     const percent = (card.calculatedDuration / totalDuration) * 100;
+                     const percent = ((card.duration || 0) / totalDuration) * 100;
                      return (
                          <div 
                             key={card.id}

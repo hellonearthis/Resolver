@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { StoryboardCard } from '../types/storyboard';
+import type { VideoClip } from '../types/assembler';
 import { PacingBenchmarks } from '../types/storyboard';
 import StoryboardCardComponent from '../components/storyboard/StoryboardCard';
 import AnimaticTimeline from '../components/storyboard/AnimaticTimeline';
@@ -15,24 +15,33 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
     const [isAnimaticView, setIsAnimaticView] = useState(activeProject?.animaticEnabled || false);
     const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
 
-    const cards = activeProject?.storyboardCards || [];
+    const cards = (activeProject?.clips || []) as VideoClip[];
     const elements = activeProject?.elementTray || [];
 
     const handleAddCard = () => {
         if (!activeProject) return;
         
         const lastCard = cards[cards.length - 1];
-        const nextShotLetter = lastCard ? String.fromCharCode(lastCard.shotLetter.charCodeAt(0) + 1) : 'A';
-        const sceneNum = lastCard ? lastCard.sceneNumber : '1';
+        const lastLetterCode = lastCard?.shotLetter ? lastCard.shotLetter.charCodeAt(0) : 64; // '@' before 'A'
+        const nextShotLetter = String.fromCharCode(lastLetterCode + 1);
+        const sceneNum = lastCard?.sceneNumber || '1';
+        const startTime = lastCard ? (lastCard.startTime + lastCard.duration) : 0;
 
-        const newCard: StoryboardCard = {
+        const newCard: VideoClip = {
             id: `card-${Date.now()}`,
+            startTime: startTime,
+            duration: 2.0,
+            endTime: startTime + 2.0,
+            track: 1,
+            status: 'pending',
+            source: 'main',
+            label: `Shot ${sceneNum}${nextShotLetter}`,
             sceneNumber: sceneNum,
-            shotLetter: nextShotLetter.length > 1 ? 'A' : nextShotLetter, // Simple increment
+            shotLetter: nextShotLetter.length > 1 ? 'A' : nextShotLetter, 
             actionNotes: '',
             dialogue: '',
             soundCues: '',
-            aiPrompt: '',
+            promptText: '',
             taggedElementIds: [],
             shotSize: 'MS',
             shotTypeAngle: 'Eye-level',
@@ -41,16 +50,15 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
             equipment: '',
             locationType: 'INT',
             vfxNotes: '',
-            calculatedDuration: 2.0,
             paceWpm: PacingBenchmarks.CONVERSATIONAL
         };
 
         const updatedCards = [...cards, newCard];
-        onUpdateProject(activeProject.id, { storyboardCards: updatedCards });
+        onUpdateProject(activeProject.id, { clips: updatedCards });
         onStatusChange?.(`Added new shot ${sceneNum}${newCard.shotLetter}`);
     };
 
-    const handleUpdateCard = (id: string, updates: Partial<StoryboardCard>) => {
+    const handleUpdateCard = (id: string, updates: Partial<VideoClip>) => {
         if (!activeProject) return;
         
         const updatedCards = cards.map(c => {
@@ -59,8 +67,10 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
                 
                 // Recalculate duration if dialogue or pace changed
                 if ('dialogue' in updates || 'paceWpm' in updates) {
-                    const wordCount = merged.dialogue.split(/\s+/).filter(w => w.length > 0).length;
-                    merged.calculatedDuration = Math.max(1.5, (wordCount / merged.paceWpm) * 60);
+                    const words = (merged.dialogue || '').trim().split(/\s+/).filter(w => w.length > 0);
+                    const wordCount = words.length;
+                    merged.duration = Math.max(1.5, (wordCount / (merged.paceWpm || PacingBenchmarks.CONVERSATIONAL)) * 60);
+                    merged.endTime = merged.startTime + merged.duration;
                 }
                 
                 return merged;
@@ -68,13 +78,14 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
             return c;
         });
         
-        onUpdateProject(activeProject.id, { storyboardCards: updatedCards });
+        onUpdateProject(activeProject.id, { clips: updatedCards });
     };
 
     const handleDeleteCard = (id: string) => {
         if (!activeProject) return;
         const updatedCards = cards.filter(c => c.id !== id);
-        onUpdateProject(activeProject.id, { storyboardCards: updatedCards });
+        onUpdateProject(activeProject.id, { clips: updatedCards });
+        if (selectedCardId === id) setSelectedCardId(null);
     };
 
     const handleGenerateImage = (id: string, prompt: string) => {

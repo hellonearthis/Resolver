@@ -23,7 +23,7 @@ const stringifyWithCompactArrays = (obj: any): string => {
     );
 };
 
-import type { StoryboardCard, StoryboardAsset } from '../types/storyboard';
+import type { StoryboardAsset } from '../types/storyboard';
 
 export interface ProjectMarker {
     timestamp: number;
@@ -49,15 +49,14 @@ export interface BeatProject {
     algorithm?: string;
     enableLoudness?: boolean;
     markers?: ProjectMarker[];
-    clips?: any[]; // Video assembler timeline clips
     segments?: any[]; // Video assembler timeline segments
     sections?: any[]; // Video assembler timeline sections
     videoPath?: string; // Absolute path to the source video file (not copied)
     videoDuration?: number; // Video duration in seconds
     videoFps?: number; // Video frame rate
     
-    // Storyboard Data
-    storyboardCards?: StoryboardCard[];
+    // Unified Timeline & Storyboard Data
+    clips?: any[]; // Now holds both video and storyboard metadata
     elementTray?: StoryboardAsset[];
     animaticEnabled?: boolean;
 

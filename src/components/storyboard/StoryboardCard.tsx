@@ -1,9 +1,9 @@
 import React from 'react';
-import type { StoryboardCard } from '../../types/storyboard';
+import type { VideoClip } from '../../types/assembler';
 
 interface CardProps {
-    card: StoryboardCard;
-    onUpdate: (id: string, updates: Partial<StoryboardCard>) => void;
+    card: VideoClip;
+    onUpdate: (id: string, updates: Partial<VideoClip>) => void;
     onDelete: (id: string) => void;
     onGenerateImage: (id: string, prompt: string) => void;
 }
@@ -30,7 +30,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
                     />
                 </div>
                 <div className="flex items-center gap-2">
-                    <span className="text-[9px] text-gray-500 font-mono">{card.calculatedDuration.toFixed(1)}s</span>
+                    <span className="text-[9px] text-gray-500 font-mono">{(card.duration || 0).toFixed(1)}s</span>
                     <button 
                         onClick={() => onDelete(card.id)}
                         className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -42,8 +42,8 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
 
             {/* Frame / Image Generation */}
             <div className="relative aspect-video bg-black/60 flex items-center justify-center overflow-hidden">
-                {card.imageUrl ? (
-                    <img src={card.imageUrl} alt="Storyboard Frame" className="w-full h-full object-cover" />
+                {card.startImagePath ? (
+                    <img src={card.startImagePath} alt="Storyboard Frame" className="w-full h-full object-cover" />
                 ) : (
                     <div className="flex flex-col items-center gap-2 text-gray-600">
                         <span className="text-3xl">🖼️</span>
@@ -57,11 +57,11 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
                         <input 
                             className="bg-transparent border-none text-white text-[11px] flex-1 px-2 focus:ring-0 placeholder-gray-500"
                             placeholder="Describe the shot..."
-                            value={card.aiPrompt}
-                            onChange={(e) => onUpdate(card.id, { aiPrompt: e.target.value })}
+                            value={card.promptText || ''}
+                            onChange={(e) => onUpdate(card.id, { promptText: e.target.value })}
                         />
                         <button 
-                            onClick={() => onGenerateImage(card.id, card.aiPrompt)}
+                            onClick={() => onGenerateImage(card.id, card.promptText || '')}
                             className="p-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-xs shadow-lg transition-colors"
                             title="Generate Frame"
                         >
