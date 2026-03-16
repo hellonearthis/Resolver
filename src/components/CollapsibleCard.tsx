@@ -8,14 +8,25 @@ interface CollapsibleCardProps {
     headerRight?: React.ReactNode;
 }
 
-const CollapsibleCard: React.FC<CollapsibleCardProps> = ({
+const CollapsibleCard: React.FC<CollapsibleCardProps & { isOpen?: boolean; onToggle?: () => void }> = ({
     title,
     children,
     defaultOpen = true,
     className = '',
-    headerRight
+    headerRight,
+    isOpen: controlledIsOpen,
+    onToggle
 }) => {
-    const [isOpen, setIsOpen] = useState(defaultOpen);
+    const [localIsOpen, setLocalIsOpen] = useState(defaultOpen);
+    const isOpen = controlledIsOpen !== undefined ? controlledIsOpen : localIsOpen;
+
+    const handleToggle = () => {
+        if (onToggle) {
+            onToggle();
+        } else {
+            setLocalIsOpen(!localIsOpen);
+        }
+    };
 
     return (
         <div
@@ -28,7 +39,7 @@ const CollapsibleCard: React.FC<CollapsibleCardProps> = ({
             <div
                 className="card-header cursor-pointer select-none flex justify-between items-center"
                 style={{ marginBottom: isOpen ? '20px' : '0' }}
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={handleToggle}
                 title={isOpen ? "Click to collapse" : "Click to expand"}
             >
                 <div className="flex items-center gap-2">
@@ -39,11 +50,12 @@ const CollapsibleCard: React.FC<CollapsibleCardProps> = ({
                 </div>
                 {headerRight && <div onClick={e => e.stopPropagation()}>{headerRight}</div>}
             </div>
-            {isOpen && (
-                <div className="card-body mt-4 animate-fade-in">
-                    {children}
-                </div>
-            )}
+            <div 
+                className={`card-body mt-4 animate-fade-in`}
+                style={{ display: isOpen ? 'block' : 'none' }}
+            >
+                {children}
+            </div>
         </div>
     );
 };

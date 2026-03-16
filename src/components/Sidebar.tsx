@@ -5,6 +5,15 @@ interface SidebarProps {
     onModuleChange: (module: string) => void;
     statusLogs?: { time: Date, msg: string }[];
     activeProjectName?: string;
+    panelVisibility?: {
+        showMainTrack: boolean;
+        showStems: boolean;
+        showVideo: boolean;
+        showVideoSource: boolean;
+        showAudioSource: boolean;
+        showProjectSelection: boolean;
+    };
+    onToggleVisibility?: (key: string) => void;
 }
 
 interface ModuleItem {
@@ -21,7 +30,7 @@ const modules: ModuleItem[] = [
     { id: 'settings', label: 'Settings', icon: '⚙️', enabled: true },
 ];
 
-const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusLogs, activeProjectName }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusLogs, activeProjectName, panelVisibility, onToggleVisibility }) => {
     const logsEndRef = useRef<HTMLDivElement>(null);
 
     // Auto-scroll to bottom of logs on new message
@@ -30,6 +39,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
             logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
     }, [statusLogs]);
+
     return (
         <aside className="sidebar">
             <div className="sidebar-header">
@@ -65,6 +75,59 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
                         </div>
                     </div>
                 )}
+
+                {activeModule === 'music-video-assembler' && panelVisibility && onToggleVisibility && (
+                    <div className="mb-4 bg-gray-800/40 border border-gray-700/50 p-3 rounded-md">
+                        <div className="opacity-70 text-[10px] uppercase tracking-widest mb-3 flex items-center gap-1 font-semibold text-gray-400">
+                            <span>👁</span> Panel Visibility
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <button 
+                                onClick={() => onToggleVisibility('showAudioSource')}
+                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showAudioSource ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                            >
+                                <span>🔈 Audio Source</span>
+                                <span>{panelVisibility.showAudioSource ? 'ON' : 'OFF'}</span>
+                            </button>
+                            <button 
+                                onClick={() => onToggleVisibility('showVideoSource')}
+                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showVideoSource ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                            >
+                                <span>📁 Video Source</span>
+                                <span>{panelVisibility.showVideoSource ? 'ON' : 'OFF'}</span>
+                            </button>
+                            <button 
+                                onClick={() => onToggleVisibility('showProjectSelection')}
+                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showProjectSelection ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                            >
+                                <span>🗂 Project Selection</span>
+                                <span>{panelVisibility.showProjectSelection ? 'ON' : 'OFF'}</span>
+                            </button>
+                            <button 
+                                onClick={() => onToggleVisibility('showVideo')}
+                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showVideo ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                            >
+                                <span>🎥 Video Timeline</span>
+                                <span>{panelVisibility.showVideo ? 'ON' : 'OFF'}</span>
+                            </button>
+                            <button 
+                                onClick={() => onToggleVisibility('showMainTrack')}
+                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showMainTrack ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                            >
+                                <span>🌊 Main Track</span>
+                                <span>{panelVisibility.showMainTrack ? 'ON' : 'OFF'}</span>
+                            </button>
+                            <button 
+                                onClick={() => onToggleVisibility('showStems')}
+                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showStems ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                            >
+                                <span>🥁 Stems Area</span>
+                                <span>{panelVisibility.showStems ? 'ON' : 'OFF'}</span>
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 <div className="sidebar-status mb-2">
                     <span className="status-dot"></span>
                     <span>System Log</span>

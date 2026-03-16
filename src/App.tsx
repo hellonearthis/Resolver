@@ -37,6 +37,20 @@ function App() {
   const { projects, saveProject, updateProject, deleteProject, refreshProjects } = useProjectStorage();
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
+  // --- Visibility Settings ---
+  const [panelVisibility, setPanelVisibility] = useState({
+      showMainTrack: true,
+      showStems: true,
+      showVideo: true,
+      showVideoSource: true,
+      showAudioSource: true,
+      showProjectSelection: true
+  });
+
+  const toggleVisibility = (key: string) => {
+      setPanelVisibility(prev => ({ ...prev, [key]: !prev[key as keyof typeof panelVisibility] }));
+  };
+
   const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : undefined;
 
   const handleCreateBlankProject = async (projectName?: string) => {
@@ -154,7 +168,7 @@ function App() {
         return <WorkflowAnalyzerModule onStatusChange={addLog} />;
       case 'music-video-assembler':
         return (
-          <MusicVideoAssemblerModule
+            <MusicVideoAssemblerModule
             projects={projects}
             activeProject={activeProject}
             onSelectProject={handleSelectProject}
@@ -164,6 +178,8 @@ function App() {
             onDeleteProject={deleteProject}
             onRefreshProjects={refreshProjects}
             onStatusChange={addLog}
+            panelVisibility={panelVisibility}
+            onToggleVisibility={toggleVisibility}
           />
         );
 
@@ -189,6 +205,8 @@ function App() {
       onModuleChange={setActiveModule}
       statusLogs={statusLogs}
       activeProjectName={activeProject?.name}
+      panelVisibility={panelVisibility}
+      onToggleVisibility={toggleVisibility}
     >
       {renderModule()}
     </Layout>

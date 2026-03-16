@@ -50,6 +50,9 @@ export interface BeatProject {
     clips?: any[]; // Video assembler timeline clips
     segments?: any[]; // Video assembler timeline segments
     sections?: any[]; // Video assembler timeline sections
+    videoPath?: string; // Absolute path to the source video file (not copied)
+    videoDuration?: number; // Video duration in seconds
+    videoFps?: number; // Video frame rate
     createdAt: string;
     updatedAt: string;
 }
@@ -64,7 +67,10 @@ export function useProjectStorage() {
         try {
             // @ts-ignore
             const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
-            if (!ipcRenderer) return;
+            if (!ipcRenderer) {
+                setIsLoaded(true);
+                return;
+            }
 
             // 1. Get the path to scan
             let scanPath = customPath;

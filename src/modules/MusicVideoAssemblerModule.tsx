@@ -12,7 +12,8 @@ import { getValidLtxFrameCount, getLtxAlignedDuration } from '../utils/timelineU
 import type { BeatProject, ProjectMarker } from '../hooks/useProjectStorage';
 import ProjectTimelineTable from '../components/ProjectTimelineTable';
 import CollapsibleCard from '../components/CollapsibleCard';
-import LtxTestModule from './LtxTestModule';
+import VideoTimelineBar from '../components/VideoTimelineBar';
+
 import './MusicVideoAssemblerModule.css';
 
 /**
@@ -29,9 +30,18 @@ interface MusicVideoAssemblerModuleProps {
     onDeleteProject: (id: string) => void;
     onRefreshProjects: () => void;
     onStatusChange?: (msg: string) => void;
+    panelVisibility?: {
+        showMainTrack: boolean;
+        showStems: boolean;
+        showVideo: boolean;
+        showVideoSource: boolean;
+        showAudioSource: boolean;
+        showProjectSelection: boolean;
+    };
+    onToggleVisibility?: (key: string) => void;
 }
 
-import type { VideoClip, SelectionState, AudioMarker, StemData } from '../types/assembler';
+import type { VideoClip, SelectionState, AudioMarker, StemData, VideoInfo, VideoThumbnail } from '../types/assembler';
 import {
     MARKER_COLORS,
     STEM_COLORS,
@@ -58,7 +68,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     onDeleteProject,
     onUpdateProject,
     onRefreshProjects,
-    onStatusChange
+    onStatusChange,
+    panelVisibility,
+    onToggleVisibility
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const wavesurfer = useRef<WaveSurfer | null>(null);
@@ -97,6 +109,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         y: number;
         content: React.ReactNode;
     }>({ visible: false, x: 0, y: 0, content: null });
+
+    // Video Timeline State
+    const [videoFile, setVideoFile] = useState<{ path: string; info: VideoInfo } | null>(null);
+    const [videoThumbnails, setVideoThumbnails] = useState<VideoThumbnail[]>([]);
 
     // Zoom & Beat Source Controls
     const [zoomLevel, setZoomLevel] = useState(50); // minPxPerSec
@@ -170,6 +186,28 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         activeProject?.stems?.length,
         activeProject?.clips?.length
     ]);
+    
+    // REDRAW FIX: Force redraw when panels are expanded
+    // Wait for the 300ms transition to complete before triggering redraw
+    useEffect(() => {
+        if (panelVisibility?.showMainTrack && wavesurfer.current) {
+            setTimeout(() => {
+                wavesurfer.current?.zoom(zoomLevel);
+                // Also trigger a window resize event to force WaveSurfer to recalculate layout
+                window.dispatchEvent(new Event('resize'));
+            }, 400);
+        }
+    }, [panelVisibility?.showMainTrack, zoomLevel]);
+
+    useEffect(() => {
+        if (panelVisibility?.showStems && stemSurfers.current.length > 0) {
+            setTimeout(() => {
+                stemSurfers.current.forEach(s => s.zoom(zoomLevel));
+                window.dispatchEvent(new Event('resize'));
+            }, 400);
+        }
+    }, [panelVisibility?.showStems, zoomLevel]);
+
 
     const analyzeAudio = async (blob: Blob) => {
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -211,6 +249,86 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 onCreateProject(file, finalOutputDir || undefined);
                 if (onStatusChange) onStatusChange(`Project created for ${file.name}`);
             }
+        }
+    };
+
+    // --- Video Drop Handler ---
+    const handleVideoDrop = async (files: File[]) => {
+        if (files.length === 0) return;
+        const file = files[0];
+        const pathStr = (file as any).path;
+
+        if (!pathStr) {
+            if (onStatusChange) onStatusChange('Error: Could not read video file path.');
+            return;
+        }
+
+        if (onStatusChange) onStatusChange(`Loading video: ${file.name}...`);
+
+        try {
+            // Get video metadata via ffprobe
+            const infoResult = await ipcRenderer.invoke('get-video-info', pathStr);
+            if (!infoResult.success) {
+                if (onStatusChange) onStatusChange(`Video info error: ${infoResult.error}`);
+                return;
+            }
+
+            const info: VideoInfo = infoResult.info;
+            setVideoFile({ path: pathStr, info });
+
+            // Save video path to project
+            if (activeProject) {
+                onUpdateProject(activeProject.id, {
+                    videoPath: pathStr,
+                    videoDuration: info.duration,
+                    videoFps: info.fps,
+                });
+            }
+
+            if (onStatusChange) onStatusChange(`Video loaded: ${info.width}×${info.height}, ${info.duration.toFixed(1)}s, ${info.fps}fps`);
+
+            // Extract thumbnails for filmstrip (3fps default)
+            if (activeProject?.outputDir) {
+                if (onStatusChange) onStatusChange('Extracting video thumbnails...');
+                const thumbResult = await ipcRenderer.invoke('extract-video-thumbnails', {
+                    filePath: pathStr,
+                    outputDir: activeProject.outputDir,
+                    fps: 3,
+                });
+                if (thumbResult.success && thumbResult.thumbnails) {
+                    setVideoThumbnails(thumbResult.thumbnails);
+                    if (onStatusChange) onStatusChange(`Video ready: ${thumbResult.thumbnails.length} thumbnails extracted`);
+                } else {
+                    if (onStatusChange) onStatusChange(`Thumbnail extraction failed: ${thumbResult.error}`);
+                }
+            }
+        } catch (err: any) {
+            console.error('Video drop error:', err);
+            if (onStatusChange) onStatusChange(`Video error: ${err.message}`);
+        }
+    };
+
+    // --- Save Full-Resolution Video Frame ---
+    const handleSaveVideoFrame = async (time: number) => {
+        if (!videoFile || !activeProject?.outputDir) {
+            if (onStatusChange) onStatusChange('No video loaded or no project selected.');
+            return;
+        }
+
+        if (onStatusChange) onStatusChange(`Saving frame at ${time.toFixed(3)}s...`);
+        try {
+            const result = await ipcRenderer.invoke('save-video-frame', {
+                filePath: videoFile.path,
+                time,
+                outputDir: activeProject.outputDir,
+            });
+            if (result.success) {
+                if (onStatusChange) onStatusChange(`Frame saved: ${result.framePath}`);
+            } else {
+                if (onStatusChange) onStatusChange(`Frame save error: ${result.error}`);
+            }
+        } catch (err: any) {
+            if (onStatusChange) onStatusChange(`Frame save error: ${err.message}`);
         }
     };
 
@@ -676,6 +794,39 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 setClips(project.clips);
             } else {
                 setClips([]);
+            }
+
+            // 5. Restore Video Timeline State
+            if (project.videoPath && isNewProject) {
+                try {
+                    const infoResult = await ipcRenderer.invoke('get-video-info', project.videoPath);
+                    if (infoResult.success) {
+                        setVideoFile({ path: project.videoPath, info: infoResult.info });
+
+                        // Check for existing thumbnails
+                        if (project.outputDir) {
+                            const pathModule = window.require('path');
+                            const thumbDir = pathModule.join(project.outputDir, 'thumbnails');
+                            if (fs.existsSync(thumbDir)) {
+                                const files = fs.readdirSync(thumbDir)
+                                    .filter((f: string) => f.startsWith('thumb_') && f.endsWith('.jpg'))
+                                    .sort();
+                                if (files.length > 0) {
+                                    const thumbs: VideoThumbnail[] = files.map((f: string, i: number) => ({
+                                        path: pathModule.join(thumbDir, f),
+                                        time: i / 3, // Assumes 3fps extraction
+                                    }));
+                                    setVideoThumbnails(thumbs);
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[loadProjectAudio] Failed to restore video state:', e);
+                }
+            } else if (!project.videoPath && isNewProject) {
+                setVideoFile(null);
+                setVideoThumbnails([]);
             }
 
             if (onStatusChange) onStatusChange("Ready.");
@@ -1906,7 +2057,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         // Collect all markers: main track + all stems
         const allMarkers: any[] = [];
-        
+
         // Main Track Markers
         mainMarkers.forEach(m => {
             allMarkers.push({
@@ -1945,7 +2096,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         // @ts-ignore
         const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
         const path = window.require('path');
-        
+
         // Resolve audio path to absolute
         let resolvedAudioPath = activeProject.audioPath || (audioFile as any)?.path;
         if (resolvedAudioPath && !path.isAbsolute(resolvedAudioPath) && activeProject.outputDir) {
@@ -1961,7 +2112,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         if (onStatusChange) onStatusChange('Generating Resolve Markers script...');
         const result = await ipcRenderer.invoke('stage-for-resolve', exportData);
-        
+
         if (result.success) {
             if (onStatusChange) onStatusChange(`Markers script generated: ${result.scriptPath}`);
         } else {
@@ -2004,7 +2155,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         if (onStatusChange) onStatusChange('Generating Resolve Load Media script...');
         const result = await ipcRenderer.invoke('stage-video-sync', exportData);
-        
+
         if (result.success) {
             if (onStatusChange) onStatusChange(`Load Media script generated: ${result.scriptPath}`);
         } else {
@@ -2045,7 +2196,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 path: vp // Ensure both keys are consistent for the handler
             };
         });
-        
+
         // Prepare data for reconstruction script
         const exportData = {
             projectName: activeProject.name || 'Untitled Project',
@@ -2057,7 +2208,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         if (onStatusChange) onStatusChange('Generating Resolve export script...');
 
         const result = await ipcRenderer.invoke('stage-timeline-to-resolve', exportData);
-        
+
         if (result.success) {
             if (onStatusChange) onStatusChange(`Resolve script generated: ${result.scriptPath}`);
             // Optionally open the folder
@@ -2123,7 +2274,12 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             </div>
 
             {/* Project Selection / Creation */}
-            <CollapsibleCard title="Load Audio Source" className="mt-4" defaultOpen={!activeProject}>
+            <CollapsibleCard
+                title="Load Audio Source"
+                className="mt-4"
+                isOpen={panelVisibility?.showAudioSource}
+                onToggle={() => onToggleVisibility?.('showAudioSource')}
+            >
                 <DropZone
                     onFilesDropped={handleAudioDrop}
                     accept="audio/*"
@@ -2132,7 +2288,25 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 />
             </CollapsibleCard>
 
-            <CollapsibleCard title="Select Project" className="mt-4" defaultOpen={!activeProject}>
+            <CollapsibleCard
+                title="Load Video Source"
+                className="mt-4"
+                isOpen={panelVisibility?.showVideoSource}
+                onToggle={() => onToggleVisibility?.('showVideoSource')}
+            >
+                <DropZone
+                    onFilesDropped={handleVideoDrop}
+                    accept="video/*"
+                    label="Drop Video File Here (MP4, MOV, AVI, MKV)"
+                />
+            </CollapsibleCard>
+
+            <CollapsibleCard
+                title="Select Project"
+                className="mt-4"
+                isOpen={panelVisibility?.showProjectSelection}
+                onToggle={() => onToggleVisibility?.('showProjectSelection')}
+            >
                 <ProjectsPanel
                     projects={projects}
                     onLoad={(p) => onSelectProject(p.id)}
@@ -2274,105 +2448,145 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
 
 
-            {/* Controls Bar */}
-            <div className="controls-bar mt-4 bg-[var(--bg-tertiary)] rounded border border-gray-700">
-                <div className="controls-bar-group">
-                    <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Zoom</label>
-                    <div className="controls-bar-zoom">
-                        <input
-                            type="range"
-                            min={Math.floor(minZoom)}
-                            max="200"
-                            value={zoomLevel}
-                            onChange={(e) => setZoomLevel(Number(e.target.value))}
-                            className="accent-indigo-500"
-                        />
-                        <button
-                            className="text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-300 whitespace-nowrap"
-                            onClick={() => setZoomLevel(minZoom)}
-                            title="Fit to Screen"
-                        >
-                            Fit
-                        </button>
-                    </div>
-                </div>
 
-                <div className="controls-bar-group">
-                    <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide">Main Beat Source</label>
-                    <select
-                        value={mainBeatSource}
-                        onChange={(e) => {
-                            const val = e.target.value;
-                            setMainBeatSource(val === 'main' ? 'main' : Number(val));
-                        }}
-                        className="controls-bar-select bg-gray-800 text-white text-sm rounded border border-gray-600 outline-none focus:border-indigo-500"
-                    >
-                        <option value="main">Main Track Analysis</option>
-                        {stems.map((s, i) => (
-                            <option key={i} value={i}>Stem: {s.type}</option>
-                        ))}
-                    </select>
-                </div>
 
-                <div className="controls-bar-group ml-auto">
-                    <label className="text-xs text-gray-400 font-semibold uppercase tracking-wide text-right" title="Frames Per Second for Video Generation">Project FPS</label>
-                    <input
-                        type="number"
-                        min="1"
-                        max="60"
-                        value={activeProject?.frameRate || 20}
-                        onChange={(e) => {
-                            if (activeProject) {
-                                onUpdateProject(activeProject.id, { frameRate: Number(e.target.value) });
-                            }
-                        }}
-                        className="controls-bar-input bg-gray-800 text-white text-sm rounded border border-gray-600 outline-none focus:border-indigo-500 text-right"
+            {/* Video Timeline — shown when video is loaded */}
+            {videoFile && (
+                <CollapsibleCard
+                    title={`🎥 Video Timeline — ${videoFile.info.width}×${videoFile.info.height}`}
+                    className="mt-4"
+                    isOpen={panelVisibility?.showVideo}
+                    onToggle={() => onToggleVisibility?.('showVideo')}
+                >
+                    <VideoTimelineBar
+                        videoPath={videoFile.path}
+                        videoInfo={videoFile.info}
+                        thumbnails={videoThumbnails}
+                        clips={clips}
+                        onSelectionChange={(sel) => setActiveSelection(sel)}
+                        onSaveFrame={handleSaveVideoFrame}
                     />
-                </div>
+                </CollapsibleCard>
+            )}
 
-                <div className="controls-bar-duration text-xs text-gray-500 border-l border-gray-700">
-                    {duration > 0 && `Duration: ${duration.toFixed(2)}s`}
-                </div>
-            </div>
-
-
-
-            {/* Main Track Header with Play/Stop */}
-            <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded mt-4">
-                <h4 className="text-sm font-semibold text-gray-400">Main Track</h4>
-                <div className="flex gap-2 w-1/3">
-                    <button
-                        className="btn w-full mt-2 btn-primary flex items-center justify-center gap-1"
-                        onClick={handlePlayMain}
-                        disabled={!audioUrl}
-                    >
-                        <span className="text-lg">▶</span> Play
-                    </button>
-                    <button
-                        className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-1"
-                        onClick={handlePauseMain}
-                        disabled={!audioUrl}
-                    >
-                        <span className="text-lg">⏸</span> Pause
-                    </button>
-                </div>
-            </div>
-
-            <div
-                className={`waveform-container mt-2 ${isStemPlaying ? 'opacity-30 grayscale' : ''}`}
-                ref={containerRef}
-                style={{ position: 'relative', transition: 'all 0.3s ease', minHeight: '128px' }}
+            {/* Main Track Section */}
+            <CollapsibleCard
+                title="🌊 Main Track"
+                className="mt-4"
+                isOpen={panelVisibility?.showMainTrack}
+                onToggle={() => onToggleVisibility?.('showMainTrack')}
             >
-                {isAnalyzing && (
-                    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-gray-900/80 rounded backdrop-blur-sm pointer-events-none">
-                        <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2"></div>
-                        <span className="text-xl font-bold text-white shadow-sm">Analyzing Audio</span>
-                        <span className="text-sm font-semibold text-indigo-300 mt-2">{detectionStatus}</span>
+                <div className="flex justify-between items-center bg-gray-900/10 p-3 rounded mb-2 border border-white/5">
+                    <div className="flex items-center gap-4">
+                        <h4 className="text-sm font-semibold text-gray-400">Audio Preview</h4>
+                        <div className="flex gap-2">
+                            <button
+                                className="btn btn-primary flex items-center justify-center gap-1 px-4 py-1.5"
+                                onClick={handlePlayMain}
+                                disabled={!audioUrl}
+                            >
+                                <span className="text-lg">▶</span> Play
+                            </button>
+                            <button
+                                className="btn btn-secondary flex items-center justify-center gap-1 px-4 py-1.5"
+                                onClick={handlePauseMain}
+                                disabled={!audioUrl}
+                            >
+                                <span className="text-lg">⏸</span> Pause
+                            </button>
+                        </div>
                     </div>
-                )}
 
-                {/* Beat markers are now rendered inside WaveSurfer's wrapper via renderBeatMarkers */}
-            </div>
+                    {/* Integrated Controls Bar inside Main Track */}
+                    <div className="flex items-center gap-6 bg-black/20 px-4 py-2 rounded-lg border border-white/5">
+                        <div className="flex flex-col gap-1">
+                            <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Zoom</label>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="range"
+                                    min={Math.floor(minZoom)}
+                                    max="200"
+                                    value={zoomLevel}
+                                    onChange={(e) => setZoomLevel(Number(e.target.value))}
+                                    className="accent-indigo-500 w-64 h-1.5 rounded-lg appearance-none bg-gray-700 cursor-pointer"
+                                />
+                                <button
+                                    className="text-[10px] bg-gray-700 hover:bg-indigo-600 px-2 py-0.5 rounded text-gray-200 font-bold transition-colors uppercase"
+                                    onClick={() => setZoomLevel(minZoom)}
+                                    title="Fit to Screen"
+                                >
+                                    Fit
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="w-px h-8 bg-gray-700" />
+
+                        <div className="flex flex-col gap-1">
+                            <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Beat Source</label>
+                            <select
+                                value={mainBeatSource}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    setMainBeatSource(val === 'main' ? 'main' : Number(val));
+                                }}
+                                className="bg-gray-800 text-white text-xs rounded border border-gray-600 outline-none focus:border-indigo-500 px-2 py-1"
+                            >
+                                <option value="main">Main Track</option>
+                                {stems.map((s, i) => (
+                                    <option key={i} value={i}>Stem: {s.type}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="w-px h-8 bg-gray-700" />
+
+                        <div className="flex flex-col gap-1">
+                            <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">FPS</label>
+                            <input
+                                type="number"
+                                min="1"
+                                max="60"
+                                value={activeProject?.frameRate || 20}
+                                onChange={(e) => {
+                                    if (activeProject) {
+                                        onUpdateProject(activeProject.id, { frameRate: Number(e.target.value) });
+                                    }
+                                }}
+                                className="bg-gray-800 text-white text-xs rounded border border-gray-600 outline-none focus:border-indigo-500 w-12 px-2 py-1 text-center"
+                            />
+                        </div>
+
+                        <div className="w-px h-8 bg-gray-700" />
+
+                        <div className="flex flex-col gap-1 items-end">
+                            <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Duration</label>
+                            <span className="text-xs text-gray-300 font-mono">
+                                {duration > 0 ? `${duration.toFixed(2)}s` : '--'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div
+                    className={`waveform-container mt-2 ${isStemPlaying ? 'opacity-30 grayscale' : ''}`}
+                    ref={containerRef}
+                    style={{ position: 'relative', transition: 'all 0.3s ease', minHeight: '128px' }}
+                >
+                    {isAnalyzing && (
+                        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-gray-900/80 rounded backdrop-blur-sm pointer-events-none">
+                            <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2"></div>
+                            <span className="text-xl font-bold text-white shadow-sm">Analyzing Audio</span>
+                            <span className="text-sm font-semibold text-indigo-300 mt-2">{detectionStatus}</span>
+                        </div>
+                    )}
+
+                    {/* Beat markers are now rendered inside WaveSurfer's wrapper via renderBeatMarkers */}
+                </div>
+            </CollapsibleCard>
+
+
+
 
             {/* Calculate tooltips for legend based on marker data */}
             {
@@ -2427,158 +2641,174 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     const handleMouseLeave = () => setTooltipState(prev => ({ ...prev, visible: false }));
 
                     return (
-                        <div className="stems-list mt-8 flex flex-col gap-8">
-                            {/* Marker Legend — always visible when any markers exist */}
-                            {(mainMarkers.length > 0 || stems.length > 0) && (
-                                <div style={{ display: 'flex', gap: '16px', marginBottom: '8px', padding: '6px 8px', fontSize: '12px', color: '#9ca3af', alignItems: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '6px' }}>
-                                    <span style={{ fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Beat Key:</span>
-                                    <div
-                                        onMouseEnter={(e) => handleMouseEnter(e, "Downbeats", downbeatData)}
-                                        onMouseMove={handleMouseMove}
-                                        onMouseLeave={handleMouseLeave}
-                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
-                                    >
-                                        <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.downbeat, flexShrink: 0 }}></span>
-                                        <span>Downbeat</span>
-                                    </div>
-                                    <div
-                                        onMouseEnter={(e) => handleMouseEnter(e, "Offbeats", offbeatData)}
-                                        onMouseMove={handleMouseMove}
-                                        onMouseLeave={handleMouseLeave}
-                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
-                                    >
-                                        <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.offbeat, border: '1px solid #4b5563', flexShrink: 0 }}></span>
-                                        <span>Offbeat</span>
-                                    </div>
-                                    <div
-                                        onMouseEnter={(e) => handleMouseEnter(e, "Onsets", onsetData)}
-                                        onMouseMove={handleMouseMove}
-                                        onMouseLeave={handleMouseLeave}
-                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
-                                    >
-                                        <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.onset, flexShrink: 0 }}></span>
-                                        <span>Onset</span>
-                                    </div>
-                                    <div
-                                        onMouseEnter={(e) => handleMouseEnter(e, "Loudness", loudnessData)}
-                                        onMouseMove={handleMouseMove}
-                                        onMouseLeave={handleMouseLeave}
-                                        style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
-                                    >
-                                        <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.loudness, flexShrink: 0 }}></span>
-                                        <span>Loudness</span>
-                                    </div>
+                        <div className="stems-and-controls-wrapper">
+                            {/* Stems & Legend Area */}
+                            <CollapsibleCard
+                                title="🥁 Project Stems & Marker Legend"
+                                className="mt-8"
+                                isOpen={panelVisibility?.showStems}
+                                onToggle={() => onToggleVisibility?.('showStems')}
+                            >
+                                <div className="stems-list flex flex-col gap-8">
+                                    {/* Marker Legend — always visible when any markers exist */}
+                                    {(mainMarkers.length > 0 || stems.length > 0) && (
+                                        <div style={{ display: 'flex', gap: '16px', marginBottom: '8px', padding: '6px 8px', fontSize: '12px', color: '#9ca3af', alignItems: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '6px' }}>
+                                            <span style={{ fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Beat Key:</span>
+                                            <div
+                                                onMouseEnter={(e) => handleMouseEnter(e, "Downbeats", downbeatData)}
+                                                onMouseMove={handleMouseMove}
+                                                onMouseLeave={handleMouseLeave}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                                            >
+                                                <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.downbeat, flexShrink: 0 }}></span>
+                                                <span>Downbeat</span>
+                                            </div>
+                                            <div
+                                                onMouseEnter={(e) => handleMouseEnter(e, "Offbeats", offbeatData)}
+                                                onMouseMove={handleMouseMove}
+                                                onMouseLeave={handleMouseLeave}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                                            >
+                                                <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.offbeat, border: '1px solid #4b5563', flexShrink: 0 }}></span>
+                                                <span>Offbeat</span>
+                                            </div>
+                                            <div
+                                                onMouseEnter={(e) => handleMouseEnter(e, "Onsets", onsetData)}
+                                                onMouseMove={handleMouseMove}
+                                                onMouseLeave={handleMouseLeave}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                                            >
+                                                <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.onset, flexShrink: 0 }}></span>
+                                                <span>Onset</span>
+                                            </div>
+                                            <div
+                                                onMouseEnter={(e) => handleMouseEnter(e, "Loudness", loudnessData)}
+                                                onMouseMove={handleMouseMove}
+                                                onMouseLeave={handleMouseLeave}
+                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
+                                            >
+                                                <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: MARKER_COLORS.loudness, flexShrink: 0 }}></span>
+                                                <span>Loudness</span>
+                                            </div>
 
-                                    {/* Main track beat summary */}
-                                    {mainMarkers.length > 0 && (
-                                        <div className="ml-auto flex items-center gap-3 text-xs text-gray-400 border-l border-gray-700 pl-4">
-                                            <span className="font-semibold text-gray-500 uppercase">Main Track:</span>
-                                            {mainMarkers.filter(m => m.type === 'beat').length > 0 && (
-                                                <span>
-                                                    <span style={{ color: MARKER_COLORS.downbeat }}>⬤</span>
-                                                    {' '}{mainMarkers.filter(m => m.type === 'beat').length} beats
-                                                </span>
-                                            )}
-                                            {mainMarkers.filter(m => m.type === 'onset').length > 0 && (
-                                                <span>
-                                                    <span style={{ color: MARKER_COLORS.onset }}>⬤</span>
-                                                    {' '}{mainMarkers.filter(m => m.type === 'onset').length} onsets
-                                                </span>
-                                            )}
-                                            {mainMarkers.filter(m => m.type === 'loudness').length > 0 && (
-                                                <span>
-                                                    <span style={{ color: MARKER_COLORS.loudness }}>⬤</span>
-                                                    {' '}{mainMarkers.filter(m => m.type === 'loudness').length} loudness
-                                                </span>
+                                            {/* Main track beat summary */}
+                                            {mainMarkers.length > 0 && (
+                                                <div className="ml-auto flex items-center gap-3 text-xs text-gray-400 border-l border-gray-700 pl-4">
+                                                    <span className="font-semibold text-gray-500 uppercase">Main Track:</span>
+                                                    {mainMarkers.filter(m => m.type === 'beat').length > 0 && (
+                                                        <span>
+                                                            <span style={{ color: MARKER_COLORS.downbeat }}>⬤</span>
+                                                            {' '}{mainMarkers.filter(m => m.type === 'beat').length} beats
+                                                        </span>
+                                                    )}
+                                                    {mainMarkers.filter(m => m.type === 'onset').length > 0 && (
+                                                        <span>
+                                                            <span style={{ color: MARKER_COLORS.onset }}>⬤</span>
+                                                            {' '}{mainMarkers.filter(m => m.type === 'onset').length} onsets
+                                                        </span>
+                                                    )}
+                                                    {mainMarkers.filter(m => m.type === 'loudness').length > 0 && (
+                                                        <span>
+                                                            <span style={{ color: MARKER_COLORS.loudness }}>⬤</span>
+                                                            {' '}{mainMarkers.filter(m => m.type === 'loudness').length} loudness
+                                                        </span>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
                                     )}
-                                </div>
-                            )}
 
-                            {/* Stems section — only visible when stems exist */}
-                            {stems.length > 0 && (<>
-                                <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded">
-                                    <h4 className="text-sm font-semibold text-gray-400">Project Stems</h4>
-                                    <div className="flex gap-4 w-1/2">
-                                        <button
-                                            className="btn w-full mt-2 btn-primary flex items-center justify-center gap-2"
-                                            onClick={handlePlayStems}
-                                            disabled={!audioUrl}
-                                        >
-                                            <span className="text-lg">▶</span> Play Stems
-                                        </button>
+                                    {/* Stems section — only visible when stems exist */}
+                                    {stems.length > 0 && (
+                                        <>
+                                            <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded">
+                                                <h4 className="text-sm font-semibold text-gray-400">Project Stems Controls</h4>
+                                                <div className="flex gap-4 w-1/2">
+                                                    <button
+                                                        className="btn w-full mt-2 btn-primary flex items-center justify-center gap-2"
+                                                        onClick={handlePlayStems}
+                                                        disabled={!audioUrl}
+                                                    >
+                                                        <span className="text-lg">▶</span> Play Stems
+                                                    </button>
 
-                                        <button
-                                            className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-2"
-                                            onClick={handlePauseAll}
-                                            disabled={!audioUrl}
-                                        >
-                                            <span className="text-lg">⏸</span> Pause
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {stems.map((stem, index) => (
-                                    <div key={index} className="stem-item bg-[var(--bg-tertiary)] p-6 rounded border border-gray-800 pb-8">
-                                        <div className="flex justify-between items-center mb-1">
-                                            <div className="flex items-center gap-2">
-                                                <div className="text-xs font-bold uppercase" style={{ color: stem.color }}>{stem.type}</div>
+                                                    <button
+                                                        className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-2"
+                                                        onClick={handlePauseAll}
+                                                        disabled={!audioUrl}
+                                                    >
+                                                        <span className="text-lg">⏸</span> Pause
+                                                    </button>
+                                                </div>
                                             </div>
-                                            <div className="flex gap-2">
-                                                <button
-                                                    className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                                    onClick={() => handlePlayStem(index)}
-                                                    title={`Play ${stem.type}`}
-                                                >
-                                                    ▶ Play
-                                                </button>
-                                                <button
-                                                    className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                                    onClick={() => handlePauseStem(index)}
-                                                    title={`Pause ${stem.type}`}
-                                                >
-                                                    ⏸ Pause
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div
-                                            id={`stem-waveform-${index}`}
-                                            className="relative"
-                                            style={{ width: '100%', minHeight: '90px' }}
-                                        >
-                                            {/* Beat markers are now rendered inside WaveSurfer's wrapper via renderBeatMarkers */}
-                                        </div>
-                                    </div>
-                                ))}
-                            </>)} {/* end stems.length > 0 */}
 
-                            {/* Controls */}
-                            <div className="controls-container flex flex-wrap gap-4 mt-6">
-                                <button className="btn btn-primary" onClick={handleGenerateClipFromRegion} disabled={!activeSelection || isAnalyzing}>
+                                            {stems.map((stem, index) => (
+                                                <div key={index} className="stem-item bg-black/20 p-6 rounded border border-gray-800 pb-8">
+                                                    <div className="flex justify-between items-center mb-1">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="text-xs font-bold uppercase" style={{ color: stem.color }}>{stem.type}</div>
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <button
+                                                                className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
+                                                                onClick={() => handlePlayStem(index)}
+                                                                title={`Play ${stem.type}`}
+                                                            >
+                                                                ▶ Play
+                                                            </button>
+                                                            <button
+                                                                className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
+                                                                onClick={() => handlePauseStem(index)}
+                                                                title={`Pause ${stem.type}`}
+                                                            >
+                                                                ⏸ Pause
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <div
+                                                        id={`stem-waveform-${index}`}
+                                                        className="relative"
+                                                        style={{ width: '100%', minHeight: '90px' }}
+                                                    >
+                                                        {/* Beat markers are now rendered inside WaveSurfer's wrapper via renderBeatMarkers */}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </>
+                                    )}
+                                </div>
+                            </CollapsibleCard>
+
+                            {/* Controls Container — outside collapsible section to stay persistent */}
+                            <div className="controls-container flex flex-wrap gap-4 mt-8 bg-gray-900/40 p-6 rounded-xl border border-gray-800/80">
+                                <button
+                                    className="btn btn-primary shadow-lg shadow-indigo-500/20"
+                                    onClick={handleGenerateClipFromRegion}
+                                    disabled={!activeSelection || isAnalyzing}
+                                >
                                     Generate Clip from Selection
                                 </button>
-                                
+
                                 <div className="flex gap-2">
-                                    <button 
-                                        className="btn bg-indigo-700 hover:bg-indigo-600 text-white border-none rounded font-bold text-sm" 
-                                        onClick={handleExportMediaOnly} 
+                                    <button
+                                        className="btn bg-indigo-700 hover:bg-indigo-600 text-white border-none rounded font-bold text-sm"
+                                        onClick={handleExportMediaOnly}
                                         disabled={clips.length === 0}
                                         title="Step 1: Load all media into Resolve bin (Audio & Video)"
                                     >
                                         🎬 (1) Export Load Media Script
                                     </button>
-                                    <button 
-                                        className="btn bg-indigo-800 hover:bg-indigo-700 text-white border-none rounded font-bold text-sm" 
-                                        onClick={handleExportManifest} 
+                                    <button
+                                        className="btn bg-indigo-800 hover:bg-indigo-700 text-white border-none rounded font-bold text-sm"
+                                        onClick={handleExportManifest}
                                         disabled={clips.length === 0}
                                         title="Step 2: Place media items from bin onto timeline at designed positions"
                                     >
                                         🎨 (2) Place Media Script
                                     </button>
-                                    <button 
-                                        className="btn bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded font-bold text-sm" 
-                                        onClick={handleExportMarkers} 
+                                    <button
+                                        className="btn bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded font-bold text-sm"
+                                        onClick={handleExportMarkers}
                                         disabled={mainMarkers.length === 0 && stems.length === 0}
                                         title="Step 3: Set all detected beat markers and onsets onto the Resolve timeline"
                                     >
@@ -2587,7 +2817,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 </div>
 
                                 <button
-                                    className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm"
+                                    className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm ml-auto"
                                     onClick={handleSaveToProject}
                                     disabled={!activeProject}
                                 >
@@ -2604,7 +2834,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                             <div className="flex items-center gap-2">
                                                 <span className="text-indigo-400 uppercase text-[10px] font-black tracking-widest">Selection Source</span>
                                                 <span className="bg-indigo-500/20 text-indigo-200 px-2 py-0.5 rounded text-[10px] font-bold border border-indigo-500/30">
-                                                    {activeSelection.source === 'main' ? 'MAIN TRACK' : `STEM: ${stems[activeSelection.stemIndex!]?.type.toUpperCase()}`}
+                                                    {activeSelection.source === 'video' ? 'VIDEO' : activeSelection.source === 'main' ? 'MAIN TRACK' : `STEM: ${stems[activeSelection.stemIndex!]?.type.toUpperCase()}`}
                                                 </span>
                                             </div>
                                             <div className="flex items-center gap-3 mt-1">
@@ -2640,28 +2870,20 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             </div>
 
                             {/* Custom Floating Tooltip */}
-                            {
-                                tooltipState.visible && tooltipState.content && (
-                                    <div
-                                        style={{
-                                            position: 'fixed',
-                                            left: tooltipState.x,
-                                            top: tooltipState.y,
-                                            zIndex: 9999,
-                                            pointerEvents: 'none'
-                                        }}
-                                    >
-                                        {tooltipState.content}
-                                    </div>
-                                )
-                            }
+                            {tooltipState.visible && tooltipState.content && (
+                                <div
+                                    style={{
+                                        position: 'fixed',
+                                        left: tooltipState.x,
+                                        top: tooltipState.y,
+                                        zIndex: 9999,
+                                        pointerEvents: 'none'
+                                    }}
+                                >
+                                    {tooltipState.content}
+                                </div>
+                            )}
 
-                            {/* LTX Test Module Integration */}
-                            <div className="mt-8">
-                                <CollapsibleCard title="🧪 LTX-Video 2.0 Generator Test" defaultOpen={false}>
-                                    <LtxTestModule />
-                                </CollapsibleCard>
-                            </div>
 
                         </div>
                     );

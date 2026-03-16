@@ -731,6 +731,186 @@ ipcMain.handle('convert-audio-to-wav', async (_event, inputPath: string) => {
 
 /**
  * ---------------------------------------------------------------------------
+ * Video Processing IPC Handlers
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * IPC: get-video-info
+ * Uses ffprobe to extract video metadata (duration, fps, resolution, codec, bitrate).
+ */
+ipcMain.handle('get-video-info', async (_event, filePath: string) => {
+    return new Promise<{ success: boolean; info?: any; error?: string }>((resolve) => {
+        const args = [
+            '-v', 'quiet',
+            '-print_format', 'json',
+            '-show_format',
+            '-show_streams',
+            filePath
+        ];
+
+        const proc = spawn('ffprobe', args);
+        let output = '';
+
+        proc.stdout.on('data', (d: Buffer) => { output += d.toString(); });
+        proc.stderr.on('data', (d: Buffer) => { console.log('ffprobe stderr:', d.toString()); });
+
+        proc.on('close', (code: number) => {
+            if (code === 0) {
+                try {
+                    const data = JSON.parse(output);
+                    const videoStream = data.streams?.find((s: any) => s.codec_type === 'video');
+
+                    if (!videoStream) {
+                        resolve({ success: false, error: 'No video stream found' });
+                        return;
+                    }
+
+                    let fps = 0;
+                    if (videoStream.r_frame_rate) {
+                        const [num, den] = videoStream.r_frame_rate.split('/');
+                        fps = parseInt(num) / parseInt(den || '1');
+                    }
+
+                    const duration = parseFloat(data.format?.duration || '0');
+
+                    resolve({
+                        success: true,
+                        info: {
+                            duration,
+                            fps: Math.round(fps * 100) / 100,
+                            width: videoStream.width || 0,
+                            height: videoStream.height || 0,
+                            codec: videoStream.codec_name || 'unknown',
+                            totalFrames: Math.round(duration * fps),
+                            bitrate: Math.round((parseInt(data.format?.bit_rate || '0') / 1000))
+                        }
+                    });
+                } catch (err) {
+                    resolve({ success: false, error: `Failed to parse ffprobe output: ${err}` });
+                }
+            } else {
+                resolve({ success: false, error: `ffprobe exited with code ${code}` });
+            }
+        });
+
+        proc.on('error', (err: Error) => {
+            resolve({ success: false, error: `ffprobe not found: ${err.message}` });
+        });
+    });
+});
+
+/**
+ * IPC: extract-video-thumbnails
+ * Extracts thumbnail frames from a video at a configurable FPS rate.
+ * Saves small-scale JPGs (160px wide) to a thumbnails/ subfolder in the project dir.
+ */
+ipcMain.handle('extract-video-thumbnails', async (_event, data: {
+    filePath: string;
+    outputDir: string;
+    fps?: number;
+}) => {
+    return new Promise<{ success: boolean; thumbnails?: { path: string; time: number }[]; error?: string }>((resolve) => {
+        const fps = data.fps || 3;
+        const thumbDir = path.join(data.outputDir, 'thumbnails');
+
+        if (!fs.existsSync(thumbDir)) {
+            fs.mkdirSync(thumbDir, { recursive: true });
+        }
+
+        const outputPattern = path.join(thumbDir, 'thumb_%04d.jpg');
+        const args = [
+            '-i', data.filePath,
+            '-vf', `fps=${fps},scale=160:-1`,
+            '-q:v', '6',
+            '-an',
+            '-f', 'image2',
+            outputPattern
+        ];
+
+        console.log('[extract-video-thumbnails] Running ffmpeg:', args.join(' '));
+        const proc = spawn('ffmpeg', args);
+
+        proc.stderr.on('data', (d: Buffer) => {
+            console.log('ffmpeg thumb:', d.toString().slice(0, 200));
+        });
+
+        proc.on('close', (code: number) => {
+            if (code === 0) {
+                const files = fs.readdirSync(thumbDir)
+                    .filter((f: string) => f.startsWith('thumb_') && f.endsWith('.jpg'))
+                    .sort();
+
+                const thumbnails = files.map((f: string, i: number) => ({
+                    path: path.join(thumbDir, f),
+                    time: i / fps
+                }));
+
+                console.log(`[extract-video-thumbnails] Extracted ${thumbnails.length} thumbnails`);
+                resolve({ success: true, thumbnails });
+            } else {
+                resolve({ success: false, error: `ffmpeg exited with code ${code}` });
+            }
+        });
+
+        proc.on('error', (err: Error) => {
+            resolve({ success: false, error: `ffmpeg not found: ${err.message}` });
+        });
+    });
+});
+
+/**
+ * IPC: save-video-frame
+ * Extracts a single frame at full video resolution from a specific timestamp.
+ * Saves to the images/ subfolder in the project dir.
+ */
+ipcMain.handle('save-video-frame', async (_event, data: {
+    filePath: string;
+    time: number;
+    outputDir: string;
+    filename?: string;
+}) => {
+    return new Promise<{ success: boolean; framePath?: string; error?: string }>((resolve) => {
+        const imagesDir = path.join(data.outputDir, 'images');
+        if (!fs.existsSync(imagesDir)) {
+            fs.mkdirSync(imagesDir, { recursive: true });
+        }
+
+        const filename = data.filename || `frame_${data.time.toFixed(3).replace('.', '_')}s.png`;
+        const outputPath = path.join(imagesDir, filename);
+
+        const args = [
+            '-ss', data.time.toString(),
+            '-i', data.filePath,
+            '-vframes', '1',
+            '-q:v', '1',
+            outputPath
+        ];
+
+        console.log('[save-video-frame] Running ffmpeg:', args.join(' '));
+        const proc = spawn('ffmpeg', args);
+
+        proc.stderr.on('data', (d: Buffer) => {
+            console.log('ffmpeg frame:', d.toString().slice(0, 200));
+        });
+
+        proc.on('close', (code: number) => {
+            if (code === 0 && fs.existsSync(outputPath)) {
+                console.log(`[save-video-frame] Saved frame: ${outputPath}`);
+                resolve({ success: true, framePath: outputPath });
+            } else {
+                resolve({ success: false, error: `ffmpeg exited with code ${code}` });
+            }
+        });
+
+        proc.on('error', (err: Error) => {
+            resolve({ success: false, error: `ffmpeg not found: ${err.message}` });
+        });
+    });
+});
+
+/**
+ * ---------------------------------------------------------------------------
  * IPC: get-config / save-config
  * Handles persistent configuration settings for the app.
  * ---------------------------------------------------------------------------

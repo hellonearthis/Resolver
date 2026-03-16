@@ -12,7 +12,7 @@ export interface VideoClip {
     videoPath?: string;
     generatedVideos?: string[]; // Array of generated video paths, if multiple variations exist
     promptText?: string;
-    source: 'main' | 'stem';
+    source: 'main' | 'stem' | 'video';
     stemName?: string;
     label: string;
     startImagePath?: string;
@@ -33,11 +33,11 @@ export interface TimelineRow {
 }
 
 /**
- * Defines the user's current time selection on the waveform.
+ * Defines the user's current time selection on the waveform or video timeline.
  * Used to dictate what segment will be sent for video generation or playback ranges.
  */
 export interface SelectionState {
-    source: 'main' | 'stem';
+    source: 'main' | 'stem' | 'video';
     stemIndex?: number;
     start: number;
     end: number;
@@ -64,4 +64,34 @@ export interface StemData {
     path: string;
     color: string;
     markers: AudioMarker[];
+}
+
+/**
+ * Video metadata returned by FFprobe analysis.
+ */
+export interface VideoInfo {
+    /** Video duration in seconds */
+    duration: number;
+    /** Frame rate (frames per second) */
+    fps: number;
+    /** Video width in pixels */
+    width: number;
+    /** Video height in pixels */
+    height: number;
+    /** Video codec name (e.g., "h264") */
+    codec: string;
+    /** Total number of frames (calculated) */
+    totalFrames: number;
+    /** Bitrate in kb/s */
+    bitrate: number;
+}
+
+/**
+ * A single extracted thumbnail frame from a video file.
+ */
+export interface VideoThumbnail {
+    /** Absolute path to the thumbnail image file */
+    path: string;
+    /** Time in seconds this frame was extracted from */
+    time: number;
 }

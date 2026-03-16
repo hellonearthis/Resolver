@@ -1,0 +1,371 @@
+/* ======================================================
+   VideoTimelineBar — Video preview + filmstrip timeline
+   ====================================================== */
+
+.video-timeline-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--bg-tertiary);
+    border-radius: 10px;
+    padding: 16px;
+    border: 1px solid var(--border-color);
+}
+
+/* --- Preview Row: Video + Controls side by side --- */
+.vtb-preview-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.vtb-video-preview {
+    flex: 0 0 240px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #000;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.vtb-video-element {
+    width: 100%;
+    display: block;
+}
+
+/* --- Controls Panel --- */
+.vtb-controls {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.vtb-controls-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.vtb-play-controls {
+    display: flex;
+    gap: 4px;
+}
+
+.vtb-btn {
+    background: var(--bg-elevated, #2a2a3e);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary, #fff);
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.15s ease;
+}
+
+.vtb-btn:hover {
+    background: var(--accent-primary, #6366f1);
+    border-color: var(--accent-primary, #6366f1);
+}
+
+.vtb-btn-play,
+.vtb-btn-pause {
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.vtb-btn-frame {
+    padding: 6px 12px;
+    font-size: 12px;
+    margin-left: auto;
+}
+
+.vtb-btn-frame:hover {
+    background: #059669;
+    border-color: #059669;
+}
+
+/* Time Display */
+.vtb-time-display {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 14px;
+    color: var(--text-primary, #fff);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.vtb-time-current {
+    font-weight: 700;
+    color: #fff;
+}
+
+.vtb-time-separator {
+    color: rgba(255, 255, 255, 0.3);
+}
+
+.vtb-time-total {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+/* Zoom Control */
+.vtb-zoom-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 20px;
+    padding-left: 20px;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.vtb-zoom-label {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.4);
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+.vtb-zoom-slider {
+    width: 120px;
+    height: 4px;
+    accent-color: var(--accent-primary, #6366f1);
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+/* Audio Control */
+.vtb-audio-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 12px;
+    padding-left: 12px;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.vtb-btn-mute {
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+.vtb-btn-mute:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: transparent;
+}
+
+.vtb-btn-mute.muted {
+    color: #ef4444;
+}
+
+.vtb-volume-slider {
+    width: 80px;
+    height: 4px;
+    accent-color: #10b981;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+/* Speed Control */
+.vtb-speed-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 12px;
+}
+
+.vtb-speed-label {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.4);
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+.vtb-speed-select {
+    background: var(--bg-elevated, #2a2a3e);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary, #fff);
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 12px;
+    outline: none;
+    cursor: pointer;
+}
+
+.vtb-speed-select:focus {
+    border-color: var(--accent-primary, #6366f1);
+}
+
+/* Info Badges */
+.vtb-info-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.vtb-info-badge {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.5);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* --- Scrollable Timeline Area --- */
+.vtb-timeline-scroll {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: #09090b;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    margin-top: 12px;
+    cursor: default;
+    scroll-behavior: smooth;
+}
+
+/* Custom Scrollbar for Timeline */
+.vtb-timeline-scroll::-webkit-scrollbar {
+    height: 8px;
+}
+
+.vtb-timeline-scroll::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.vtb-timeline-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
+
+.vtb-timeline-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.vtb-timeline-content {
+    position: relative;
+    min-width: 100%;
+    /* Width is set dynamically via JS */
+}
+
+/* --- Time Ruler --- */
+.vtb-ruler {
+    position: relative;
+    height: 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    width: 100%;
+}
+
+.vtb-ruler-tick {
+    position: absolute;
+    top: 4px;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+}
+
+.vtb-ruler-line {
+    width: 1px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.vtb-ruler-label {
+    font-size: 9px;
+    color: rgba(255, 255, 255, 0.4);
+    font-family: 'SF Mono', monospace;
+    white-space: nowrap;
+    margin-top: 2px;
+}
+
+/* --- Filmstrip --- */
+.vtb-filmstrip {
+    position: relative;
+    height: 80px;
+    cursor: crosshair;
+    width: 100%;
+    background: #111;
+    user-select: none;
+}
+
+.vtb-filmstrip-images {
+    display: flex;
+    height: 100%;
+    width: 100%;
+}
+
+.vtb-filmstrip-thumb {
+    height: 100%;
+    object-fit: cover;
+    flex: 1;
+    min-width: 0;
+    pointer-events: none;
+}
+
+/* --- Clip Regions --- */
+.vtb-clip-region {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: rgba(16, 185, 129, 0.25);
+    border: 1px solid rgba(16, 185, 129, 0.5);
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 2;
+}
+
+/* --- Selection Overlay --- */
+.vtb-selection-overlay {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: rgba(99, 102, 241, 0.35);
+    border: 2px solid rgba(99, 102, 241, 0.8);
+    border-radius: 2px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.vtb-selection-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    white-space: nowrap;
+    padding: 0 4px;
+}
+
+/* --- Playhead --- */
+.vtb-playhead {
+    position: absolute;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    background: #fff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
+    z-index: 4;
+    pointer-events: none;
+    transition: left 0.05s linear;
+}
