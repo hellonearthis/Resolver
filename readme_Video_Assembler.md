@@ -23,8 +23,9 @@ flowchart LR
     A[Audio File] --> B[ComfyUI<br/>htdemucs]
     B --> C[Separated Stems<br/>Drums, Bass, Vocals, Other]
     C --> D[Essentia.js WASM<br/>Beat & Onset Analysis]
-    D --> E[Multi-Track Editor<br/>Snap-to-Beat Selection]
-    E --> F[Export Manifest<br/>for DaVinci Resolve]
+    D --> E[Storyboard<br/>Narrative Layout]
+    E --> F[Video Assembler<br/>Rhythmic Execution]
+    F --> G[Export Manifest<br/>for DaVinci Resolve]
 ```
 
 ---
@@ -77,6 +78,7 @@ Uses **[Essentia.js (WASM)](https://mtg.github.io/essentia.js/docs/api/)** to de
 
 -   **Proximity Snap to Beat**: Region selection handles auto-snap to the nearest beat marker within a 10px threshold (scales with zoom level).
 -   **Drag Selection**: Click and drag across any waveform (main or stem) to create a clip region.
+-   **🎨 Storyboard Integration**: Clips created in the Assembler appear as cards in the **[Storyboard Guide](readme_Storyboard.md)**, and vice versa.
 
 ### ⌨️ NLE Keyboard Shortcuts
 
@@ -102,10 +104,12 @@ Navigate and build your timeline without a mouse using industry-standard hotkeys
 4.  **Analyze Beats**: Click **"Analyze All Stems"** or analyze individual stems. Results are cached per-project.
 5.  **Select Beat Source**: Choose which stem's beats to overlay on the main track (e.g., Drums for visual cuts).
 6.  **Select Regions**: Drag regions on any waveform. Handles will snap to detected beats.
-7.  **Generate Clips**: Click **"Generate Clip from Selection"**. Clips are tracked in a checkerboard pattern (alternating tracks).
-8.  **Save**: Click **"Save to Project"** to persist clips and analysis data.
-9.  **Export**: Click **"Export Manifest for Resolve"** to generate a `manifest.json`.
-10. **Resolve Import**: Use the **Script Manager** module to run the Python assembly script, which builds the timeline in DaVinci Resolve automatically.
+7.  **Generate Clips**: Click **"Generate Clip from Selection"**.
+8.  **Refine Storyboard**: Switch to the **Storyboard** tab to add narrative notes, generate frames, and manage video versions.
+9.  **Fine-tune Timing**: Use the **Project Timeline** table for frame-accurate timing adjustments (Start/End times).
+10. **Save**: Click **"Save to Project"** to persist your work.
+11. **Export**: Click **"Export Manifest for Resolve"**.
+12. **Resolve Import**: Use the **Script Manager** to build the automation in Resolve.
 
 ---
 

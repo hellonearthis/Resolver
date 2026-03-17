@@ -1022,10 +1022,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 workflow["98"].inputs.image = finalImageName;
             }
 
-            // b. Prompt (Use clip promptText, fallback to label)
+            // b. Prompt (Use clip notes.action, fallback to label)
             if (workflow["92:3"] && workflow["92:3"].inputs) {
-                const promptVal = (clipToUpdate.promptText && clipToUpdate.promptText.trim() !== '')
-                    ? clipToUpdate.promptText
+                const promptVal = (clipToUpdate.notes?.action && clipToUpdate.notes.action.trim() !== '')
+                    ? clipToUpdate.notes.action
                     : clipToUpdate.label;
                 workflow["92:3"].inputs.text = promptVal;
             }
@@ -1263,6 +1263,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         ws.on('ready', () => {
             const dur = ws.getDuration();
             setDuration(dur);
+            
+            // Sync duration to project storage if it has changed
+            if (activeProject && activeProject.duration !== dur) {
+                onUpdateProject(activeProject.id, { duration: dur });
+            }
 
             // Calculate Min Zoom to prevent horizontal scrolling
             if (containerRef.current) {
@@ -1868,7 +1873,46 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     };
 
     const handleUpdateClipPrompt = (clipId: string, newPrompt: string) => {
-        setClips(prev => prev.map(c => c.id === clipId ? { ...c, promptText: newPrompt } : c));
+        setClips(prev => prev.map(c => 
+            c.id === clipId 
+                ? { ...c, notes: { ...(c.notes || { action: '', dialogue: '', sound: '' }), action: newPrompt } } 
+                : c
+        ));
+    };
+
+    const handleUpdateClipStartTime = (clipId: string, newStartTime: number) => {
+        setClips(prev => prev.map(c => {
+            if (c.id === clipId) {
+                // Moving start time shifts the whole clip (maintains current duration)
+                const duration = c.duration || (c.endTime - c.startTime);
+                return { 
+                    ...c, 
+                    startTime: newStartTime, 
+                    endTime: newStartTime + duration,
+                    duration: duration
+                };
+            }
+            return c;
+        }));
+    };
+
+    const handleUpdateClipEndTime = (clipId: string, newEndTime: number) => {
+        const frameRate = activeProject?.frameRate || 20;
+        setClips(prev => prev.map(c => {
+            if (c.id === clipId) {
+                // Moving end time changes duration - snap to LTX frame boundary
+                if (newEndTime <= c.startTime) return c;
+                const rawDuration = newEndTime - c.startTime;
+                const alignedDuration = getLtxAlignedDuration(rawDuration, frameRate);
+                
+                return { 
+                    ...c, 
+                    endTime: c.startTime + alignedDuration, 
+                    duration: alignedDuration 
+                };
+            }
+            return c;
+        }));
     };
 
     // Render saved clip regions on the appropriate waveform whenever clips change
@@ -1949,7 +1993,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             duration,
             track,
             status: 'pending',
-            promptText: "A cool music video scene, dynamic lighting, 4k", // Default prompt
+            notes: {
+                action: "A cool music video scene, dynamic lighting, 4k",
+                dialogue: "",
+                sound: ""
+            },
             source: source,
             stemName: source === 'stem' && stemIndex !== undefined ? stems[stemIndex]?.type : undefined,
             label: `clip_${clips.length}`
@@ -2862,6 +2910,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                     duration={duration}
                                     onUpdateClipLabel={handleUpdateClipLabel}
                                     onUpdateClipPrompt={handleUpdateClipPrompt}
+                                    onUpdateClipStartTime={handleUpdateClipStartTime}
+                                    onUpdateClipEndTime={handleUpdateClipEndTime}
                                     onRemoveClip={handleRemoveClip}
                                     onPickImage={handlePickImage}
                                     onGenerateClip={handleGenerateTimelineClip}

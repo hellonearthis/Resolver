@@ -41,6 +41,7 @@ export interface BeatProject {
     audioFileName?: string;
     csvPath?: string;
     frameRate: number;
+    duration?: number; // Total project/audio duration in seconds
     bpm?: number;
     beatCount?: number;
     stemType: string;

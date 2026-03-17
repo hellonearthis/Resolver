@@ -14,19 +14,24 @@ export interface VideoClip {
     status: 'pending' | 'generating' | 'done' | 'error';
     videoPath?: string;
     generatedVideos?: string[]; // Array of generated video paths, if multiple variations exist
-    promptText?: string; // Unified with aiPrompt
     source: 'main' | 'stem' | 'video';
     stemName?: string;
     label: string;
     startImagePath?: string;
     endImagePath?: string;
 
-    // --- Storyboard Metadata ---
+    // --- Storyboard & Narrative Metadata ---
     sceneNumber?: string;
     shotLetter?: string;
-    actionNotes?: string;
-    dialogue?: string;
-    soundCues?: string;
+    /** 
+     * Unified narrative fields. 
+     * notes.action is also used as the AI prompt text. 
+     */
+    notes?: {
+        action: string;
+        dialogue: string;
+        sound: string;
+    };
     taggedElementIds?: string[];
     shotSize?: ShotSize;
     shotTypeAngle?: ShotAngle;

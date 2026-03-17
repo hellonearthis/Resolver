@@ -11,6 +11,8 @@ interface ProjectTimelineTableProps {
     duration: number;
     onUpdateClipLabel: (clipId: string, newLabel: string) => void;
     onUpdateClipPrompt: (clipId: string, newPrompt: string) => void;
+    onUpdateClipStartTime: (clipId: string, newStartTime: number) => void;
+    onUpdateClipEndTime: (clipId: string, newEndTime: number) => void;
     onRemoveClip: (clipId: string) => void;
     onPickImage: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     onGenerateClip: (clipId: string) => void;
@@ -26,11 +28,33 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
     duration,
     onUpdateClipLabel,
     onUpdateClipPrompt,
+    onUpdateClipStartTime,
+    onUpdateClipEndTime,
     onRemoveClip,
     onPickImage,
     onGenerateClip,
     onError
 }) => {
+    // Helper to parse time string (e.g., "0:02.49") to seconds
+    const parseTime = (timeStr: string): number | null => {
+        try {
+            const parts = timeStr.trim().split(':');
+            if (parts.length === 2) {
+                const mins = parseFloat(parts[0]);
+                const secs = parseFloat(parts[1]);
+                if (!isNaN(mins) && !isNaN(secs)) {
+                    return (mins * 60) + secs;
+                }
+            } else if (parts.length === 1) {
+                const secs = parseFloat(parts[0]);
+                if (!isNaN(secs)) return secs;
+            }
+        } catch (e) {
+            console.error('Failed to parse time:', timeStr);
+        }
+        return null;
+    };
+
     // Inline label editing
     const [editingClipId, setEditingClipId] = useState<string | null>(null);
     const [editingLabel, setEditingLabel] = useState('');
@@ -38,6 +62,30 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
     // Prompt Editor Modal
     const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
     const [activePromptClip, setActivePromptClip] = useState<{ id: string, text: string } | null>(null);
+
+    // Inline Time Editing
+    const [editingTime, setEditingTime] = useState<{ id: string, field: 'start' | 'end', value: string } | null>(null);
+
+    const startEditTime = (clipId: string, field: 'start' | 'end', currentValue: number) => {
+        setEditingTime({ id: clipId, field, value: formatTime(currentValue) });
+    };
+
+    const commitTime = () => {
+        if (!editingTime) return;
+        const seconds = parseTime(editingTime.value);
+        if (seconds === null) {
+            onError(`Invalid time format: ${editingTime.value}. Use M:SS.ss`);
+            setEditingTime(null);
+            return;
+        }
+
+        if (editingTime.field === 'start') {
+            onUpdateClipStartTime(editingTime.id, seconds);
+        } else {
+            onUpdateClipEndTime(editingTime.id, seconds);
+        }
+        setEditingTime(null);
+    };
 
     const openPromptEditor = (clipId: string, currentText: string) => {
         setActivePromptClip({ id: clipId, text: currentText });
@@ -143,13 +191,13 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                         <input
                                             type="text"
                                             placeholder="AI Prompt (optional)..."
-                                            value={row.clip.promptText || ''}
+                                            value={row.clip.notes?.action || (row.clip as any).promptText || ''}
                                             onChange={(e) => onUpdateClipPrompt(row.clip!.id, e.target.value)}
                                             className="bg-gray-900/50 border border-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded outline-none w-48 focus:border-indigo-500 focus:bg-gray-900 transition-all"
                                             onClick={(e) => e.stopPropagation()}
                                         />
                                         <button
-                                            onClick={() => openPromptEditor(row.clip!.id, row.clip!.promptText || '')}
+                                            onClick={() => openPromptEditor(row.clip!.id, row.clip!.notes?.action || (row.clip as any).promptText || '')}
                                             className="text-gray-500 hover:text-indigo-400 transition-colors p-1"
                                             title="Expand editor"
                                         >
@@ -162,8 +210,62 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                     <span className="text-gray-700">—</span>
                                 )}
                             </td>
-                            <td className="p-2 font-mono text-xs">{formatTime(row.startTime)}</td>
-                            <td className="p-2 font-mono text-xs">{formatTime(row.endTime)}</td>
+                            <td className="p-2 font-mono text-xs">
+                                {row.type === 'clip' && row.clip ? (
+                                    editingTime?.id === row.clip.id && editingTime?.field === 'start' ? (
+                                        <input
+                                            type="text"
+                                            value={editingTime.value}
+                                            onChange={(e) => setEditingTime({ ...editingTime, value: e.target.value })}
+                                            onBlur={commitTime}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') commitTime();
+                                                if (e.key === 'Escape') setEditingTime(null);
+                                            }}
+                                            autoFocus
+                                            className="bg-gray-800 border border-indigo-500 text-indigo-200 text-xs font-mono px-1 py-0.5 rounded outline-none w-20"
+                                        />
+                                    ) : (
+                                        <span 
+                                            className="cursor-pointer hover:text-indigo-400 border-b border-transparent hover:border-indigo-400/50"
+                                            onClick={() => startEditTime(row.clip!.id, 'start', row.startTime)}
+                                            title="Click to edit start time"
+                                        >
+                                            {formatTime(row.startTime)}
+                                        </span>
+                                    )
+                                ) : (
+                                    formatTime(row.startTime)
+                                )}
+                            </td>
+                            <td className="p-2 font-mono text-xs">
+                                {row.type === 'clip' && row.clip ? (
+                                    editingTime?.id === row.clip.id && editingTime?.field === 'end' ? (
+                                        <input
+                                            type="text"
+                                            value={editingTime.value}
+                                            onChange={(e) => setEditingTime({ ...editingTime, value: e.target.value })}
+                                            onBlur={commitTime}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') commitTime();
+                                                if (e.key === 'Escape') setEditingTime(null);
+                                            }}
+                                            autoFocus
+                                            className="bg-gray-800 border border-indigo-500 text-indigo-200 text-xs font-mono px-1 py-0.5 rounded outline-none w-20"
+                                        />
+                                    ) : (
+                                        <span 
+                                            className="cursor-pointer hover:text-indigo-400 border-b border-transparent hover:border-indigo-400/50"
+                                            onClick={() => startEditTime(row.clip!.id, 'end', row.endTime)}
+                                            title="Click to edit end time"
+                                        >
+                                            {formatTime(row.endTime)}
+                                        </span>
+                                    )
+                                ) : (
+                                    formatTime(row.endTime)
+                                )}
+                            </td>
                             <td className="p-2 font-mono text-xs">{formatTime(row.duration)}</td>
                             <td className="p-2">
                                 {row.clip ? (

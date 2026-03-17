@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import type { VideoClip } from '../types/assembler';
 import { PacingBenchmarks } from '../types/storyboard';
+import { getLtxAlignedDuration } from '../utils/timelineUtils';
 import StoryboardCardComponent from '../components/storyboard/StoryboardCard';
 import AnimaticTimeline from '../components/storyboard/AnimaticTimeline';
+import StoryboardPaddingCard from '../components/storyboard/StoryboardPaddingCard';
 import type { BeatProject } from '../hooks/useProjectStorage';
 
 interface StoryboardModuleProps {
@@ -12,79 +14,104 @@ interface StoryboardModuleProps {
 }
 
 const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUpdateProject, onStatusChange }) => {
-    const [isAnimaticView, setIsAnimaticView] = useState(activeProject?.animaticEnabled || false);
     const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
 
     const cards = (activeProject?.clips || []) as VideoClip[];
     const elements = activeProject?.elementTray || [];
 
-    const handleAddCard = () => {
+    const handleFillPadding = (startTime: number, duration: number) => {
         if (!activeProject) return;
-        
-        const lastCard = cards[cards.length - 1];
-        const lastLetterCode = lastCard?.shotLetter ? lastCard.shotLetter.charCodeAt(0) : 64; // '@' before 'A'
-        const nextShotLetter = String.fromCharCode(lastLetterCode + 1);
-        const sceneNum = lastCard?.sceneNumber || '1';
-        const startTime = lastCard ? (lastCard.startTime + lastCard.duration) : 0;
+        const frameRate = activeProject.frameRate || 20;
+        const alignedDuration = getLtxAlignedDuration(duration, frameRate);
+        const nextIndex = cards.length + 1;
 
         const newCard: VideoClip = {
             id: `card-${Date.now()}`,
             startTime: startTime,
-            duration: 2.0,
-            endTime: startTime + 2.0,
+            duration: alignedDuration,
+            endTime: startTime + alignedDuration,
             track: 1,
             status: 'pending',
             source: 'main',
-            label: `Shot ${sceneNum}${nextShotLetter}`,
-            sceneNumber: sceneNum,
-            shotLetter: nextShotLetter.length > 1 ? 'A' : nextShotLetter, 
-            actionNotes: '',
-            dialogue: '',
-            soundCues: '',
-            promptText: '',
-            taggedElementIds: [],
-            shotSize: 'MS',
-            shotTypeAngle: 'Eye-level',
-            cameraMovement: 'Static',
-            optics: '35mm',
-            equipment: '',
-            locationType: 'INT',
-            vfxNotes: '',
+            label: `Shot ${nextIndex}`,
+            sceneNumber: '1',
+            shotLetter: 'A',
+            notes: { action: '', dialogue: '', sound: '' },
             paceWpm: PacingBenchmarks.CONVERSATIONAL
         };
 
         const updatedCards = [...cards, newCard];
+        // Sort clips by start time just in case, though usually they are appended
+        updatedCards.sort((a, b) => a.startTime - b.startTime);
         onUpdateProject(activeProject.id, { clips: updatedCards });
-        onStatusChange?.(`Added new shot ${sceneNum}${newCard.shotLetter}`);
     };
 
-    const handleUpdateCard = (id: string, updates: Partial<VideoClip>) => {
+    const handleUpdateCard = (id: string, updates: any) => {
         if (!activeProject) return;
         
-        const updatedCards = cards.map(c => {
-            if (c.id === id) {
-                const merged = { ...c, ...updates };
-                
-                // Recalculate duration if dialogue or pace changed
-                if ('dialogue' in updates || 'paceWpm' in updates) {
-                    const words = (merged.dialogue || '').trim().split(/\s+/).filter(w => w.length > 0);
-                    const wordCount = words.length;
-                    merged.duration = Math.max(1.5, (wordCount / (merged.paceWpm || PacingBenchmarks.CONVERSATIONAL)) * 60);
-                    merged.endTime = merged.startTime + merged.duration;
+        let newClips = [...cards];
+        const clipIndex = newClips.findIndex(c => c.id === id);
+        if (clipIndex === -1) return;
+
+        // Apply update to the targeted clip
+        let currentClip = newClips[clipIndex];
+        let updatedClip: VideoClip;
+
+        // Custom handling for nested notes to prevent overwriting other note fields
+        if ('notes' in updates && updates.notes) {
+            updatedClip = {
+                ...currentClip,
+                notes: {
+                    ...(currentClip.notes || { action: '', dialogue: '', sound: '' }),
+                    ...updates.notes
                 }
-                
-                return merged;
-            }
-            return c;
-        });
+            };
+        } else {
+            updatedClip = { ...currentClip, ...updates };
+        }
         
-        onUpdateProject(activeProject.id, { clips: updatedCards });
+        // Handle duration auto-calc
+        if (updates.notes?.dialogue !== undefined || updates.paceWpm !== undefined) {
+            const dialogue = updatedClip.notes?.dialogue || '';
+            const words = dialogue.trim().split(/\s+/).filter((w: string) => w.length > 0);
+            const wordCount = words.length;
+            const rawDuration = Math.max(1.5, (wordCount / (updatedClip.paceWpm || PacingBenchmarks.CONVERSATIONAL)) * 60);
+            const frameRate = activeProject.frameRate || 20;
+            updatedClip.duration = getLtxAlignedDuration(rawDuration, frameRate);
+        }
+        updatedClip.endTime = updatedClip.startTime + updatedClip.duration;
+        newClips[clipIndex] = updatedClip;
+
+        // Rippling Effect: Sync sequential timing for all subsequent clips
+        for (let i = clipIndex + 1; i < newClips.length; i++) {
+            const prev = newClips[i - 1];
+            newClips[i] = {
+                ...newClips[i],
+                startTime: prev.endTime,
+                endTime: prev.endTime + newClips[i].duration
+            };
+        }
+        
+        onUpdateProject(activeProject.id, { clips: newClips });
     };
 
     const handleDeleteCard = (id: string) => {
         if (!activeProject) return;
-        const updatedCards = cards.filter(c => c.id !== id);
-        onUpdateProject(activeProject.id, { clips: updatedCards });
+        let newClips = cards.filter(c => c.id !== id);
+        
+        // Rippling Effect: Re-calculate all timings to close the gap after deletion
+        let currentTime = 0;
+        newClips = newClips.map(c => {
+            const updated = {
+                ...c,
+                startTime: currentTime,
+                endTime: currentTime + c.duration
+            };
+            currentTime = updated.endTime;
+            return updated;
+        });
+
+        onUpdateProject(activeProject.id, { clips: newClips });
         if (selectedCardId === id) setSelectedCardId(null);
     };
 
@@ -93,13 +120,62 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
         // Integration with AI generation service would go here
     };
 
-    const toggleView = () => {
-        const newState = !isAnimaticView;
-        setIsAnimaticView(newState);
-        if (activeProject) {
-            onUpdateProject(activeProject.id, { animaticEnabled: newState });
+    // Calculate Interleaved Timeline Items (Clips + Gaps/Padding)
+    const projectDuration = activeProject?.duration || 0;
+    const sortedClips = [...cards].sort((a, b) => a.startTime - b.startTime);
+    
+    interface TimelineItem {
+        type: 'clip' | 'padding';
+        startTime: number;
+        duration: number;
+        data: any; 
+    }
+
+    const timelineItems: TimelineItem[] = [];
+    
+    if (activeProject && projectDuration > 0) {
+        let currentTime = 0;
+        
+        for (const clip of sortedClips) {
+            // Check for gap before this clip
+            if (clip.startTime > currentTime + 0.01) {
+                timelineItems.push({
+                    type: 'padding',
+                    startTime: currentTime,
+                    duration: clip.startTime - currentTime,
+                    data: { startTime: currentTime, duration: clip.startTime - currentTime }
+                });
+            }
+            // Add the clip itself
+            timelineItems.push({
+                type: 'clip',
+                startTime: clip.startTime,
+                duration: clip.duration,
+                data: clip
+            });
+            currentTime = Math.max(currentTime, clip.endTime);
         }
-    };
+        
+        // Final gap at end
+        if (currentTime < projectDuration - 0.01) {
+            timelineItems.push({
+                type: 'padding',
+                startTime: currentTime,
+                duration: projectDuration - currentTime,
+                data: { startTime: currentTime, duration: projectDuration - currentTime }
+            });
+        }
+    } else {
+        // Fallback for no duration: just show clips
+        sortedClips.forEach(clip => {
+            timelineItems.push({
+                type: 'clip',
+                startTime: clip.startTime,
+                duration: clip.duration,
+                data: clip
+            });
+        });
+    }
 
     if (!activeProject) {
         return (
@@ -121,82 +197,45 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
                         </h2>
                         <p className="text-[11px] text-gray-500 uppercase tracking-widest font-semibold mt-1">Project: {activeProject.name}</p>
                     </div>
-                    
-                    <button 
-                        onClick={toggleView}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-all font-bold text-sm ${isAnimaticView ? 'bg-indigo-600 border-indigo-400 shadow-indigo-500/20 shadow-lg' : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500'}`}
-                    >
-                        {isAnimaticView ? '🎞️ Animatic Timeline' : '🔳 Storyboard Grid'}
-                    </button>
                 </div>
 
                 <div className="flex items-center gap-3">
-                    <button 
-                        onClick={handleAddCard}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-lg font-bold text-sm shadow-lg shadow-emerald-900/20 transition-all flex items-center gap-2"
-                    >
-                        <span>➕</span> Add Shot
-                    </button>
+                    {/* Simplified header - padding cards now handle shot creation */}
                 </div>
             </div>
 
             {/* Main Content Area */}
             <div className="flex-1 overflow-auto p-8">
-                {!isAnimaticView ? (
-                    /* Grid View */
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-8">
-                        {cards.map(card => (
+                {/* Grid View - Interleaved Clips and Padding */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-8">
+                    {timelineItems.map((item, idx) => (
+                        item.type === 'clip' ? (
                             <StoryboardCardComponent 
-                                key={card.id}
-                                card={card}
+                                key={item.data.id}
+                                card={item.data}
                                 onUpdate={handleUpdateCard}
                                 onDelete={handleDeleteCard}
                                 onGenerateImage={handleGenerateImage}
                             />
-                        ))}
-                        
-                        {/* Empty/Add card placeholder */}
-                        <div 
-                            onClick={handleAddCard}
-                            className="aspect-[4/5] border-2 border-dashed border-gray-800 rounded-xl flex flex-col items-center justify-center gap-4 text-gray-600 hover:border-indigo-500/50 hover:text-indigo-400 cursor-pointer transition-all group"
-                        >
-                            <span className="text-4xl group-hover:scale-110 transition-transform">➕</span>
-                            <span className="text-xs font-bold uppercase tracking-widest">Add New Panel</span>
-                        </div>
-                    </div>
-                ) : (
-                    /* Animatic Timeline View */
-                    <div className="flex flex-col h-full gap-8">
-                        <div className="h-[400px]">
-                            <AnimaticTimeline 
-                                cards={cards} 
-                                onSelectCard={setSelectedCardId}
+                        ) : (
+                            <StoryboardPaddingCard 
+                                key={`padding-${idx}-${item.startTime}`}
+                                startTime={item.startTime}
+                                duration={item.duration}
+                                onAdd={handleFillPadding}
                             />
-                        </div>
+                        )
+                    ))}
+                </div>
+            </div>
 
-                        {/* Selected Card Focus */}
-                        {selectedCardId && (
-                             <div className="flex-1 flex justify-center animate-fade-in">
-                                 <div className="w-full max-w-sm">
-                                     {cards.find(c => c.id === selectedCardId) && (
-                                         <StoryboardCardComponent 
-                                             card={cards.find(c => c.id === selectedCardId)!}
-                                             onUpdate={handleUpdateCard}
-                                             onDelete={handleDeleteCard}
-                                             onGenerateImage={handleGenerateImage}
-                                         />
-                                     )}
-                                 </div>
-                             </div>
-                        )}
-                        
-                        {!selectedCardId && cards.length > 0 && (
-                            <div className="flex-1 flex items-center justify-center text-gray-600 italic text-sm">
-                                Select a shot on the timeline to edit details...
-                            </div>
-                        )}
-                    </div>
-                )}
+            {/* Persistent Animatic Timeline */}
+            <div className="h-44 border-t border-gray-800/30 px-4 py-2 bg-[#050508]/50">
+                <AnimaticTimeline 
+                    cards={cards} 
+                    onSelectCard={setSelectedCardId}
+                    compact={true}
+                />
             </div>
 
             {/* Element Tray (Side Panel placeholder) */}

@@ -44,6 +44,8 @@ The project data file contains all metadata, analysis results, and timeline info
 | `stems` | `Array` | List of separated stem tracks (see *Stems Object*). |
 | `markers` | `Array<ProjectMarker>` | **Main track** analysis results in the modern format (see *Data Format Relationship*). |
 | `clips` | `Array` | List of video segments created in the timeline (see *Clips Object*). |
+| `duration` | `number` | (Optional) Total project duration in seconds (persistent). |
+| `elementTray` | `Array` | List of defined characters or locations (see *Element Tray Object*). |
 | `createdAt` | `string` | ISO timestamp of creation. |
 | `updatedAt` | `string` | ISO timestamp of last update. |
 
@@ -136,10 +138,27 @@ Represents the video segments arranged in the **Video Assembler** timeline.
 | `source` | `string` | Source of the clip: `main` (original audio) or `stem`. |
 | `stemName` | `string` | If source is `stem`, the type of stem (e.g., `Drums`). |
 | `status` | `string` | Generation status: `pending`, `generating`, `done`, `error`. |
-| `videoPath` | `string` | (Optional) Absolute path to the generated video file. |
-| `startImagePath` | `string` | (Optional) Path to the *Start Image* for morph/transition reference. |
-| `endImagePath` | `string` | (Optional) Path to the *End Image* for morph/transition reference. |
-| `promptText` | `string` | (Optional) The text prompt used for generative video creation. |
+| `notes` | `object` | Unified narrative data: `{ action, dialogue, sound }`. |
+| `metadata` | `object` | Production props: `{ shotSize, cameraAngle, cameraMovement, paceWpm, actionNotes }`. |
+| `videoPath` | `string` | (Optional) Absolute path to the active video take. |
+| `videoTakes` | `Array<string>` | (Optional) List of all generated video versions for this clip. |
+| `startImagePath` | `string` | (Optional) Reference image for the head of the shot. |
+| `endImagePath` | `string` | (Optional) Reference image for the tail of the shot. |
+| `paceWpm` | `number` | (Optional) Pacing benchmark in Words Per Minute (default: 150). |
+
+---
+
+### Element Tray Object (`elementTray[]`)
+
+Stores references to characters, locations, or key technical constraints that can be tagged to clips.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `string` | Unique identifier for the element. |
+| `type` | `string` | Type of element: `character`, `location`, `prop`, `vfx`. |
+| `name` | `string` | Display name of the entity. |
+| `description`| `string` | Prompt snippet or description for AI generation context. |
+| `icon` | `string` | (Optional) Icon or emoji for UI representation. |
 
 ---
 
@@ -185,7 +204,18 @@ Represents the video segments arranged in the **Video Assembler** timeline.
       "track": 1,
       "source": "main",
       "status": "done",
-      "videoPath": "C:\\Projects\\PRJ_My_Cool_Track\\clip_0.mp4"
+      "notes": {
+        "action": "A wide cinematic shot of a sunset",
+        "dialogue": "Hello world",
+        "sound": "Wind blowing"
+      },
+      "metadata": {
+        "shotSize": "WS",
+        "cameraAngle": "High Angle",
+        "cameraMovement": "Pan"
+      },
+      "videoPath": "C:\\Projects\\PRJ_My_Cool_Track\\clip_0.mp4",
+      "videoTakes": ["C:\\Projects\\PRJ_My_Cool_Track\\clip_0.mp4"]
     }
   ],
   "createdAt": "2026-02-24T21:37:41.306Z",

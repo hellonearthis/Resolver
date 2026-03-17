@@ -8,6 +8,7 @@ A modular production tool for DaVinci Resolve featuring **beat synchronization**
 
 - 🎵 **[Beat Extraction](readme_Beat_Detection.md)** — Detect BPM and actual beat positions using Essentia.js
 - 🎬 **[Video Assembler](readme_Video_Assembler.md)** — Sync video clips to specific stems (drums, bass) with "Snap to Beat"
+- 🎨 **[Storyboard](readme_Storyboard.md)** — Build visual narratives with card-based prompts and AI generation
 - 🎬 **[Video Sync](readme_Video_Sync.md)** — Auto-sync video clips to the beat
 - 📜 **[Script Manager](readme_Script_Manager.md)** — Manage generated Python scripts for Resolve
 - 🎚️ **[Stem Separation](readme_Stem_Separation.md)** — Split tracks via ComfyUI with integrated Beat Analysis
@@ -23,6 +24,7 @@ Splitting a track as iconic as "Get Up, Stand Up" into stems—likely Drums, Bas
 
 - 📄 **[Beat Detection Guide](readme_Beat_Detection.md)** – Detailed guide on algorithms, onsets, and loudness.
 - 📄 **[Video Assembler Guide](readme_Video_Assembler.md)** – How to use stems, zoom-sync, and checkerboard assembly.
+- 📄 **[Storyboard Guide](readme_Storyboard.md)** – Guide to narrative-driven AI generation and storyboarding.
 - 📄 **[Video Sync Guide](readme_Video_Sync.md)** – How to sync clips to music.
 - 📄 **[Script Manager Guide](readme_Script_Manager.md)** – managing your generated scripts.
 
@@ -121,7 +123,8 @@ resolver/
 - [x] **Stem Separation**: Integrate ComfyUI to split audio into stems (drums, bass, vocals).
 - [x] **Beat Analysis per Stem**: Analyze and visualize individual rhythmic layers.
 - [x] **Video Assembler**: Specialized UI for multi-stem rhythmic syncing.
-- [x] **Project Bundle Structure**: Refactor projects to be self-contained bundles (saving `project.json` with relative paths in dedicated `PRJ_` directories) for portability and robustness.
+- [x] **Storyboard Module**: Narrative-driven card system with unified AI prompts and versioning.
+- [x] **Project Bundle Structure**: Refactor projects to be self-contained bundles.
 - [ ] **Tap Tempo**: Manual BPM adjustment for challenging tracks.
 - [ ] **Beat Divisions**: Options for 1/2, 1/4, or double-time beat markers.
 - [ ] **Clip Randomizer**: Mode to select random clips from a bin for quick montages.

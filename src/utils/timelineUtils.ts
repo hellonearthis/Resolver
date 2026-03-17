@@ -123,6 +123,16 @@ export const formatTime = (seconds: number): string => {
 };
 
 /**
+ * Converts an absolute file path to a media:// protocol URL for Electron.
+ * This bypasses browser security restrictions for loading local resources.
+ */
+export const pathToMediaUrl = (filePath: string): string => {
+    if (!filePath) return '';
+    // Replace backslashes for URL compatibility and prepend protocol
+    return `media://${filePath.replace(/\\/g, '/')}`;
+};
+
+/**
  * Constructs an array of timeline rows from an array of video clips. 
  * Automatically fills gaps with 'unselected' rows to represent empty track space.
  * @param clips The user's saved video clips
