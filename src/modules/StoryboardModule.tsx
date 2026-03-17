@@ -124,14 +124,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
     const projectDuration = activeProject?.duration || 0;
     const sortedClips = [...cards].sort((a, b) => a.startTime - b.startTime);
     
-    interface TimelineItem {
-        type: 'clip' | 'padding';
-        startTime: number;
-        duration: number;
-        data: any; 
-    }
-
-    const timelineItems: TimelineItem[] = [];
+    const timelineItems: any[] = []; // Using any[] temporarily or align with TimelineRow
     
     if (activeProject && projectDuration > 0) {
         let currentTime = 0;
@@ -140,18 +133,21 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
             // Check for gap before this clip
             if (clip.startTime > currentTime + 0.01) {
                 timelineItems.push({
-                    type: 'padding',
+                    type: 'unselected',
                     startTime: currentTime,
+                    endTime: clip.startTime,
                     duration: clip.startTime - currentTime,
-                    data: { startTime: currentTime, duration: clip.startTime - currentTime }
+                    label: 'Gap'
                 });
             }
             // Add the clip itself
             timelineItems.push({
                 type: 'clip',
                 startTime: clip.startTime,
+                endTime: clip.endTime,
                 duration: clip.duration,
-                data: clip
+                clip: clip,
+                label: clip.label
             });
             currentTime = Math.max(currentTime, clip.endTime);
         }
@@ -159,10 +155,11 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
         // Final gap at end
         if (currentTime < projectDuration - 0.01) {
             timelineItems.push({
-                type: 'padding',
+                type: 'unselected',
                 startTime: currentTime,
+                endTime: projectDuration,
                 duration: projectDuration - currentTime,
-                data: { startTime: currentTime, duration: projectDuration - currentTime }
+                label: 'Gap'
             });
         }
     } else {
@@ -171,8 +168,10 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
             timelineItems.push({
                 type: 'clip',
                 startTime: clip.startTime,
+                endTime: clip.endTime,
                 duration: clip.duration,
-                data: clip
+                clip: clip,
+                label: clip.label
             });
         });
     }
@@ -211,8 +210,8 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
                     {timelineItems.map((item, idx) => (
                         item.type === 'clip' ? (
                             <StoryboardCardComponent 
-                                key={item.data.id}
-                                card={item.data}
+                                key={item.clip.id}
+                                card={item.clip}
                                 onUpdate={handleUpdateCard}
                                 onDelete={handleDeleteCard}
                                 onGenerateImage={handleGenerateImage}
@@ -232,9 +231,10 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
             {/* Persistent Animatic Timeline */}
             <div className="h-44 border-t border-gray-800/30 px-4 py-2 bg-[#050508]/50">
                 <AnimaticTimeline 
-                    cards={cards} 
+                    items={timelineItems} 
                     onSelectCard={setSelectedCardId}
                     compact={true}
+                    onAddPadding={handleFillPadding}
                 />
             </div>
 

@@ -1,4 +1,7 @@
 import React from 'react';
+import Tippy from '@tippyjs/react';
+import 'tippy.js/dist/tippy.css';
+import 'tippy.js/animations/shift-away.css';
 import type { VideoClip } from '../../types/assembler';
 import { formatTime, pathToMediaUrl } from '../../utils/timelineUtils';
 
@@ -31,12 +34,14 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
                         placeholder="UNNAMED SHOT"
                     />
                 </div>
-                <button 
-                    onClick={() => onDelete(card.id)}
-                    className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                    ✕
-                </button>
+                <Tippy content="Remove this shot from the timeline." placement="top" offset={[0, 48]}>
+                    <button 
+                        onClick={() => onDelete(card.id)}
+                        className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                        ✕
+                    </button>
+                </Tippy>
             </div>
 
             {/* Visual Previews & Video Selector */}
@@ -122,13 +127,14 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
                 <div className="space-y-1">
                     <div className="flex justify-between items-center pr-1">
                         <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Action Prompt</label>
-                        <button 
-                            onClick={() => onGenerateImage(card.id, actionPromptValue)}
-                            className="bg-indigo-600/20 hover:bg-indigo-600 text-indigo-400 hover:text-white px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight transition-all flex items-center gap-1 border border-indigo-500/20"
-                            title="Generate Frame from Prompt"
-                        >
-                            <span>🪄</span> Generate
-                        </button>
+                        <Tippy content="Generate a new preview frame using the action prompt." placement="top" offset={[0, 48]}>
+                            <button 
+                                onClick={() => onGenerateImage(card.id, actionPromptValue)}
+                                className="bg-indigo-600/20 hover:bg-indigo-600 text-indigo-400 hover:text-white px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight transition-all flex items-center gap-1 border border-indigo-500/20"
+                            >
+                                <span>🪄</span> Generate
+                            </button>
+                        </Tippy>
                     </div>
                     <textarea 
                         className="w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed"

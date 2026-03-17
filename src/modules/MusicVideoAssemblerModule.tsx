@@ -1,5 +1,8 @@
 const { ipcRenderer } = window.require('electron');
 import React, { useEffect, useRef, useState } from 'react';
+import Tippy from '@tippyjs/react';
+import 'tippy.js/dist/tippy.css';
+import 'tippy.js/animations/shift-away.css';
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { analyzeBeats, analyzeOnsets, analyzeLoudness, type BeatAlgorithm, initEssentia } from '../services/essentiaService';
@@ -2356,26 +2359,30 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         {/* Left column — Generation Actions */}
                         <div className="flex flex-col gap-6 flex-1" style={{ paddingRight: '8px' }}>
                             <div className="flex flex-col gap-2">
-                                <button
-                                    onClick={handleRunSeparation}
-                                    disabled={isProcessing || !comfyConnected || !audioFile?.path || !workflow}
-                                    className={`btn w-full ${isProcessing || !comfyConnected || !audioFile?.path || !workflow ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
-                                    style={{ marginBottom: '5px' }}
-                                >
-                                    {isProcessing && !detectionStatus.includes("main") ? (
-                                        <>Processing Music File...</>
-                                    ) : (
-                                        <>Start Stem Separation</>
-                                    )}
-                                </button>
-                                <button
-                                    onClick={handleRunMainBeatAnalysis}
-                                    disabled={isProcessing || !activeProject || !audioFile?.path}
-                                    className={`btn w-full ${isProcessing || !activeProject || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
-                                    style={{ marginBottom: '5px' }}
-                                >
-                                    {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
-                                </button>
+                                <Tippy content="Uses ComfyUI to separate instruments into distinct audio tracks (Vocals, Drums, Bass, etc.)." placement="right" offset={[0, 48]}>
+                                    <button
+                                        onClick={handleRunSeparation}
+                                        disabled={isProcessing || !comfyConnected || !audioFile?.path || !workflow}
+                                        className={`btn w-full ${isProcessing || !comfyConnected || !audioFile?.path || !workflow ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                                        style={{ marginBottom: '5px' }}
+                                    >
+                                        {isProcessing && !detectionStatus.includes("main") ? (
+                                            <>Processing Music File...</>
+                                        ) : (
+                                            <>Start Stem Separation</>
+                                        )}
+                                    </button>
+                                </Tippy>
+                                <Tippy content="Analyzes the master track for beats, downbeats, and energy changes." placement="right" offset={[0, 48]}>
+                                    <button
+                                        onClick={handleRunMainBeatAnalysis}
+                                        disabled={isProcessing || !activeProject || !audioFile?.path}
+                                        className={`btn w-full ${isProcessing || !activeProject || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                                        style={{ marginBottom: '5px' }}
+                                    >
+                                        {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
+                                    </button>
+                                </Tippy>
                             </div>
 
                             {/* Individual Stem Analysis Section */}
@@ -2383,29 +2390,31 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 <div className="border-t border-gray-700/50 pt-3">
                                     <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Stem Analysis</h4>
                                     <div className="flex flex-col gap-2">
-                                        <button
-                                            className="btn w-full btn-secondary justify-center border border-indigo-500/30 hover:border-indigo-500/80"
-                                            onClick={async () => {
-                                                for (const s of stems) {
-                                                    await handleAnalyzeLocal(s.path, s.type);
-                                                }
-                                            }}
-                                            disabled={isProcessing}
-                                        >
-                                            {isProcessing ? 'Analyzing...' : 'Analyze All Stems'}
-                                        </button>
+                                        <Tippy content="Run full beat and onset analysis on all successfully separated stem tracks." placement="top" offset={[0, 48]}>
+                                            <button
+                                                className="btn w-full btn-secondary justify-center border border-indigo-500/30 hover:border-indigo-500/80"
+                                                onClick={async () => {
+                                                    for (const s of stems) {
+                                                        await handleAnalyzeLocal(s.path, s.type);
+                                                    }
+                                                }}
+                                                disabled={isProcessing}
+                                            >
+                                                {isProcessing ? 'Analyzing...' : 'Analyze All Stems'}
+                                            </button>
+                                        </Tippy>
                                         <div className="grid grid-cols-2 gap-2">
                                             {stems.map((stem, index) => (
-                                                <button
-                                                    key={index}
-                                                    className="btn btn-secondary text-xs py-1 px-2 border border-gray-700 hover:border-indigo-500/50 flex justify-center items-center gap-2"
-                                                    onClick={() => handleAnalyzeLocal(stem.path, stem.type)}
-                                                    disabled={isProcessing}
-                                                    title={`Run Analysis on ${stem.type}`}
-                                                >
-                                                    <span style={{ color: stem.color, fontSize: '8px' }}>⬤</span>
-                                                    {stem.type}
-                                                </button>
+                                                <Tippy key={index} content={`Analyze ${stem.type} for beats and onsets.`} placement="top" offset={[0, 48]}>
+                                                    <button
+                                                        className="btn btn-secondary text-xs py-1 px-2 border border-gray-700 hover:border-indigo-500/50 flex justify-center items-center gap-2"
+                                                        onClick={() => handleAnalyzeLocal(stem.path, stem.type)}
+                                                        disabled={isProcessing}
+                                                    >
+                                                        <span style={{ color: stem.color, fontSize: '8px' }}>⬤</span>
+                                                        {stem.type}
+                                                    </button>
+                                                </Tippy>
                                             ))}
                                         </div>
                                     </div>
@@ -2499,20 +2508,24 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     <div className="flex items-center gap-4">
                         <h4 className="text-sm font-semibold text-gray-400">Audio Preview</h4>
                         <div className="flex gap-2">
-                            <button
-                                className="btn btn-primary flex items-center justify-center gap-1 px-4 py-1.5"
-                                onClick={handlePlayMain}
-                                disabled={!audioUrl}
-                            >
-                                <span className="text-lg">▶</span> Play
-                            </button>
-                            <button
-                                className="btn btn-secondary flex items-center justify-center gap-1 px-4 py-1.5"
-                                onClick={handlePauseMain}
-                                disabled={!audioUrl}
-                            >
-                                <span className="text-lg">⏸</span> Pause
-                            </button>
+                            <Tippy content="Play the master track along with any unmuted preview audio." placement="top" offset={[0, 48]}>
+                                <button
+                                    className="btn btn-primary flex items-center justify-center gap-1 px-4 py-1.5"
+                                    onClick={handlePlayMain}
+                                    disabled={!audioUrl}
+                                >
+                                    <span className="text-lg">▶</span> Play
+                                </button>
+                            </Tippy>
+                            <Tippy content="Pause playback across all tracks." placement="top" offset={[0, 48]}>
+                                <button
+                                    className="btn btn-secondary flex items-center justify-center gap-1 px-4 py-1.5"
+                                    onClick={handlePauseMain}
+                                    disabled={!audioUrl}
+                                >
+                                    <span className="text-lg">⏸</span> Pause
+                                </button>
+                            </Tippy>
                         </div>
                     </div>
 
@@ -2743,21 +2756,25 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                             <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded">
                                                 <h4 className="text-sm font-semibold text-gray-400">Project Stems Controls</h4>
                                                 <div className="flex gap-4 w-1/2">
-                                                    <button
-                                                        className="btn w-full mt-2 btn-primary flex items-center justify-center gap-2"
-                                                        onClick={handlePlayStems}
-                                                        disabled={!audioUrl}
-                                                    >
-                                                        <span className="text-lg">▶</span> Play Stems
-                                                    </button>
+                                                    <Tippy content="Synchronize and play all stem tracks from the beginning." placement="top" offset={[0, 48]}>
+                                                        <button
+                                                            className="btn w-full mt-2 btn-primary flex items-center justify-center gap-2"
+                                                            onClick={handlePlayStems}
+                                                            disabled={!audioUrl}
+                                                        >
+                                                            <span className="text-lg">▶</span> Play Stems
+                                                        </button>
+                                                    </Tippy>
 
-                                                    <button
-                                                        className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-2"
-                                                        onClick={handlePauseAll}
-                                                        disabled={!audioUrl}
-                                                    >
-                                                        <span className="text-lg">⏸</span> Pause
-                                                    </button>
+                                                    <Tippy content="Pause all stem track previews." placement="top" offset={[0, 48]}>
+                                                        <button
+                                                            className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-2"
+                                                            onClick={handlePauseAll}
+                                                            disabled={!audioUrl}
+                                                        >
+                                                            <span className="text-lg">⏸</span> Pause
+                                                        </button>
+                                                    </Tippy>
                                                 </div>
                                             </div>
 
@@ -2768,20 +2785,22 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                             <div className="text-xs font-bold uppercase" style={{ color: stem.color }}>{stem.type}</div>
                                                         </div>
                                                         <div className="flex gap-2">
-                                                            <button
-                                                                className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                                                onClick={() => handlePlayStem(index)}
-                                                                title={`Play ${stem.type}`}
-                                                            >
-                                                                ▶ Play
-                                                            </button>
-                                                            <button
-                                                                className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                                                onClick={() => handlePauseStem(index)}
-                                                                title={`Pause ${stem.type}`}
-                                                            >
-                                                                ⏸ Pause
-                                                            </button>
+                                                            <Tippy content={`Listen to the ${stem.type} stem only.`} placement="top" offset={[0, 48]}>
+                                                                <button
+                                                                    className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
+                                                                    onClick={() => handlePlayStem(index)}
+                                                                >
+                                                                    ▶ Play
+                                                                </button>
+                                                            </Tippy>
+                                                            <Tippy content={`Pause ${stem.type} preview.`} placement="top" offset={[0, 48]}>
+                                                                <button
+                                                                    className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
+                                                                    onClick={() => handlePauseStem(index)}
+                                                                >
+                                                                    ⏸ Pause
+                                                                </button>
+                                                            </Tippy>
                                                         </div>
                                                     </div>
                                                     <div
@@ -2800,48 +2819,55 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
                             {/* Controls Container — outside collapsible section to stay persistent */}
                             <div className="controls-container flex flex-wrap gap-4 mt-8 bg-gray-900/40 p-6 rounded-xl border border-gray-800/80">
-                                <button
-                                    className="btn btn-primary shadow-lg shadow-indigo-500/20"
-                                    onClick={handleGenerateClipFromRegion}
-                                    disabled={!activeSelection || isAnalyzing}
-                                >
-                                    Generate Clip from Selection
-                                </button>
+                                <Tippy content="Queue a ComfyUI video generation task based on the current selection's duration." placement="top" offset={[0, 48]}>
+                                    <button
+                                        className="btn btn-primary shadow-lg shadow-indigo-500/20"
+                                        onClick={handleGenerateClipFromRegion}
+                                        disabled={!activeSelection || isAnalyzing}
+                                    >
+                                        Generate Clip from Selection
+                                    </button>
+                                </Tippy>
 
                                 <div className="flex gap-2">
-                                    <button
-                                        className="btn bg-indigo-700 hover:bg-indigo-600 text-white border-none rounded font-bold text-sm"
-                                        onClick={handleExportMediaOnly}
-                                        disabled={clips.length === 0}
-                                        title="Step 1: Load all media into Resolve bin (Audio & Video)"
-                                    >
-                                        🎬 (1) Export Load Media Script
-                                    </button>
-                                    <button
-                                        className="btn bg-indigo-800 hover:bg-indigo-700 text-white border-none rounded font-bold text-sm"
-                                        onClick={handleExportManifest}
-                                        disabled={clips.length === 0}
-                                        title="Step 2: Place media items from bin onto timeline at designed positions"
-                                    >
-                                        🎨 (2) Place Media Script
-                                    </button>
-                                    <button
-                                        className="btn bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded font-bold text-sm"
-                                        onClick={handleExportMarkers}
-                                        disabled={mainMarkers.length === 0 && stems.length === 0}
-                                        title="Step 3: Set all detected beat markers and onsets onto the Resolve timeline"
-                                    >
-                                        🚩 (3) Set Beat Markers
-                                    </button>
+                                    <Tippy content="Step 1: Load all media into Resolve bin (Audio & Video)" placement="top" offset={[0, 48]}>
+                                        <button
+                                            className="btn bg-indigo-700 hover:bg-indigo-600 text-white border-none rounded font-bold text-sm"
+                                            onClick={handleExportMediaOnly}
+                                            disabled={clips.length === 0}
+                                        >
+                                            🎬 (1) Export Load Media Script
+                                        </button>
+                                    </Tippy>
+                                    <Tippy content="Step 2: Place media items from bin onto timeline at designed positions" placement="top" offset={[0, 48]}>
+                                        <button
+                                            className="btn bg-indigo-800 hover:bg-indigo-700 text-white border-none rounded font-bold text-sm"
+                                            onClick={handleExportManifest}
+                                            disabled={clips.length === 0}
+                                        >
+                                            🎨 (2) Place Media Script
+                                        </button>
+                                    </Tippy>
+                                    <Tippy content="Step 3: Set all detected beat markers and onsets onto the Resolve timeline" placement="top" offset={[0, 48]}>
+                                        <button
+                                            className="btn bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded font-bold text-sm"
+                                            onClick={handleExportMarkers}
+                                            disabled={mainMarkers.length === 0 && stems.length === 0}
+                                        >
+                                            🚩 (3) Set Beat Markers
+                                        </button>
+                                    </Tippy>
                                 </div>
 
-                                <button
-                                    className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm ml-auto"
-                                    onClick={handleSaveToProject}
-                                    disabled={!activeProject}
-                                >
-                                    💾 Save to Project
-                                </button>
+                                <Tippy content="Save all current project data, markers, and clip status." placement="top" offset={[0, 48]}>
+                                    <button
+                                        className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm ml-auto"
+                                        onClick={handleSaveToProject}
+                                        disabled={!activeProject}
+                                    >
+                                        💾 Save to Project
+                                    </button>
+                                </Tippy>
                             </div>
 
                             {/* Project Timeline Table */}

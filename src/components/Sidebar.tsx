@@ -1,4 +1,7 @@
 import React, { useRef, useEffect } from 'react';
+import Tippy from '@tippyjs/react';
+import 'tippy.js/dist/tippy.css';
+import 'tippy.js/animations/shift-away.css';
 
 interface SidebarProps {
     activeModule: string;
@@ -20,16 +23,17 @@ interface SidebarProps {
 interface ModuleItem {
     id: string;
     label: string;
+    description: string;
     icon: string;
     enabled: boolean;
 }
 
 const modules: ModuleItem[] = [
-    { id: 'script-manager', label: 'Script Manager', icon: '📜', enabled: true },
-    { id: 'music-video-assembler', label: 'Video Assembler', icon: '🎸', enabled: true },
-    { id: 'storyboard', label: 'Story Board', icon: '🎨', enabled: true },
-    { id: 'workflow-analyzer', label: 'Workflow Analyzer', icon: '🔀', enabled: true },
-    { id: 'settings', label: 'Settings', icon: '⚙️', enabled: true },
+    { id: 'script-manager', label: 'Script Manager', description: 'Manage and sync DaVinci Resolve scripts.', icon: '📜', enabled: true },
+    { id: 'music-video-assembler', label: 'Video Assembler', description: 'Assemble music videos with beat-sync and LTX support.', icon: '🎸', enabled: true },
+    { id: 'storyboard', label: 'Story Board', description: 'Visual shot planning and narrative timeline.', icon: '🎨', enabled: true },
+    { id: 'workflow-analyzer', label: 'Workflow Analyzer', description: 'Inspect and validate ComfyUI workflow JSON files.', icon: '🔀', enabled: true },
+    { id: 'settings', label: 'Settings', description: 'App preferences and platform configuration.', icon: '⚙️', enabled: true },
 ];
 
 const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusLogs, activeProjectName, panelVisibility, onToggleVisibility }) => {
@@ -53,16 +57,23 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
 
             <nav className="sidebar-nav">
                 {modules.map((module) => (
-                    <button
-                        key={module.id}
-                        className={`sidebar-item ${activeModule === module.id ? 'active' : ''} ${!module.enabled ? 'disabled' : ''}`}
-                        onClick={() => module.enabled && onModuleChange(module.id)}
-                        disabled={!module.enabled}
+                    <Tippy 
+                        key={module.id} 
+                        content={module.description} 
+                        placement="right" 
+                        offset={[0, 48]} 
+                        animation="shift-away"
                     >
-                        <span className="sidebar-item-icon">{module.icon}</span>
-                        <span className="sidebar-item-label">{module.label}</span>
-                        {!module.enabled && <span className="sidebar-item-badge">Soon</span>}
-                    </button>
+                        <button
+                            className={`sidebar-item ${activeModule === module.id ? 'active' : ''} ${!module.enabled ? 'disabled' : ''}`}
+                            onClick={() => module.enabled && onModuleChange(module.id)}
+                            disabled={!module.enabled}
+                        >
+                            <span className="sidebar-item-icon">{module.icon}</span>
+                            <span className="sidebar-item-label">{module.label}</span>
+                            {!module.enabled && <span className="sidebar-item-badge">Soon</span>}
+                        </button>
+                    </Tippy>
                 ))}
 
                 {activeProjectName && (
@@ -82,55 +93,69 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
                             <span>👁</span> Panel Visibility
                         </div>
                         <div className="flex flex-col gap-2">
-                            <button 
-                                onClick={() => onToggleVisibility('showAudioSource')}
-                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showAudioSource ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
-                            >
-                                <span>🔈 Audio Source</span>
-                                <span>{panelVisibility.showAudioSource ? 'ON' : 'OFF'}</span>
-                            </button>
-                            <button 
-                                onClick={() => onToggleVisibility('showVideoSource')}
-                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showVideoSource ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
-                            >
-                                <span>📁 Video Source</span>
-                                <span>{panelVisibility.showVideoSource ? 'ON' : 'OFF'}</span>
-                            </button>
-                            <button 
-                                onClick={() => onToggleVisibility('showProjectSelection')}
-                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showProjectSelection ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
-                            >
-                                <span>🗂 Project Selection</span>
-                                <span>{panelVisibility.showProjectSelection ? 'ON' : 'OFF'}</span>
-                            </button>
-                            <button 
-                                onClick={() => onToggleVisibility('showAudioAnalysis')}
-                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showAudioAnalysis ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
-                            >
-                                <span>🎛 Audio Analysis</span>
-                                <span>{panelVisibility.showAudioAnalysis ? 'ON' : 'OFF'}</span>
-                            </button>
-                            <button 
-                                onClick={() => onToggleVisibility('showVideo')}
-                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showVideo ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
-                            >
-                                <span>🎥 Video Timeline</span>
-                                <span>{panelVisibility.showVideo ? 'ON' : 'OFF'}</span>
-                            </button>
-                            <button 
-                                onClick={() => onToggleVisibility('showMainTrack')}
-                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showMainTrack ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
-                            >
-                                <span>🌊 Main Track</span>
-                                <span>{panelVisibility.showMainTrack ? 'ON' : 'OFF'}</span>
-                            </button>
-                            <button 
-                                onClick={() => onToggleVisibility('showStems')}
-                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showStems ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
-                            >
-                                <span>🥁 Stems Area</span>
-                                <span>{panelVisibility.showStems ? 'ON' : 'OFF'}</span>
-                            </button>
+                            <Tippy content="Show/Hide secondary audio tracks and separators." placement="right" offset={[0, 48]}>
+                                <button 
+                                    onClick={() => onToggleVisibility('showAudioSource')}
+                                    className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showAudioSource ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                >
+                                    <span>🔈 Audio Source</span>
+                                    <span>{panelVisibility.showAudioSource ? 'ON' : 'OFF'}</span>
+                                </button>
+                            </Tippy>
+                            <Tippy content="Show/Hide the directory for local video files." placement="right" offset={[0, 48]}>
+                                <button 
+                                    onClick={() => onToggleVisibility('showVideoSource')}
+                                    className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showVideoSource ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                >
+                                    <span>📁 Video Source</span>
+                                    <span>{panelVisibility.showVideoSource ? 'ON' : 'OFF'}</span>
+                                </button>
+                            </Tippy>
+                            <Tippy content="Toggle between available project files." placement="right" offset={[0, 48]}>
+                                <button 
+                                    onClick={() => onToggleVisibility('showProjectSelection')}
+                                    className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showProjectSelection ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                >
+                                    <span>🗂 Project Selection</span>
+                                    <span>{panelVisibility.showProjectSelection ? 'ON' : 'OFF'}</span>
+                                </button>
+                            </Tippy>
+                            <Tippy content="Show/Hide beat detection and stem separation tools." placement="right" offset={[0, 48]}>
+                                <button 
+                                    onClick={() => onToggleVisibility('showAudioAnalysis')}
+                                    className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showAudioAnalysis ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                >
+                                    <span>🎛 Audio Analysis</span>
+                                    <span>{panelVisibility.showAudioAnalysis ? 'ON' : 'OFF'}</span>
+                                </button>
+                            </Tippy>
+                            <Tippy content="Toggle the main track video editor view." placement="right" offset={[0, 48]}>
+                                <button 
+                                    onClick={() => onToggleVisibility('showVideo')}
+                                    className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showVideo ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                >
+                                    <span>🎥 Video Timeline</span>
+                                    <span>{panelVisibility.showVideo ? 'ON' : 'OFF'}</span>
+                                </button>
+                            </Tippy>
+                            <Tippy content="Show/Hide the master track waveform." placement="right" offset={[0, 48]}>
+                                <button 
+                                    onClick={() => onToggleVisibility('showMainTrack')}
+                                    className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showMainTrack ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                >
+                                    <span>🌊 Main Track</span>
+                                    <span>{panelVisibility.showMainTrack ? 'ON' : 'OFF'}</span>
+                                </button>
+                            </Tippy>
+                            <Tippy content="Show/Hide all generated stem tracks." placement="right" offset={[0, 48]}>
+                                <button 
+                                    onClick={() => onToggleVisibility('showStems')}
+                                    className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showStems ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                >
+                                    <span>🥁 Stems Area</span>
+                                    <span>{panelVisibility.showStems ? 'ON' : 'OFF'}</span>
+                                </button>
+                            </Tippy>
                         </div>
                     </div>
                 )}
