@@ -12,6 +12,7 @@ interface SidebarProps {
         showVideoSource: boolean;
         showAudioSource: boolean;
         showProjectSelection: boolean;
+        showAudioAnalysis: boolean;
     };
     onToggleVisibility?: (key: string) => void;
 }
@@ -63,11 +64,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
                         {!module.enabled && <span className="sidebar-item-badge">Soon</span>}
                     </button>
                 ))}
-            </nav>
 
-            <div className="sidebar-footer" style={{ borderTop: '1px solid #334155', paddingTop: '10px', marginTop: 'auto' }}>
                 {activeProjectName && (
-                    <div className="mb-4 bg-indigo-900/20 border border-indigo-800/40 p-2 rounded-md text-xs text-indigo-200">
+                    <div className="mt-6 mb-4 bg-indigo-900/20 border border-indigo-800/40 p-2 rounded-md text-xs text-indigo-200">
                         <div className="opacity-70 text-[10px] uppercase tracking-widest mb-1 flex items-center gap-1 font-semibold">
                             <span>📂</span> Active Project
                         </div>
@@ -105,6 +104,13 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
                                 <span>{panelVisibility.showProjectSelection ? 'ON' : 'OFF'}</span>
                             </button>
                             <button 
+                                onClick={() => onToggleVisibility('showAudioAnalysis')}
+                                className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showAudioAnalysis ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                            >
+                                <span>🎛 Audio Analysis</span>
+                                <span>{panelVisibility.showAudioAnalysis ? 'ON' : 'OFF'}</span>
+                            </button>
+                            <button 
                                 onClick={() => onToggleVisibility('showVideo')}
                                 className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all ${panelVisibility.showVideo ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
                             >
@@ -128,6 +134,10 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
                         </div>
                     </div>
                 )}
+            </nav>
+
+            <div className="sidebar-footer" style={{ borderTop: '1px solid #334155', paddingTop: '10px', marginTop: 'auto' }}>
+                <div className="mb-4 bg-indigo-900/20 border border-indigo-800/40 p-2 rounded-md text-xs text-indigo-200"></div>
 
                 <div className="sidebar-status mb-2">
                     <span className="status-dot"></span>

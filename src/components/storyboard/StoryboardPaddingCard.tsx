@@ -12,7 +12,8 @@ const StoryboardPaddingCard: React.FC<StoryboardPaddingCardProps> = ({ startTime
 
     return (
         <div 
-            className="group aspect-[4/5] border-2 border-dashed border-gray-800/50 rounded-xl bg-gray-900/10 flex flex-col p-4 transition-all hover:border-indigo-500/30 hover:bg-indigo-900/5"
+            className="group aspect-[4/5] border-2 border-dashed border-gray-800/50 rounded-xl bg-gray-900/10 flex flex-col p-6 transition-all hover:border-indigo-500/30 hover:bg-indigo-900/5"
+            style={{ padding: '5px' }}
             title="Empty timeline space"
         >
             <div className="flex justify-between items-center opacity-40">

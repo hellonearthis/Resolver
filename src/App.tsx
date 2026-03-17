@@ -45,7 +45,8 @@ function App() {
       showVideo: true,
       showVideoSource: true,
       showAudioSource: true,
-      showProjectSelection: true
+      showProjectSelection: true,
+      showAudioAnalysis: true
   });
 
   const toggleVisibility = (key: string) => {

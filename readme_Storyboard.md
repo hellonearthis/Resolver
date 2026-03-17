@@ -27,19 +27,11 @@ The **Action Prompt** field is the "brain" of each card.
 
 The Storyboard is deeply integrated with the project's rhythmic engine and AI constraints.
 - **Start → End Tracking**: Cards explicitly display their project-wide timestamps.
-- **LTX-2 Timing Constraints**: All shot durations (manual or auto-calculated) automatically snap to the nearest valid LTX-2 frame boundary `(n * 8 + 1)`.
+- **LTX-2 Timing Constraints**: All shot durations (manual or auto-calculated) automatically snap to the nearest valid LTX-2 frame boundary `(n * 8 + 1)`. Because duration is calculated as `frames / FPS`, the exact second values will vary depending on your project's frame rate (e.g., 20fps vs 24fps).
 - **Sequential "Ripple" Sync**: Any change to a shot's duration automatically shifts all subsequent shots, maintaining a gapless sequence.
 - **Script Timer**: Automatically calculates shot duration based on the word count of the **Dialogue** field and your playback pace (WPM), perfectly aligned for AI generation.
 
 ---
-
-## 📂 Production Metadata Drawer
-
-Click **"Production Props"** to reveal technical details for each shot:
-- **Shot Size**: WS, MS, CU, etc.
-- **Camera Angle**: High Angle, Low Angle, Eye-level, Dutch Tilt.
-- **Camera Movement**: Pan, Tilt, Dolly, Handheld, Static.
-- **Pace (WPM)**: Fine-tune the narrative tempo for script-to-timing calculations.
 
 ---
 

@@ -37,6 +37,7 @@ interface MusicVideoAssemblerModuleProps {
         showVideoSource: boolean;
         showAudioSource: boolean;
         showProjectSelection: boolean;
+        showAudioAnalysis: boolean;
     };
     onToggleVisibility?: (key: string) => void;
 }
@@ -1315,42 +1316,35 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         regions.on('region-updated', (region) => {
             const currentMarkers = mainBeatSource === 'main' ? mainMarkers : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].markers : []);
 
-            if (currentMarkers.length === 0) return;
-
-            const snapToBeat = (time: number) => {
-                // Include 0 and track end as valid snap points
-                const snapPoints = [
-                    { time: 0 },
-                    ...currentMarkers,
-                    { time: ws.getDuration() }
-                ];
-                const closest = snapPoints.reduce((prev, curr) =>
-                    Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
-                );
-                return closest.time;
-            };
-
-            const snappedStart = snapToBeat(region.start);
-            const snappedEnd = snapToBeat(region.end);
-
-            // Calculate current zoom level snap distance in seconds (e.g., 10 pixels)
-            const SNAP_THRESHOLD_PX = 10;
-            const snapThresholdSecs = SNAP_THRESHOLD_PX / zoomLevel;
-
             let newStart = region.start;
-            let newEnd = region.end;
-
-            if (Math.abs(region.start - snappedStart) <= snapThresholdSecs) {
-                newStart = snappedStart;
+            
+            // Stage 1: Snap START to the nearest beat marker (if within threshold)
+            if (currentMarkers.length > 0) {
+                const snapToBeat = (time: number) => {
+                    const snapPoints = [{ time: 0 }, ...currentMarkers, { time: ws.getDuration() }];
+                    const closest = snapPoints.reduce((prev, curr) =>
+                        Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
+                    );
+                    return closest.time;
+                };
+                const snappedStart = snapToBeat(region.start);
+                const SNAP_THRESHOLD_PX = 10;
+                const snapThresholdSecs = SNAP_THRESHOLD_PX / zoomLevel;
+                if (Math.abs(region.start - snappedStart) <= snapThresholdSecs) {
+                    newStart = snappedStart;
+                }
             }
-            if (Math.abs(region.end - snappedEnd) <= snapThresholdSecs) {
-                newEnd = snappedEnd;
-            }
 
-            if (newStart !== region.start || newEnd !== region.end) {
+            // Stage 2: Calculate LTX-aligned duration and set END relative to newStart
+            const fps = activeProject?.frameRate || 24;
+            const rawDuration = Math.max(0.1, region.end - newStart);
+            const alignedDuration = getLtxAlignedDuration(rawDuration, fps);
+            const newEnd = newStart + alignedDuration;
+
+            if (newStart !== region.start || Math.abs(newEnd - region.end) > 0.001) {
                 region.setOptions({
                     start: newStart,
-                    end: Math.max(newEnd, newStart + 0.1)
+                    end: newEnd
                 });
             }
 
@@ -1465,70 +1459,46 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     const handleStemRegionUpdate = (region: any) => {
                         // Skip saved regions
                         if (region.id && region.id.startsWith('saved-')) return;
-                        setActiveSelection({
-                            source: 'stem',
-                            stemIndex: index,
-                            start: region.start,
-                            end: region.end
-                        });
-
-                        // Clear interactive regions on main track
-                        if (wsRegions.current) {
-                            const allRegions = wsRegions.current.getRegions();
-                            allRegions.forEach((r: any) => {
-                                if (!r.id || !r.id.startsWith('saved-')) r.remove();
-                            });
-                        }
-
-                        // Clear interactive regions on other stems
-                        stemRegionsRefs.current.forEach((val, key) => {
-                            if (key !== index) {
-                                const allRegions = val.getRegions();
-                                allRegions.forEach((r: any) => {
-                                    if (!r.id || !r.id.startsWith('saved-')) r.remove();
-                                });
-                            }
-                        });
-
-                        // Snap to Stem's OWN beats
+                        
+                        let newStart = region.start;
                         const stemMarkers = stem.markers || [];
+
+                        // Stage 1: Snap START to Stem's OWN beats
                         if (stemMarkers.length > 0) {
                             const snapToBeat = (time: number) => {
-                                // Include 0 and track end as valid snap points
-                                const snapPoints = [
-                                    { time: 0 },
-                                    ...stemMarkers,
-                                    { time: wavesurfer.current?.getDuration() || 0 }
-                                ];
+                                const snapPoints = [{ time: 0 }, ...stemMarkers, { time: wavesurfer.current?.getDuration() || 0 }];
                                 const closest = snapPoints.reduce((prev, curr) =>
                                     Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
                                 );
                                 return closest.time;
                             };
                             const snappedStart = snapToBeat(region.start);
-                            const snappedEnd = snapToBeat(region.end);
-
-                            // Calculate current zoom level snap distance in seconds (e.g., 10 pixels)
                             const SNAP_THRESHOLD_PX = 10;
                             const snapThresholdSecs = SNAP_THRESHOLD_PX / zoomLevel;
-
-                            let newStart = region.start;
-                            let newEnd = region.end;
-
                             if (Math.abs(region.start - snappedStart) <= snapThresholdSecs) {
                                 newStart = snappedStart;
                             }
-                            if (Math.abs(region.end - snappedEnd) <= snapThresholdSecs) {
-                                newEnd = snappedEnd;
-                            }
-
-                            if (newStart !== region.start || newEnd !== region.end) {
-                                region.setOptions({
-                                    start: newStart,
-                                    end: Math.max(newEnd, newStart + 0.1)
-                                });
-                            }
                         }
+
+                        // Stage 2: Calculate LTX-aligned duration and set END relative to newStart
+                        const fps = activeProject?.frameRate || 24;
+                        const rawDuration = Math.max(0.1, region.end - newStart);
+                        const alignedDuration = getLtxAlignedDuration(rawDuration, fps);
+                        const newEnd = newStart + alignedDuration;
+
+                        if (newStart !== region.start || Math.abs(newEnd - region.end) > 0.001) {
+                            region.setOptions({
+                                start: newStart,
+                                end: newEnd
+                            });
+                        }
+
+                        setActiveSelection({
+                            source: 'stem',
+                            stemIndex: index,
+                            start: region.start,
+                            end: region.end
+                        });
                     };
 
                     stemRegions.on('region-created', handleStemRegionUpdate);
@@ -2369,7 +2339,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             <div className="mt-4">
                 <CollapsibleCard
                     title="Audio Analysis & Stem Generation"
-                    defaultOpen={true}
+                    isOpen={panelVisibility?.showAudioAnalysis}
+                    onToggle={() => onToggleVisibility?.('showAudioAnalysis')}
                     headerRight={
                         <div className="flex gap-2">
                             <span className={`status-badge ${comfyConnected ? 'success' : 'error'}`}>

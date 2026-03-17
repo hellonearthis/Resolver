@@ -134,36 +134,28 @@ workflow["92:97"].inputs.fps = 30;
 
 ---
 
-### 🔢 Number of Frames
+### 🔢 Frame Count & Duration Seconds
 
-Controls how many frames (and therefore the duration) of the generated video.
-
-| Property | Node ID | Key | Default |
-|---|---|---|---|
-| Frame count | `92:62` | `inputs.value` | `81` |
-
-```json
-"92:62": {
-  "inputs": {
-    "value": 81
-  },
-  "class_type": "PrimitiveInt"
-}
-```
+Duration in this application is strictly tied to the **FPS (frames per second)** and the required LTX-Video frame boundaries.
 
 **Duration formula:** `frames / fps = seconds`
 
-| Frames | FPS | Duration |
-|---|---|---|
-| 81 | 25 | ~3.24s |
-| 121 | 25 | ~4.84s |
-| 81 | 30 | ~2.70s |
-| 161 | 25 | ~6.44s |
+| Frames | 20 FPS (Default) | 24 FPS | 25 FPS | 30 FPS |
+|---|---|---|---|---|
+| **9** | 0.45s | 0.38s | 0.36s | 0.30s |
+| **17** | 0.85s | 0.71s | 0.68s | 0.57s |
+| **25** | 1.25s | 1.04s | 1.00s | 0.83s |
+| **33** | 1.65s | 1.38s | 1.32s | 1.10s |
+| **81** | **4.05s** | 3.38s | 3.24s | 2.70s |
+| **121** | **6.05s** | 5.04s | 4.84s | 4.03s |
+
+> [!IMPORTANT]  
+> **Why do durations have strange decimal values?**  
+> LTX-Video 2.0 requires frame counts following the formula `(n × 8) + 1` (9, 17, 25, 33... 81, 121...).  
+> To ensure "mathematically perfect" playback without skipped frames or jitter, the application automatically snaps every selection's **duration** to the nearest valid frame boundary based on your project's FPS.
 
 > [!NOTE]  
-> LTX-Video 2.0 works with frame counts following the formula `(n × 8) + 1`.  
-> Valid values include: 9, 17, 25, 33, 41, 49, 57, 65, 73, **81**, 89, 97, 105, 113, 121, etc.  
->Higher frame counts require more VRAM.
+> Higher frame counts require significantly more VRAM. 81 or 121 frames are the standard benchmarks for high-quality cinematic clips.
 
 ---
 

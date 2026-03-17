@@ -10,17 +10,18 @@ interface CardProps {
 }
 
 const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete, onGenerateImage }) => {
-    const [isDrawerOpen, setIsDrawerOpen] = React.useState(false);
 
     // Legacy Fallback Helper
     const actionPromptValue = card.notes?.action || (card as any).actionNotes || (card as any).promptText || '';
     const dialogueValue = card.notes?.dialogue || (card as any).dialogue || '';
     const soundValue = card.notes?.sound || (card as any).soundCues || '';
-
     return (
-        <div className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl overflow-hidden shadow-2xl transition-all hover:border-indigo-500/50 group flex flex-col h-full">
+        <div 
+            className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl overflow-hidden shadow-2xl transition-all hover:border-indigo-500/50 group flex flex-col h-full"
+            style={{ padding: '5px' }}
+        >
             {/* Header: Scene/Shot Info */}
-            <div className="px-3 py-2 bg-black/40 border-b border-gray-700/30 flex justify-between items-center shrink-0">
+            <div className="px-4 py-3 bg-black/40 border-b border-gray-700/30 flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2">
                     <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest leading-none">Shot</span>
                     <input 
@@ -39,7 +40,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
             </div>
 
             {/* Visual Previews & Video Selector */}
-            <div className="space-y-1 p-2 bg-black/20">
+            <div className="space-y-2 p-4 bg-black/20">
                 <div className="flex gap-2 aspect-[32/9]">
                     {/* Start Image */}
                     <div className="flex-1 relative aspect-video bg-black/40 rounded-lg overflow-hidden border border-gray-800 flex items-center justify-center group/img">
@@ -117,7 +118,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
             </div>
 
             {/* Content Areas */}
-            <div className="p-3 space-y-3 flex-1 overflow-y-auto">
+            <div className="p-5 space-y-5 flex-1 overflow-y-auto">
                 <div className="space-y-1">
                     <div className="flex justify-between items-center pr-1">
                         <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Action Prompt</label>
@@ -183,70 +184,6 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
                 </div>
             </div>
 
-            {/* Metadata Drawer Toggle */}
-            <button 
-                onClick={() => setIsDrawerOpen(!isDrawerOpen)}
-                className="w-full py-1.5 bg-gray-800/50 hover:bg-gray-800 text-[9px] font-bold text-gray-500 uppercase tracking-widest transition-colors flex items-center justify-center gap-1"
-            >
-                {isDrawerOpen ? '🔼 Close Props' : '🔽 Production Props'}
-            </button>
-
-            {/* Metadata Drawer content */}
-            {isDrawerOpen && (
-                <div className="p-4 bg-black/40 border-t border-gray-700/50 grid grid-cols-2 gap-3 animate-slide-down">
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[8px] text-gray-500 font-bold uppercase">Shot Size</label>
-                        <select 
-                            className="bg-gray-900 border border-gray-700 rounded text-[10px] p-1 text-white"
-                            value={card.shotSize}
-                            onChange={(e) => onUpdate(card.id, { shotSize: e.target.value })}
-                        >
-                            <option value="WS">WS (Wide)</option>
-                            <option value="MS">MS (Medium)</option>
-                            <option value="CU">CU (Close-up)</option>
-                            <option value="EWS">EWS (Ext Wide)</option>
-                            <option value="ECU">ECU (Ext Close)</option>
-                        </select>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[8px] text-gray-500 font-bold uppercase">Camera Angle</label>
-                        <select 
-                            className="bg-gray-900 border border-gray-700 rounded text-[10px] p-1 text-white"
-                            value={card.shotTypeAngle}
-                            onChange={(e) => onUpdate(card.id, { shotTypeAngle: e.target.value })}
-                        >
-                            <option value="Eye-level">Eye-level</option>
-                            <option value="High Angle">High Angle</option>
-                            <option value="Low Angle">Low Angle</option>
-                            <option value="Dutch Tilt">Dutch Tilt</option>
-                            <option value="OTS">OTS</option>
-                        </select>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[8px] text-gray-500 font-bold uppercase">Movement</label>
-                        <select 
-                            className="bg-gray-900 border border-gray-700 rounded text-[10px] p-1 text-white"
-                            value={card.cameraMovement}
-                            onChange={(e) => onUpdate(card.id, { cameraMovement: e.target.value })}
-                        >
-                            <option value="Static">Static</option>
-                            <option value="Pan">Pan</option>
-                            <option value="Tilt">Tilt</option>
-                            <option value="Dolly">Dolly</option>
-                            <option value="Handheld">Handheld</option>
-                        </select>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                        <label className="text-[8px] text-gray-500 font-bold uppercase">Pace (WPM)</label>
-                        <input 
-                            type="number"
-                            className="bg-gray-900 border border-gray-700 rounded text-[10px] p-1 text-white"
-                            value={card.paceWpm}
-                            onChange={(e) => onUpdate(card.id, { paceWpm: Number(e.target.value) })}
-                        />
-                    </div>
-                </div>
-            )}
         </div>
     );
 };
