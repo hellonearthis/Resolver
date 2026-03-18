@@ -73,6 +73,12 @@ electron_1.app.whenReady().then(() => {
         }
     });
     createWindow();
+    // Fix ComfyUI WebSocket 403 Forbidden error by spoofing the Origin header
+    // This is required because ComfyUI checks the Origin for security and rejects browser origins
+    electron_1.session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['http://127.0.0.1:8188/*', 'ws://127.0.0.1:8188/*'] }, (details, callback) => {
+        details.requestHeaders['Origin'] = 'http://127.0.0.1:8188';
+        callback({ requestHeaders: details.requestHeaders });
+    });
 });
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and import them here.

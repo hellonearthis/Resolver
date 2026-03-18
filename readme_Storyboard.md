@@ -10,6 +10,8 @@ The **Storyboard Module** provides a narrative-driven, card-based interface for 
 Each card in the storyboard represents a single shot or segment on your project timeline.
 - **Visual Evidence**: Shows side-by-side **Start** (head) and **End** (tail) frames of the shot.
 - **Motion Preview**: Hover over the card to play a muted preview of the currently selected video version.
+- **Duration Shortcuts**: While hovering over a card, use the **Up/Down arrow keys** to instantly adjust the shot's duration in LTX-aligned units (8 frames at a time). The active card will glow indigo to indicate it is ready for keyboard input.
+- **Right-Click Edit**: Right-click any card to open the universal **Duration Edit Popup** for precise, frame-perfect timing adjustments.
 - **Empty Slots (Padding)**: Unused timeline space is visually represented by "Empty Slot" placeholder cards. These fill the entire gap between shots or at the end of the project, allowing you to "Fill Gap" with a single click.
 
 ---
@@ -29,6 +31,7 @@ The Storyboard is deeply integrated with the project's rhythmic engine and AI co
 - **Start → End Tracking**: Cards explicitly display their project-wide timestamps.
 - **LTX-2 Timing Constraints**: All shot durations (manual or auto-calculated) automatically snap to the nearest valid LTX-2 frame boundary `(n * 8 + 1)`. Because duration is calculated as `frames / FPS`, the exact second values will vary depending on your project's frame rate (e.g., 20fps vs 24fps).
 - **Sequential "Ripple" Sync**: Any change to a shot's duration automatically shifts all subsequent shots, maintaining a gapless sequence.
+- **Live Auto-Save**: All edits (labeling, prompts, timing, image selection) are saved to your project storage **immediately** as they happen.
 - **Script Timer**: Automatically calculates shot duration based on the word count of the **Dialogue** field and your playback pace (WPM), perfectly aligned for AI generation.
 
 ---

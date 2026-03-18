@@ -159,7 +159,7 @@ export const convertAudioForComfyUI = async (filePath: string): Promise<string |
 /**
  * Progress callback signature for WebSocket-based generation tracking.
  */
-export type ProgressCallback = (status: string) => void;
+export type ProgressCallback = (status: string, progress?: number) => void;
 
 /**
  * Connects to ComfyUI's WebSocket API and waits for a specific prompt to complete.
@@ -302,7 +302,7 @@ export const waitForPromptWebSocket = (
                         const { value, max, node } = data;
                         const pct = Math.round((value / max) * 100);
                         const title = node ? getNodeTitle(node) : 'Processing';
-                        if (onProgress) onProgress(`${title}: Step ${value}/${max} (${pct}%)`);
+                        if (onProgress) onProgress(`${title}: Step ${value}/${max} (${pct}%)`, pct);
                     } else if (type === 'execution_error') {
                         cleanup();
                         resolved = true;

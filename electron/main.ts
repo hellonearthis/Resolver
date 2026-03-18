@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, shell, session } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
@@ -92,6 +92,16 @@ app.whenReady().then(() => {
     });
 
     createWindow();
+
+    // Fix ComfyUI WebSocket 403 Forbidden error by spoofing the Origin header
+    // This is required because ComfyUI checks the Origin for security and rejects browser origins
+    session.defaultSession.webRequest.onBeforeSendHeaders(
+        { urls: ['http://127.0.0.1:8188/*', 'ws://127.0.0.1:8188/*'] },
+        (details, callback) => {
+            details.requestHeaders['Origin'] = 'http://127.0.0.1:8188';
+            callback({ requestHeaders: details.requestHeaders });
+        }
+    );
 });
 
 // In this file you can include the rest of your app's specific main process

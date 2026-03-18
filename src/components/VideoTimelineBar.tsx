@@ -1,6 +1,9 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { SelectionState, VideoInfo, VideoThumbnail, VideoClip } from '../types/assembler';
 import { formatTime } from '../utils/timelineUtils';
+import Tippy from '@tippyjs/react';
+import 'tippy.js/dist/tippy.css';
+import 'tippy.js/animations/shift-away.css';
 import './VideoTimelineBar.css';
 
 interface VideoTimelineBarProps {
@@ -10,6 +13,7 @@ interface VideoTimelineBarProps {
     clips: VideoClip[];
     onSelectionChange: (sel: SelectionState | null) => void;
     onSaveFrame: (time: number) => void;
+    onClipContextMenu?: (clipId: string, duration: number, startTime: number, x: number, y: number) => void;
 }
 
 const VideoTimelineBar: React.FC<VideoTimelineBarProps> = ({
@@ -19,6 +23,7 @@ const VideoTimelineBar: React.FC<VideoTimelineBarProps> = ({
     clips,
     onSelectionChange,
     onSaveFrame,
+    onClipContextMenu
 }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const filmstripRef = useRef<HTMLDivElement>(null);
@@ -336,17 +341,60 @@ const VideoTimelineBar: React.FC<VideoTimelineBarProps> = ({
                         </div>
 
                         {/* Saved clip regions */}
-                        {videoClips.map(clip => (
-                            <div
-                                key={clip.id}
-                                className="vtb-clip-region"
-                                style={{
-                                    left: `${(clip.startTime / duration) * 100}%`,
-                                    width: `${((clip.endTime - clip.startTime) / duration) * 100}%`,
-                                }}
-                                title={`${clip.label || 'Clip'}: ${formatTime(clip.startTime)} → ${formatTime(clip.endTime)}`}
-                            />
-                        ))}
+                        {videoClips.map((clip, idx) => {
+                            const alternatingColors = [
+                                'rgba(99, 102, 241, 0.45)', // Vivid Indigo
+                                'rgba(168, 85, 247, 0.45)'  // Vivid Purple
+                            ];
+                            const color = alternatingColors[idx % alternatingColors.length];
+                            const borderColor = color.replace('0.45', '0.8');
+                            const frames = Math.round((clip.endTime - clip.startTime) * (videoInfo.fps || 24));
+
+                            return (
+                                <Tippy
+                                    key={clip.id}
+                                    animation="shift-away"
+                                    offset={[0, 8]}
+                                    content={
+                                        <div style={{ fontSize: '10px', fontWeight: '700', padding: '4px' }}>
+                                            <div style={{ color: '#818cf8', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '2px' }}>
+                                                {clip.label || 'Unnamed Clip'}
+                                            </div>
+                                            <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '8px', color: '#94a3b8' }}>
+                                                <span>START:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{formatTime(clip.startTime)}</span>
+                                                <span>DUR:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{(clip.endTime - clip.startTime).toFixed(2)}s</span>
+                                                <span>FRAMES:</span><span style={{ color: '#f59e0b', fontFamily: 'monospace', fontWeight: '800' }}>{frames}</span>
+                                            </div>
+                                        </div>
+                                    }
+                                >
+                                    <div
+                                        className="vtb-clip-region"
+                                        onContextMenu={(e) => {
+                                            if (onClipContextMenu) {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                onClipContextMenu(
+                                                    clip.id, 
+                                                    clip.endTime - clip.startTime, 
+                                                    clip.startTime, 
+                                                    e.clientX, 
+                                                    e.clientY
+                                                );
+                                            }
+                                        }}
+                                        style={{
+                                            left: `${(clip.startTime / duration) * 100}%`,
+                                            width: `${((clip.endTime - clip.startTime) / duration) * 100}%`,
+                                            backgroundColor: color,
+                                            borderColor: borderColor,
+                                            pointerEvents: 'auto',
+                                            cursor: 'help'
+                                        }}
+                                    />
+                                </Tippy>
+                            );
+                        })}
 
                         {/* Drag selection overlay */}
                         {dragState && (

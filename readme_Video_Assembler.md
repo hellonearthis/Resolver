@@ -78,6 +78,9 @@ Uses **[Essentia.js (WASM)](https://mtg.github.io/essentia.js/docs/api/)** to de
 
 -   **Proximity Snap to Beat**: Region selection handles auto-snap to the nearest beat marker within a 10px threshold (scales with zoom level).
 -   **Drag Selection**: Click and drag across any waveform (main or stem) to create a clip region.
+-   **Right-Click Duration Edit**: Right-click any clip (on the Waveform, in the Table, or on the Video Timeline Bar) to open a dedicated **Duration Edit Popup**. This provides frame-accurate, LTX-aligned adjustments.
+-   **Global Duration Ripple**: Any duration adjustment automatically **ripples** all subsequent clips on the timeline, maintaining a gapless and overlap-free sequence.
+-   **Live Auto-Save**: All timeline edits (labeling, prompts, timing, image selection) are saved to your project storage **immediately** as they happen.
 -   **🎨 Storyboard Integration**: Clips created in the Assembler appear as cards in the **[Storyboard Guide](readme_Storyboard.md)**, and vice versa.
 
 ### ⌨️ NLE Keyboard Shortcuts

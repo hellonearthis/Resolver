@@ -3,16 +3,51 @@ import Tippy from '@tippyjs/react';
 import 'tippy.js/dist/tippy.css';
 import 'tippy.js/animations/shift-away.css';
 import type { VideoClip } from '../../types/assembler';
-import { formatTime, pathToMediaUrl } from '../../utils/timelineUtils';
+import { formatTime, pathToMediaUrl, getLtxAlignedDuration } from '../../utils/timelineUtils';
 
 interface CardProps {
     card: VideoClip;
     onUpdate: (id: string, updates: Partial<VideoClip>) => void;
     onDelete: (id: string) => void;
-    onGenerateImage: (id: string, prompt: string) => void;
+    onGenerateVideo?: (clipId: string) => Promise<void>;
+    comfyConnected?: boolean;
+    frameRate?: number;
 }
 
-const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete, onGenerateImage }) => {
+const StoryboardCardComponent: React.FC<CardProps> = ({ 
+    card, 
+    onUpdate, 
+    onDelete, 
+    onGenerateVideo,
+    comfyConnected,
+    frameRate = 20
+}) => {
+    const [isHovered, setIsHovered] = React.useState(false);
+
+    React.useEffect(() => {
+        if (!isHovered) return;
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Don't intercept if an input is focused (handled natively)
+            if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+
+            if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                const currentDur = card.duration || 0;
+                const nextDur = getLtxAlignedDuration(currentDur + (8 / frameRate) + 0.01, frameRate);
+                onUpdate(card.id, { duration: nextDur, endTime: card.startTime + nextDur });
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                const currentDur = card.duration || 0;
+                // Subtract 0.01 to ensure we drop into the previous bracket for the round/ceil logic
+                const nextDur = getLtxAlignedDuration(Math.max(0.1, currentDur - (8 / frameRate) - 0.01), frameRate);
+                onUpdate(card.id, { duration: nextDur, endTime: card.startTime + nextDur });
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isHovered, card.duration, card.startTime, card.id, frameRate, onUpdate]);
 
     // Legacy Fallback Helper
     const actionPromptValue = card.notes?.action || (card as any).actionNotes || (card as any).promptText || '';
@@ -20,7 +55,9 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
     const soundValue = card.notes?.sound || (card as any).soundCues || '';
     return (
         <div 
-            className="bg-[#1a1a2e] border border-gray-700/50 rounded-xl overflow-hidden shadow-2xl transition-all hover:border-indigo-500/50 group flex flex-col h-full"
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+            className={`bg-[#1a1a2e] border rounded-xl overflow-hidden shadow-2xl transition-all group flex flex-col h-full ${isHovered ? 'border-indigo-400 ring-1 ring-indigo-500/20 scale-[1.01]' : 'border-gray-700/50 hover:border-gray-600'}`}
             style={{ padding: '5px' }}
         >
             {/* Header: Scene/Shot Info */}
@@ -35,12 +72,14 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
                     />
                 </div>
                 <Tippy content="Remove this shot from the timeline." placement="top" offset={[0, 48]}>
-                    <button 
-                        onClick={() => onDelete(card.id)}
-                        className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                        ✕
-                    </button>
+                    <span>
+                        <button 
+                            onClick={() => onDelete(card.id)}
+                            className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                            ✕
+                        </button>
+                    </span>
                 </Tippy>
             </div>
 
@@ -127,14 +166,27 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
                 <div className="space-y-1">
                     <div className="flex justify-between items-center pr-1">
                         <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Action Prompt</label>
-                        <Tippy content="Generate a new preview frame using the action prompt." placement="top" offset={[0, 48]}>
-                            <button 
-                                onClick={() => onGenerateImage(card.id, actionPromptValue)}
-                                className="bg-indigo-600/20 hover:bg-indigo-600 text-indigo-400 hover:text-white px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight transition-all flex items-center gap-1 border border-indigo-500/20"
-                            >
-                                <span>🪄</span> Generate
-                            </button>
-                        </Tippy>
+                        <div className="flex gap-1">
+                            <Tippy content={comfyConnected ? "Generate video for this shot." : "ComfyUI not connected."} placement="top" offset={[0, 48]}>
+                                <span>
+                                    <button 
+                                        onClick={() => onGenerateVideo?.(card.id)}
+                                        disabled={!comfyConnected || card.status === 'generating' || card.status === 'queued'}
+                                        className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight transition-all flex items-center gap-1 border ${
+                                            card.status === 'generating' 
+                                                ? 'bg-amber-600/20 text-amber-500 border-amber-500/20 animate-pulse'
+                                                : card.status === 'queued'
+                                                    ? 'bg-indigo-600/20 text-indigo-400 border-indigo-500/20 animate-pulse'
+                                                    : comfyConnected
+                                                        ? 'bg-purple-600/20 hover:bg-purple-600 text-purple-400 hover:text-white border-purple-500/20'
+                                                        : 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                                        }`}
+                                    >
+                                        <span>🎬</span> {card.status === 'generating' ? 'Generating...' : card.status === 'queued' ? 'Queued...' : 'Video'}
+                                    </button>
+                                </span>
+                            </Tippy>
+                        </div>
                     </div>
                     <textarea 
                         className="w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed"
@@ -183,13 +235,32 @@ const StoryboardCardComponent: React.FC<CardProps> = ({ card, onUpdate, onDelete
                             <span className="text-gray-400 font-mono italic">{formatTime(card.endTime)}</span>
                         </div>
                     </div>
-                    <div className="flex flex-col items-end">
-                        <span className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">Duration</span>
-                        <span className="text-indigo-400/80 font-bold">{(card.duration || 0).toFixed(1)}s</span>
-                    </div>
+                        <div className="flex flex-col items-end">
+                            <span className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">Frames</span>
+                            <span className="text-[#f59e0b] font-mono font-black italic">
+                                {Math.round((card.duration || 0) * frameRate)}
+                            </span>
+                        </div>
+                        <div className="flex flex-col items-end">
+                            <span className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">Duration</span>
+                            <div className="flex items-center gap-0.5">
+                                <input
+                                    type="number"
+                                    step={8 / frameRate}
+                                    min="0.1"
+                                    value={(card.duration || 0).toFixed(1)}
+                                    onChange={(e) => {
+                                        const rawDur = parseFloat(e.target.value) || 0.1;
+                                        const alignedDur = getLtxAlignedDuration(rawDur, frameRate);
+                                        onUpdate(card.id, { duration: alignedDur, endTime: card.startTime + alignedDur });
+                                    }}
+                                    className="bg-transparent border-b border-transparent hover:border-indigo-500/50 focus:border-indigo-500 text-indigo-400/80 font-bold w-12 text-right outline-none p-0 transition-all text-[10px]"
+                                />
+                                <span className="text-indigo-400/80 font-bold">s</span>
+                            </div>
+                        </div>
                 </div>
             </div>
-
         </div>
     );
 };

@@ -17,7 +17,7 @@
   },
   "98": {
     "inputs": {
-      "image": "Image_fx(21).jpg"
+      "image": "0000.png"
     },
     "class_type": "LoadImage",
     "_meta": {
@@ -104,7 +104,7 @@
   },
   "92:3": {
     "inputs": {
-      "text": "A woman in pink stand and looks into  camera and singing. \"Get up, stand up.\"\n",
+      "text": "Two figures stand on a sandy hill, backs to the viewer, gazing at a massive peach floating in the sky above a distant city skyline. The figure on the left wears a green sweater and dark pants, while the figure on the right wears a purple jacket with a wavy pattern and dark pants. Both have short, dark hair and are standing still, facing the surreal horizon. The sky transitions from a warm orange near the horizon to a soft teal at the top, dotted with stylized clouds. The cityscape features numerous buildings with varying heights, rendered in muted purples and grays. The peach, the dominant object in the sky, is large, round, and peach-colored with a green leafy top, appearing to hover among the clouds. The lighting suggests either dawn or dusk, with soft, diffused illumination casting gentle shadows on the ground. The camera is positioned at eye level, capturing the scene in a wide shot that frames the figures, the hill, the city, and the floating fruit in a balanced composition. The overall image has a dreamlike, illustrated quality with clean lines and soft gradients.",
       "clip": [
         "92:60",
         0
@@ -113,22 +113,6 @@
     "class_type": "CLIPTextEncode",
     "_meta": {
       "title": "CLIP Text Encode (Prompt)"
-    }
-  },
-  "92:95": {
-    "inputs": {
-      "samples": [
-        "92:94",
-        0
-      ],
-      "vae": [
-        "92:1",
-        2
-      ]
-    },
-    "class_type": "VAEDecode",
-    "_meta": {
-      "title": "VAE Decode"
     }
   },
   "92:96": {
@@ -156,26 +140,6 @@
       "title": "LTXV Audio VAE Loader"
     }
   },
-  "92:1": {
-    "inputs": {
-      "ckpt_name": "ltx-2-19b-dev-fp8.safetensors"
-    },
-    "class_type": "CheckpointLoaderSimple",
-    "_meta": {
-      "title": "Load Checkpoint"
-    }
-  },
-  "92:60": {
-    "inputs": {
-      "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
-      "ckpt_name": "ltx-2-19b-dev-fp8.safetensors",
-      "device": "default"
-    },
-    "class_type": "LTXAVTextEncoderLoader",
-    "_meta": {
-      "title": "LTXV Audio Text Encoder Loader"
-    }
-  },
   "92:84": {
     "inputs": {
       "samples": [
@@ -201,7 +165,7 @@
       "lora_name": "ltx-2-19b-distilled-lora-384.safetensors",
       "strength_model": 1,
       "model": [
-        "92:1",
+        "92:119",
         0
       ]
     },
@@ -219,35 +183,6 @@
       "title": "Load Latent Upscale Model"
     }
   },
-  "92:97": {
-    "inputs": {
-      "fps": 20,
-      "images": [
-        "92:95",
-        0
-      ],
-      "audio": [
-        "92:96",
-        0
-      ]
-    },
-    "class_type": "CreateVideo",
-    "_meta": {
-      "title": "Create Video"
-    }
-  },
-  "92:94": {
-    "inputs": {
-      "av_latent": [
-        "92:70",
-        1
-      ]
-    },
-    "class_type": "LTXVSeparateAVLatent",
-    "_meta": {
-      "title": "LTXVSeparateAVLatent"
-    }
-  },
   "92:8": {
     "inputs": {
       "sampler_name": "euler"
@@ -261,7 +196,7 @@
     "inputs": {
       "cfg": 4,
       "model": [
-        "92:1",
+        "92:119",
         0
       ],
       "positive": [
@@ -423,7 +358,7 @@
   "92:113": {
     "inputs": {
       "audio": "Bob Marly-Get Up, Stand Up_Vocals.mp3",
-      "audioUI": "/api/view?filename=Bob%20Marly-Get%20Up%2C%20Stand%20Up_Vocals.mp3&type=input&subfolder=&rand=0.22388347945567422"
+      "audioUI": "/api/view?filename=Bob%20Marly-Get%20Up%2C%20Stand%20Up_Vocals.mp3&type=input&subfolder=&rand=0.1442228075462797"
     },
     "class_type": "LoadAudio",
     "_meta": {
@@ -600,7 +535,7 @@
   },
   "92:11": {
     "inputs": {
-      "noise_seed": 508506122276688
+      "noise_seed": 191193853735632
     },
     "class_type": "RandomNoise",
     "_meta": {
@@ -623,7 +558,7 @@
   },
   "92:118": {
     "inputs": {
-      "audioUI": "/api/view?filename=ComfyUI_temp_gykdc_00001_.flac&type=temp&subfolder=&rand=0.16385108546403204",
+      "audioUI": "/api/view?filename=ComfyUI_temp_vxrcs_00001_.flac&type=temp&subfolder=&rand=0.09084041608583171",
       "audio": [
         "92:115",
         0
@@ -648,6 +583,89 @@
     "class_type": "LTXVAudioVAEEncode",
     "_meta": {
       "title": "LTXV Audio VAE Encode"
+    }
+  },
+  "92:60": {
+    "inputs": {
+      "text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors",
+      "ckpt_name": "ltx-2-19b-dev-fp8.safetensors",
+      "device": "default"
+    },
+    "class_type": "LTXAVTextEncoderLoader",
+    "_meta": {
+      "title": "LTXV Audio Text Encoder Loader"
+    }
+  },
+  "92:119": {
+    "inputs": {
+      "chunks": 2,
+      "dim_threshold": 4096,
+      "model": [
+        "92:1",
+        0
+      ]
+    },
+    "class_type": "LTXVChunkFeedForward",
+    "_meta": {
+      "title": "LTXV Chunk FeedForward (for low VRAM)"
+    }
+  },
+  "92:1": {
+    "inputs": {
+      "ckpt_name": "ltx-2-19b-dev-fp8.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
+    }
+  },
+  "92:94": {
+    "inputs": {
+      "av_latent": [
+        "92:70",
+        1
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "92:121": {
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 4096,
+      "temporal_overlap": 8,
+      "samples": [
+        "92:94",
+        0
+      ],
+      "vae": [
+        "92:1",
+        2
+      ]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "VAE Decode (Tiled)"
+    }
+  },
+  "92:97": {
+    "inputs": {
+      "fps": 20,
+      "images": [
+        "92:121",
+        0
+      ],
+      "audio": [
+        "92:96",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
     }
   }
 }

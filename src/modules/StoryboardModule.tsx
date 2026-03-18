@@ -10,14 +10,19 @@ import type { BeatProject } from '../hooks/useProjectStorage';
 interface StoryboardModuleProps {
     activeProject?: BeatProject;
     onUpdateProject: (id: string, updates: Partial<BeatProject>) => void;
-    onStatusChange?: (msg: string) => void;
+    onGenerateVideo?: (clipId: string) => Promise<void>;
+    comfyConnected?: boolean;
 }
 
-const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUpdateProject, onStatusChange }) => {
+const StoryboardModule: React.FC<StoryboardModuleProps> = ({ 
+    activeProject, 
+    onUpdateProject, 
+    onGenerateVideo,
+    comfyConnected
+}) => {
     const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
 
     const cards = (activeProject?.clips || []) as VideoClip[];
-    const elements = activeProject?.elementTray || [];
 
     const handleFillPadding = (startTime: number, duration: number) => {
         if (!activeProject) return;
@@ -71,13 +76,20 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
         }
         
         // Handle duration auto-calc
-        if (updates.notes?.dialogue !== undefined || updates.paceWpm !== undefined) {
+        const hasDialogueUpdate = updates.notes && 'dialogue' in updates.notes && updates.notes.dialogue !== currentClip.notes?.dialogue;
+        const hasPaceUpdate = updates.paceWpm !== undefined && updates.paceWpm !== currentClip.paceWpm;
+
+        if (hasDialogueUpdate || hasPaceUpdate) {
             const dialogue = updatedClip.notes?.dialogue || '';
             const words = dialogue.trim().split(/\s+/).filter((w: string) => w.length > 0);
             const wordCount = words.length;
-            const rawDuration = Math.max(1.5, (wordCount / (updatedClip.paceWpm || PacingBenchmarks.CONVERSATIONAL)) * 60);
-            const frameRate = activeProject.frameRate || 20;
-            updatedClip.duration = getLtxAlignedDuration(rawDuration, frameRate);
+            
+            // Only recalculate duration if there are words, or if there were words and they were just deleted
+            if (wordCount > 0 || (wordCount === 0 && currentClip.notes?.dialogue)) {
+                const rawDuration = Math.max(1.5, (wordCount / (updatedClip.paceWpm || PacingBenchmarks.CONVERSATIONAL)) * 60);
+                const frameRate = activeProject.frameRate || 20;
+                updatedClip.duration = getLtxAlignedDuration(rawDuration, frameRate);
+            }
         }
         updatedClip.endTime = updatedClip.startTime + updatedClip.duration;
         newClips[clipIndex] = updatedClip;
@@ -115,9 +127,59 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
         if (selectedCardId === id) setSelectedCardId(null);
     };
 
-    const handleGenerateImage = (id: string, prompt: string) => {
-        onStatusChange?.(`Queuing generation for card ${id}: "${prompt.substring(0, 30)}..."`);
-        // Integration with AI generation service would go here
+    // handleGenerateImage removed as requested
+
+    const handleSyncGeneratedVideos = async () => {
+        if (!activeProject?.outputDir) return;
+
+        const fs = window.require('fs');
+        const path = window.require('path');
+        const videosDir = path.join(activeProject.outputDir, 'videos');
+
+        if (!fs.existsSync(videosDir)) return;
+
+        try {
+            const files = fs.readdirSync(videosDir).filter((f: string) => f.endsWith('.mp4'));
+            let updateCount = 0;
+
+            const updatedClips = cards.map(clip => {
+                const safeLabel = clip.label.replace(/[^a-z0-9]/gi, '_');
+                const matchingFiles = files.filter((f: string) => {
+                    const regex = new RegExp(`^${safeLabel}_take(\\d+)\\.mp4$`, 'i');
+                    return regex.test(f);
+                }).map((f: string) => {
+                    const takeNum = parseInt(f.match(/_take(\d+)\.mp4$/i)?.[1] || "0", 10);
+                    return {
+                        fullPath: path.join(videosDir, f),
+                        take: takeNum
+                    };
+                }).sort((a: any, b: any) => b.take - a.take);
+
+                if (matchingFiles.length > 0) {
+                    const existingVideos = clip.generatedVideos || [];
+                    const foundPaths = matchingFiles.map((m: any) => m.fullPath);
+                    const combinedVideos = Array.from(new Set([...existingVideos, ...foundPaths]));
+                    
+                    if (combinedVideos.length !== existingVideos.length || clip.status !== 'done') {
+                        updateCount++;
+                        const latestVideo = matchingFiles[0].fullPath; 
+                        return {
+                            ...clip,
+                            status: 'done' as const,
+                            videoPath: latestVideo,
+                            generatedVideos: combinedVideos
+                        };
+                    }
+                }
+                return clip;
+            });
+
+            if (updateCount > 0) {
+                onUpdateProject(activeProject.id, { clips: updatedClips });
+            }
+        } catch (err) {
+            console.error("Sync error:", err);
+        }
     };
 
     // Calculate Interleaved Timeline Items (Clips + Gaps/Padding)
@@ -199,7 +261,18 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
                 </div>
 
                 <div className="flex items-center gap-3">
-                    {/* Simplified header - padding cards now handle shot creation */}
+                    <button 
+                        onClick={handleSyncGeneratedVideos}
+                        className="flex items-center gap-2 px-3 py-1 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-full border border-indigo-500/30 transition-all text-[10px] font-bold uppercase tracking-widest"
+                    >
+                        <span>🔄</span> Sync Videos
+                    </button>
+                    <div className="flex items-center gap-2 px-3 py-1 bg-black/40 rounded-full border border-gray-800/50">
+                        <div className={`w-2 h-2 rounded-full ${comfyConnected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'}`}></div>
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none">
+                            {comfyConnected ? 'Comfy Connected' : 'Comfy Offline'}
+                        </span>
+                    </div>
                 </div>
             </div>
 
@@ -212,9 +285,11 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
                             <StoryboardCardComponent 
                                 key={item.clip.id}
                                 card={item.clip}
+                                frameRate={activeProject?.frameRate || 20}
                                 onUpdate={handleUpdateCard}
                                 onDelete={handleDeleteCard}
-                                onGenerateImage={handleGenerateImage}
+                                onGenerateVideo={onGenerateVideo}
+                                comfyConnected={comfyConnected}
                             />
                         ) : (
                             <StoryboardPaddingCard 
@@ -238,31 +313,6 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({ activeProject, onUp
                 />
             </div>
 
-            {/* Element Tray (Side Panel placeholder) */}
-            <div className="h-24 border-t border-gray-800/50 bg-[#0d0d15] p-4 flex items-center gap-6">
-                <div className="flex flex-col min-w-[120px]">
-                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest leading-none mb-1">Element Tray</span>
-                    <span className="text-[9px] text-gray-600">Drag to prompt</span>
-                </div>
-                <div className="flex items-center gap-4 overflow-x-auto pb-1 flex-1">
-                    <button className="h-14 w-14 rounded-full border-2 border-dashed border-gray-800 flex items-center justify-center text-gray-600 hover:border-emerald-500/50 hover:text-emerald-400 transition-all">
-                        <span className="text-xl">➕</span>
-                    </button>
-                    {elements.map(asset => (
-                        <div key={asset.id} className="group relative">
-                            <div className="h-14 w-14 rounded-full bg-indigo-900/30 border border-indigo-500/30 flex items-center justify-center text-xl cursor-move hover:scale-105 transition-all">
-                                👤
-                            </div>
-                            <span className="absolute -top-1 -right-1 bg-indigo-600 text-[8px] px-1 rounded font-bold shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
-                                {asset.name}
-                            </span>
-                        </div>
-                    ))}
-                    {elements.length === 0 && (
-                        <p className="text-[11px] text-gray-700 font-medium italic">No characters or locations defined yet...</p>
-                    )}
-                </div>
-            </div>
         </div>
     );
 };

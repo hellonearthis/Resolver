@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import type { VideoClip } from '../types/assembler';
-import { formatTime, buildTimelineRows } from '../utils/timelineUtils';
+import { formatTime, buildTimelineRows, getLtxAlignedDuration } from '../utils/timelineUtils';
 import PromptEditorModal from './PromptEditorModal';
+import DurationEditPopup from './DurationEditPopup';
 
 /**
  * Props for the ProjectTimelineTable component.
@@ -65,6 +66,9 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
 
     // Inline Time Editing
     const [editingTime, setEditingTime] = useState<{ id: string, field: 'start' | 'end', value: string } | null>(null);
+
+    // Duration Popup State
+    const [durationPopup, setDurationPopup] = useState<{ clipId: string, duration: number, startTime: number, x: number, y: number } | null>(null);
 
     const startEditTime = (clipId: string, field: 'start' | 'end', currentValue: number) => {
         setEditingTime({ id: clipId, field, value: formatTime(currentValue) });
@@ -152,6 +156,18 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                     {buildTimelineRows(clips, duration).map((row, idx) => (
                         <tr
                             key={idx}
+                            onContextMenu={(e) => {
+                                if (row.type === 'clip' && row.clip) {
+                                    e.preventDefault();
+                                    setDurationPopup({
+                                        clipId: row.clip.id,
+                                        duration: row.duration,
+                                        startTime: row.startTime,
+                                        x: e.clientX,
+                                        y: e.clientY
+                                    });
+                                }
+                            }}
                             className={`border-b border-gray-800 transition-colors ${row.type === 'unselected'
                                 ? 'bg-gray-900/30 text-gray-500'
                                 : 'hover:bg-gray-800/50 text-gray-300'
@@ -355,21 +371,23 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                         className={`text-xs px-2 py-0.5 rounded font-bold uppercase transition-colors ${!row.clip.startImagePath
                                             ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
                                             : row.clip.status === 'generating'
-                                                ? 'bg-indigo-600 text-white animate-pulse cursor-wait'
-                                                : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                                                ? 'bg-amber-600 text-white animate-pulse cursor-wait'
+                                                : row.clip.status === 'queued'
+                                                    ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 animate-pulse cursor-wait'
+                                                    : 'bg-indigo-600 hover:bg-indigo-500 text-white'
                                             }`}
                                         onClick={() => {
                                             if (!row.clip!.startImagePath) {
                                                 onError('A Start Image is required to generate a video.');
                                                 return;
                                             }
-                                            if (row.clip!.status !== 'generating') {
+                                            if (row.clip!.status !== 'generating' && row.clip!.status !== 'queued') {
                                                 onGenerateClip(row.clip!.id);
                                             }
                                         }}
-                                        disabled={row.clip.status === 'generating'}
+                                        disabled={row.clip.status === 'generating' || row.clip.status === 'queued'}
                                     >
-                                        {row.clip.status === 'generating' ? 'Generating...' : '▶ Generate'}
+                                        {row.clip.status === 'generating' ? 'Generating...' : row.clip.status === 'queued' ? 'Queued...' : '▶ Generate'}
                                     </button>
                                 ) : (
                                     <span className="text-gray-700">—</span>
@@ -456,6 +474,22 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                 onCancel={() => setIsPromptModalOpen(false)}
                 title={`Edit Prompt for Clip: ${clips.find(c => c.id === activePromptClip?.id)?.label || ''}`}
             />
+
+            {durationPopup && (
+                <DurationEditPopup 
+                    clipId={durationPopup.clipId}
+                    initialDuration={durationPopup.duration}
+                    startTime={durationPopup.startTime}
+                    frameRate={20} // Default or passed from props
+                    position={{ x: durationPopup.x, y: durationPopup.y }}
+                    onClose={() => setDurationPopup(null)}
+                    onSave={(id, newDur) => {
+                        const aligned = getLtxAlignedDuration(newDur, 20);
+                        onUpdateClipEndTime(id, durationPopup.startTime + aligned);
+                        setDurationPopup(null);
+                    }}
+                />
+            )}
         </div>
     );
 };

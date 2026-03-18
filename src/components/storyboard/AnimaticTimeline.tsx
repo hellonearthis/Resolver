@@ -19,7 +19,8 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ items, onSelectCard
     const scrollToItem = (index: number) => {
         const container = scrollContainerRef.current;
         if (!container) return;
-        const itemElement = container.children[0].children[index + 1] as HTMLElement; // +1 due to time markers background div
+        // container -> .relative -> .clips-container -> .clip
+        const itemElement = container.children[0]?.children[1]?.children[index] as HTMLElement;
         if (itemElement) {
             itemElement.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
         }
@@ -42,13 +43,33 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ items, onSelectCard
             {/* Timeline Scroll Area */}
             <div 
                 ref={scrollContainerRef}
-                className={`flex-1 overflow-x-auto overflow-y-hidden flex items-end ${compact ? 'p-4' : 'p-8'} scroll-smooth`}
+                className={`flex-1 overflow-x-auto overflow-y-hidden flex flex-col ${compact ? 'p-4' : 'p-8'} scroll-smooth`}
             >
-                <div className="flex h-full min-w-full items-end gap-1 relative">
-                    {/* Time markers background */}
-                    <div className="absolute top-0 left-0 right-0 h-full pointer-events-none opacity-5">
-                         {/* TODO: Add a proper grid/ruler here */}
+                <div className="relative flex-1 min-w-full flex flex-col">
+                    {/* Time Ruler (Dedicated Row) */}
+                    <div className="vtb-ruler h-10 min-w-full relative border-b border-gray-800/40 mb-2 shrink-0">
+                         {Array.from({ length: Math.ceil(totalDuration) + 1 }).map((_, i) => {
+                             const time = i;
+                             const isMajor = time % 5 === 0;
+                             const left = time * 80;
+                             if (left > totalDuration * 80 + 100) return null;
+                             return (
+                                 <div key={i} className="absolute bottom-0 flex flex-col items-center" style={{ left: `${left}px`, transform: 'translateX(-50%)' }}>
+                                     {/* Tick mark */}
+                                     <div className={`w-px ${isMajor ? 'h-3 bg-indigo-500/50' : 'h-1.5 bg-gray-700/30'}`} />
+                                     
+                                     {/* Time label for major ticks */}
+                                     {isMajor && <span className="text-[10px] text-indigo-400 font-mono mb-1 font-bold drop-shadow-sm">{formatTime(time)}</span>}
+                                     
+                                     {/* Background vertical line (guide) */}
+                                     {isMajor && <div className="absolute top-[32px] w-px h-[500px] bg-indigo-500/5 z-0" />}
+                                 </div>
+                             );
+                         })}
                     </div>
+
+                    {/* Clips Container */}
+                    <div className="flex items-end gap-1 relative flex-1">
 
                     {items.map((item, index) => {
                         // Width relative to duration (80px per second)
@@ -122,8 +143,8 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ items, onSelectCard
                             );
                         }
                     })}
-                    
-                 </div>
+                    </div>
+                </div>
             </div>
 
             {/* Global Timeline Rail */}
@@ -173,11 +194,13 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ items, onSelectCard
                             animation="shift-away"
                             theme="translucent"
                          >
-                             <div 
-                                onClick={() => scrollToItem(idx)}
-                                className={`h-2 rounded-full border cursor-pointer transition-all hover:brightness-125 hover:scale-y-150 ${isGap ? 'bg-gray-800/20 border-gray-800/30' : 'bg-indigo-600/30 border-indigo-500/20 hover:bg-indigo-500/50'}`}
-                                style={{ width: `${percent}%` }}
-                             />
+                             <span className="contents">
+                                 <div 
+                                    onClick={() => scrollToItem(idx)}
+                                    className={`h-2 rounded-full border cursor-pointer transition-all hover:brightness-125 hover:scale-y-150 ${isGap ? 'bg-gray-800/20 border-gray-800/30' : 'bg-indigo-600/30 border-indigo-500/20 hover:bg-indigo-500/50'}`}
+                                    style={{ width: `${percent}%` }}
+                                 />
+                             </span>
                          </Tippy>
                      );
                  })}

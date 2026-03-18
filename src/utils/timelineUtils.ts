@@ -219,7 +219,7 @@ export const getValidLtxFrameCount = (durationSeconds: number, fps: number): num
  */
 export const getLtxAlignedDuration = (durationSeconds: number, fps: number): number => {
     const exactFrames = durationSeconds * fps;
-    let n = Math.ceil((exactFrames - 1) / 8);
+    let n = Math.round((exactFrames - 1) / 8);
     if (n < 1) n = 1;
     const alignedFrames = (n * 8) + 1;
     return alignedFrames / fps;

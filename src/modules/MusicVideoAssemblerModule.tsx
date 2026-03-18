@@ -1,6 +1,7 @@
 const { ipcRenderer } = window.require('electron');
 import React, { useEffect, useRef, useState } from 'react';
 import Tippy from '@tippyjs/react';
+import tippy from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 import 'tippy.js/animations/shift-away.css';
 import WaveSurfer from 'wavesurfer.js';
@@ -9,13 +10,19 @@ import { analyzeBeats, analyzeOnsets, analyzeLoudness, type BeatAlgorithm, initE
 
 import DropZone from '../components/DropZone';
 import ProjectsPanel from '../components/ProjectsPanel';
-import { checkComfyConnection, queuePrompt, uploadFileToComfyUI, convertAudioForComfyUI, waitForPromptWebSocket } from '../services/comfyService';
+import { 
+    queuePrompt, 
+    uploadFileToComfyUI, 
+    convertAudioForComfyUI, 
+    waitForPromptWebSocket 
+} from '../services/comfyService';
 import workflowJsonTemplate from '../../comfyui_workflows/video_ltx2_i2v.json';
 import { getValidLtxFrameCount, getLtxAlignedDuration } from '../utils/timelineUtils';
 import type { BeatProject, ProjectMarker } from '../hooks/useProjectStorage';
 import ProjectTimelineTable from '../components/ProjectTimelineTable';
 import CollapsibleCard from '../components/CollapsibleCard';
 import VideoTimelineBar from '../components/VideoTimelineBar';
+import DurationEditPopup from '../components/DurationEditPopup';
 
 import './MusicVideoAssemblerModule.css';
 
@@ -33,6 +40,9 @@ interface MusicVideoAssemblerModuleProps {
     onDeleteProject: (id: string) => void;
     onRefreshProjects: () => void;
     onStatusChange?: (msg: string) => void;
+    onGenerateVideo?: (clipId: string) => Promise<void>;
+    comfyConnected?: boolean;
+    comfyOutputDir?: string;
     panelVisibility?: {
         showMainTrack: boolean;
         showStems: boolean;
@@ -69,10 +79,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     onSelectProject,
     onCreateProject,
     onCreateBlankProject,
-    onDeleteProject,
     onUpdateProject,
+    onDeleteProject,
     onRefreshProjects,
     onStatusChange,
+    onGenerateVideo,
+    comfyConnected,
+    comfyOutputDir,
     panelVisibility,
     onToggleVisibility
 }) => {
@@ -84,18 +97,18 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [mainMarkers, setMainMarkers] = useState<AudioMarker[]>([]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [clips, setClips] = useState<VideoClip[]>([]);
-    const [workflow, setWorkflow] = useState<any | null>(null);
     const [stems, setStems] = useState<StemData[]>([]);
     const stemSurfers = useRef<WaveSurfer[]>([]);
     const stemRegionsRefs = useRef<Map<number, any>>(new Map());
+
+    // Duration Popup State
+    const [durationPopup, setDurationPopup] = useState<{ clipId: string, duration: number, startTime: number, x: number, y: number } | null>(null);
     const [duration, setDuration] = useState(0);
     const [activeSelection, setActiveSelection] = useState<SelectionState | null>(null);
     const lastProjectIdRef = useRef<string | null>(null);
     const stemRafRef = useRef<number | null>(null);
 
-    // Stem Separation State
-    const [comfyConnected, setComfyConnected] = useState<boolean>(false);
-    const [comfyOutputDir, setComfyOutputDir] = useState<string>('C:\\ComfyUI_windows_portable\\ComfyUI\\output');
+    // --- Post-Generation Sync Logic ---
     const [outputDir, setOutputDir] = useState<string | null>(null);
     const [defaultOutputDir, setDefaultOutputDir] = useState<string | null>(null);
     const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -125,16 +138,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [waveSurfersReady, setWaveSurfersReady] = useState(0); // Trigger for re-rendering regions
 
     useEffect(() => {
-        checkConnection();
-        loadWorkflow();
         loadConfig();
         initEssentia();
     }, []);
-
-    const checkConnection = async () => {
-        const connected = await checkComfyConnection();
-        setComfyConnected(connected);
-    };
 
     const loadConfig = async () => {
         try {
@@ -144,7 +150,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
             const res = await ipcRenderer.invoke('get-config');
             if (res.success) {
-                if (res.config.comfyOutputDir) setComfyOutputDir(res.config.comfyOutputDir);
+                // comfyOutputDir is now a prop, no need to set local state
                 if (res.config.projectOutputDir) {
                     setDefaultOutputDir(res.config.projectOutputDir);
                     setOutputDir((prev) => prev || res.config.projectOutputDir);
@@ -152,19 +158,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
         } catch (e) {
             console.error("Failed to load config", e);
-        }
-    };
-
-    const loadWorkflow = async () => {
-        try {
-            // @ts-ignore
-            const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
-            const result = await ipcRenderer.invoke('load-default-workflow');
-            if (result.success) {
-                setWorkflow(result.workflow);
-            }
-        } catch (e) {
-            console.error("Failed to load stem separation workflow", e);
         }
     };
 
@@ -188,9 +181,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         activeProject?.id,
         activeProject?.markers?.length,
         activeProject?.stems?.length,
-        activeProject?.clips?.length
+        activeProject?.clips // Dependency on clips array itself to catch status updates
     ]);
-    
+
     // REDRAW FIX: Force redraw when panels are expanded
     // Wait for the 300ms transition to complete before triggering redraw
     useEffect(() => {
@@ -219,6 +212,24 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
         const result = await analyzeBeats(audioBuffer);
         return result.beats;
+    };
+
+    const handleUpdateDuration = (newDuration: number) => {
+        if (!activeProject || isAnalyzing) return;
+
+        // Update local state and project storage
+        setDuration(newDuration);
+        onUpdateProject(activeProject.id, { duration: newDuration });
+
+        // If it's a blank project (no physical audio file), re-generate the silent audio blob
+        if (!audioFile) {
+            const silentBlob = createSilentAudioBlob(newDuration);
+            const url = URL.createObjectURL(silentBlob);
+            setAudioUrl(url);
+
+            // Clean up old URL if necessary (though React usually handles this if we replace it)
+            if (onStatusChange) onStatusChange(`Project length updated to ${newDuration.toFixed(2)}s`);
+        }
     };
 
     const handleAudioDrop = (files: File[]) => {
@@ -338,8 +349,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
     // --- Core Logic: Run & Poll ---
     const handleRunSeparation = async () => {
-        if (!comfyConnected || !workflow || !audioFile?.path || !outputDir) {
-            if (onStatusChange) onStatusChange('Missing setup (Audio, Workflow, or Output Folder)');
+        if (!comfyConnected || !audioFile?.path || !outputDir) {
+            if (onStatusChange) onStatusChange('Missing setup (Audio, ComfyUI Connection, or Output Folder)');
             return;
         }
 
@@ -348,7 +359,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const startTime = Date.now(); // Capture start time to find new files
 
         try {
-            const prompt = JSON.parse(JSON.stringify(workflow));
+            const prompt = JSON.parse(JSON.stringify(workflowJsonTemplate)); // Use imported template
 
             let loadNodeKey: string | null = null;
             for (const [key, node] of Object.entries(prompt)) {
@@ -449,7 +460,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const waitForGeneration = async (promptId: string): Promise<any> => {
         return waitForPromptWebSocket(
             promptId,
-            workflow,
+            workflowJsonTemplate, // Use imported template
             (status) => {
                 if (onStatusChange) onStatusChange(status);
             }
@@ -472,12 +483,12 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const baseName = audioFile?.path ? path.parse(audioFile.path).name : 'stem';
 
         try {
-            const files = fs.readdirSync(comfyOutputDir);
+            const files = fs.readdirSync(comfyOutputDir); // Use prop
             for (const type of stemTypes) {
                 const regex = new RegExp(`^${runPrefix}_.*${type}.*\\.(mp3|flac|wav)$`, 'i');
                 const matches = files.filter((f: string) => regex.test(f))
                     .map((f: string) => {
-                        const fullPath = path.join(comfyOutputDir, f);
+                        const fullPath = path.join(comfyOutputDir, f); // Use prop
                         const stats = fs.statSync(fullPath);
                         return { file: f, path: fullPath, time: stats.mtimeMs as number };
                     })
@@ -493,7 +504,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     console.log(`Found & Moved: ${latest.path} -> ${destPath}`);
                     movedStems.push({ type, path: `./stems/${destFilename}` });
                 } else {
-                    console.warn(`No new ${type} file found in ${comfyOutputDir} matching ${runPrefix}`);
+                    console.warn(`No new ${type} file found in ${comfyOutputDir} matching ${runPrefix}`); // Use prop
                 }
             }
         } catch (e) {
@@ -586,7 +597,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         color: m.color || stemMapping.base,
                         note: stemType,
                         type: mappedType as "beat" | "onset" | "loudness",
-                        duration_sec: m.type === 'beat' ? 1 / frameRate : m.type === 'onset' ? 0.05 : 0.1
+                        duration_sec: 0.05 // Default duration for markers
                     };
                 });
 
@@ -666,7 +677,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             // 1. Audio Setup (Only if project changed)
             if (isNewProject) {
                 setIsAnalyzing(true);
-                setDuration(0);
+                setDuration(project.duration || 0);
                 setStems([]);
                 setMainMarkers([]);
 
@@ -683,7 +694,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     setAudioFile({ name: project.audioFileName || 'Unknown', path: absoluteAudioPath }); // Keep absolute in state for FFmpeg
                 } else {
                     // Generate a silent audio blob so WaveSurfer can initialize and allow timeline selection
-                    const blankDuration = 60 * 5; // 5 minutes
+                    const blankDuration = project.duration || 60 * 5; // Use project duration or default to 5 minutes
                     const silentBlob = createSilentAudioBlob(blankDuration);
                     const url = URL.createObjectURL(silentBlob);
 
@@ -887,7 +898,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     color: m.color || (m.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat),
                     note: '',
                     type: m.type as any,
-                    duration_sec: 0
+                    duration_sec: 0.05 // Default duration for markers
                 }))
             });
 
@@ -908,251 +919,83 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     // Timeline Generation Logic
     // ------------------------------------------------------------------------------------------------
 
-    const handleGenerateTimelineClip = async (clipId: string) => {
-        const clipToUpdate = clips.find(c => c.id === clipId);
-        if (!clipToUpdate) {
-            if (onStatusChange) onStatusChange("Clip not found.");
+    // handleGenerateTimelineClip removed: now handled by App.tsx shared engine
+
+    /**
+     * Scans the project's "videos" directory for any MP4 files that match
+     * our naming convention but aren't currently linked in the clips state.
+     * Useful if the app was closed or interrupted during generation.
+     */
+    const handleSyncGeneratedVideos = async () => {
+        if (!activeProject?.outputDir) {
+            if (onStatusChange) onStatusChange("No project output directory found to scan.");
             return;
         }
 
-        if (!comfyConnected) {
-            if (onStatusChange) onStatusChange('Cannot generate: ComfyUI is not connected.');
+        const fs = window.require('fs');
+        const path = window.require('path');
+        const videosDir = path.join(activeProject.outputDir, 'videos');
+
+        if (!fs.existsSync(videosDir)) {
+            if (onStatusChange) onStatusChange("No 'videos' folder found in project directory.");
             return;
         }
 
-        if (!activeProject) {
-            if (onStatusChange) onStatusChange("No active project.");
-            return;
-        }
+        if (onStatusChange) onStatusChange("Scanning 'videos' folder for missing takes...");
 
         try {
-            // Fast state update to Generating
-            setClips(prev => prev.map(c => c.id === clipId ? { ...c, status: 'generating' } : c));
-            const frameRate = activeProject.frameRate || 20;
+            const files = fs.readdirSync(videosDir).filter((f: string) => f.endsWith('.mp4'));
+            let updateCount = 0;
 
-            if (onStatusChange) onStatusChange(`Uploading Image & Audio for clip "${clipToUpdate.label}"...`);
-
-            // 1. Upload Start Image
-            let finalImageName = "";
-            if (clipToUpdate.startImagePath) {
-                let absoluteImagePath = clipToUpdate.startImagePath;
-                // Remove file:/// protocol if present
-                absoluteImagePath = absoluteImagePath.replace(/^file:\/\/\/?/i, '');
-                absoluteImagePath = decodeURI(absoluteImagePath);
-
-                const path = window.require('path');
-                const fs = window.require('fs');
-
-                if (!path.isAbsolute(absoluteImagePath)) {
-                    const targetDir = activeProject.outputDir || outputDir || '';
-                    const possiblePathImages = path.resolve(targetDir, 'images', absoluteImagePath);
-                    const possiblePathRoot = path.resolve(targetDir, absoluteImagePath);
-
-                    if (targetDir && fs.existsSync(possiblePathImages)) {
-                        absoluteImagePath = possiblePathImages;
-                    } else if (targetDir && fs.existsSync(possiblePathRoot)) {
-                        absoluteImagePath = possiblePathRoot;
-                    } else if (targetDir) {
-                        absoluteImagePath = possiblePathImages; // Default guess for error message
-                    }
-                }
-
-                console.log(`[handleGenerateTimelineClip] Resolving start image to: ${absoluteImagePath}`);
-
-                if (!fs.existsSync(absoluteImagePath)) {
-                    throw new Error(`Start image not found at: ${absoluteImagePath}. Please select the image again.`);
-                }
-
-                const uploadResult = await uploadFileToComfyUI(absoluteImagePath);
-                if (uploadResult && uploadResult.name) {
-                    finalImageName = uploadResult.name;
-                } else {
-                    throw new Error(`Failed to upload start image from ${absoluteImagePath} to ComfyUI.`);
-                }
-            } else {
-                throw new Error("Start image missing. Aborting generation.");
-            }
-
-            // 2. Upload Audio File
-            let finalAudioName = "audio.wav";
-            let sourceAudioPath = activeProject.audioPath;
-
-            // If the clip is from a stem, upload that stem instead
-            if (clipToUpdate.source === 'stem' && clipToUpdate.stemName) {
-                const targetStem = stems.find(s => s.type === clipToUpdate.stemName);
-                if (targetStem) {
-                    sourceAudioPath = targetStem.path;
-                }
-            }
-
-            if (sourceAudioPath) {
-                let absoluteAudioPath = sourceAudioPath;
-                // Remove file:/// protocol if present
-                absoluteAudioPath = absoluteAudioPath.replace(/^file:\/\/\/?/i, '');
-                absoluteAudioPath = decodeURI(absoluteAudioPath);
-
-                const path = window.require('path');
-                const fs = window.require('fs');
-
-                if (!path.isAbsolute(absoluteAudioPath)) {
-                    const targetDir = activeProject.outputDir || outputDir || '';
-                    if (targetDir) {
-                        absoluteAudioPath = path.resolve(targetDir, absoluteAudioPath);
-                    }
-                }
-
-                console.log(`[handleGenerateTimelineClip] Resolving audio to: ${absoluteAudioPath}`);
-
-                if (!fs.existsSync(absoluteAudioPath)) {
-                    throw new Error(`Audio file not found at: ${absoluteAudioPath}.`);
-                }
-
-                const uploadResult = await uploadFileToComfyUI(absoluteAudioPath);
-                if (uploadResult && uploadResult.name) {
-                    finalAudioName = uploadResult.name;
-                } else {
-                    throw new Error(`Failed to upload audio from ${absoluteAudioPath} to ComfyUI.`);
-                }
-            }
-
-            if (onStatusChange) onStatusChange(`Queuing generation for "${clipToUpdate.label}"...`);
-
-            // 3. Clone and Inject Workflow
-            const workflow = JSON.parse(JSON.stringify(workflowJsonTemplate));
-            const frames = getValidLtxFrameCount(clipToUpdate.duration, frameRate);
-
-            // a. Start Image
-            if (workflow["98"] && workflow["98"].inputs) {
-                workflow["98"].inputs.image = finalImageName;
-            }
-
-            // b. Prompt (Use clip notes.action, fallback to label)
-            if (workflow["92:3"] && workflow["92:3"].inputs) {
-                const promptVal = (clipToUpdate.notes?.action && clipToUpdate.notes.action.trim() !== '')
-                    ? clipToUpdate.notes.action
-                    : clipToUpdate.label;
-                workflow["92:3"].inputs.text = promptVal;
-            }
-
-            // c. Seed
-            const rng_seed = Math.floor(Math.random() * 1000000000000000);
-            if (workflow["92:11"] && workflow["92:11"].inputs) {
-                workflow["92:11"].inputs.noise_seed = rng_seed;
-            }
-            if (workflow["92:67"] && workflow["92:67"].inputs) {
-                workflow["92:67"].inputs.noise_seed = rng_seed;
-            }
-
-            // d. Node 62 (Frame Count)
-            if (workflow["92:62"] && workflow["92:62"].inputs) {
-                workflow["92:62"].inputs.value = frames;
-            }
-
-            // e. Node 97 (FPS)
-            if (workflow["92:97"] && workflow["92:97"].inputs) {
-                workflow["92:97"].inputs.fps = frameRate;
-            }
-            if (workflow["92:22"] && workflow["92:22"].inputs) {
-                workflow["92:22"].inputs.frame_rate = frameRate;
-            }
-
-            // f. Node 115 (Audio Trimming)
-            if (workflow["92:115"] && workflow["92:115"].inputs) {
-                workflow["92:115"].inputs.start_index = clipToUpdate.startTime;
-                workflow["92:115"].inputs.duration = clipToUpdate.duration;
-            }
-
-            // g. Node 113 (Audio Upload Source)
-            if (workflow["92:113"] && workflow["92:113"].inputs) {
-                workflow["92:113"].inputs.audio = finalAudioName;
-            }
-
-            // 4. Queue the prompt
-            const result = await queuePrompt(workflow);
-            if (!result || !result.prompt_id) {
-                throw new Error('Failed to queue prompt');
-            }
-
-            if (onStatusChange) onStatusChange(`Generating Video (ID: ${result.prompt_id})...`);
-
-            // 5. Poll for completion
-            await waitForGeneration(result.prompt_id);
-
-            // 6. Move output and update state
-            const targetDir = activeProject.outputDir || outputDir;
-            if (!targetDir) {
-                throw new Error("No output directory set for the project.");
-            }
-
-            const fs = window.require('fs');
-            const path = window.require('path');
-
-            let finalVideoPath = "";
-            let latestSourcePath = "";
-
-            // Check the video subdirectory first (where ComfyUI usually puts prefix video/LTX_2.0_i2v)
-            const videoOutDir = path.join(comfyOutputDir, 'video');
-            if (fs.existsSync(videoOutDir)) {
-                const outFiles = fs.readdirSync(videoOutDir).filter((f: string) => f.includes('LTX_2.0_i2v') && f.endsWith('.mp4'));
-                if (outFiles.length > 0) {
-                    const latest = outFiles.sort((a: string, b: string) => fs.statSync(path.join(videoOutDir, b)).mtimeMs - fs.statSync(path.join(videoOutDir, a)).mtimeMs)[0];
-                    latestSourcePath = path.join(videoOutDir, latest);
-                }
-            }
-
-            // Fallback to the root output directory
-            if (!latestSourcePath && fs.existsSync(comfyOutputDir)) {
-                const outFiles = fs.readdirSync(comfyOutputDir).filter((f: string) => f.includes('LTX_2.0_i2v') && f.endsWith('.mp4'));
-                if (outFiles.length > 0) {
-                    const latest = outFiles.sort((a: string, b: string) => fs.statSync(path.join(comfyOutputDir, b)).mtimeMs - fs.statSync(path.join(comfyOutputDir, a)).mtimeMs)[0];
-                    latestSourcePath = path.join(comfyOutputDir, latest);
-                }
-            }
-
-            if (latestSourcePath) {
-                // Determine destination directory
-                const destVideosDir = path.join(targetDir, 'videos');
-                if (!fs.existsSync(destVideosDir)) fs.mkdirSync(destVideosDir, { recursive: true });
-
-                const existingTakes = clipToUpdate.generatedVideos ? clipToUpdate.generatedVideos.length : 0;
-                const safeLabel = clipToUpdate.label.replace(/[^a-z0-9]/gi, '_');
-                const destFilename = `${safeLabel}_take${existingTakes + 1}.mp4`;
-                const destPath = path.join(destVideosDir, destFilename);
-
-                fs.copyFileSync(latestSourcePath, destPath);
-                finalVideoPath = destPath;
-            }
-
-            if (!finalVideoPath) {
-                throw new Error("Generated video file not found after completion.");
-            }
-
-
-            // Success Update
-            setClips(prev => prev.map(c => {
-                if (c.id === clipId) {
-                    const existingVids = c.generatedVideos || [];
+            const updatedClips = clips.map(clip => {
+                const safeLabel = clip.label.replace(/[^a-z0-9]/gi, '_');
+                // Find all files matching {safeLabel}_take{n}.mp4
+                const matchingFiles = files.filter((f: string) => {
+                    const regex = new RegExp(`^${safeLabel}_take(\\d+)\\.mp4$`, 'i');
+                    return regex.test(f);
+                }).map((f: string) => {
+                    const takeNum = parseInt(f.match(/_take(\d+)\.mp4$/i)?.[1] || "0", 10);
                     return {
-                        ...c,
-                        status: 'done',
-                        videoPath: finalVideoPath,
-                        generatedVideos: [...existingVids, finalVideoPath]
+                        fullPath: path.join(videosDir, f),
+                        take: takeNum
                     };
+                }).sort((a: any, b: any) => b.take - a.take);
+
+                if (matchingFiles.length > 0) {
+                    const existingVideos = clip.generatedVideos || [];
+                    const foundPaths = matchingFiles.map((m: any) => m.fullPath);
+
+                    // Combine existing and newly found, unique paths
+                    const combinedVideos = Array.from(new Set([...existingVideos, ...foundPaths]));
+
+                    // If we found something new or the count changed or status is pending/error
+                    if (combinedVideos.length !== existingVideos.length || clip.status !== 'done') {
+                        updateCount++;
+                        // Use the latest take (highest number) as the primary videoPath
+                        const latestVideo = matchingFiles[0].fullPath;
+                        return {
+                            ...clip,
+                            status: 'done' as const,
+                            videoPath: latestVideo,
+                            generatedVideos: combinedVideos
+                        };
+                    }
                 }
-                return c;
-            }));
+                return clip;
+            });
 
-            if (onStatusChange) onStatusChange(`Successfully generated video for "${clipToUpdate.label}"`);
+            if (updateCount > 0) {
+                setClips(updatedClips);
+                if (onStatusChange) onStatusChange(`Sync complete: Updated ${updateCount} clips with missing videos.`);
 
-            // Save state
-            setTimeout(() => {
-                handleSaveToProject();
-            }, 500);
-
+                // Save immediately with the FRESH clips array to avoid stale closure issues
+                handleSaveToProject(updatedClips);
+            } else {
+                if (onStatusChange) onStatusChange("Sync complete: No new videos found.");
+            }
         } catch (err: any) {
-            console.error('Generation Error:', err);
-            if (onStatusChange) onStatusChange(`Error generating clip: ${err.message}`);
-            setClips(prev => prev.map(c => c.id === clipId ? { ...c, status: 'error' } : c));
+            console.error("Sync Error:", err);
+            if (onStatusChange) onStatusChange(`Sync failed: ${err.message}`);
         }
     };
 
@@ -1267,7 +1110,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         ws.on('ready', () => {
             const dur = ws.getDuration();
             setDuration(dur);
-            
+
             // Sync duration to project storage if it has changed
             if (activeProject && activeProject.duration !== dur) {
                 onUpdateProject(activeProject.id, { duration: dur });
@@ -1320,7 +1163,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             const currentMarkers = mainBeatSource === 'main' ? mainMarkers : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].markers : []);
 
             let newStart = region.start;
-            
+
             // Stage 1: Snap START to the nearest beat marker (if within threshold)
             if (currentMarkers.length > 0) {
                 const snapToBeat = (time: number) => {
@@ -1433,7 +1276,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 const containerId = `stem-waveform-${index}`;
                 const container = document.getElementById(containerId);
                 if (container) {
-                    // Fix: shadowRoot is a property, not a selector. 
+                    // Fix: shadowRoot is a property, not a selector.
                     // Also check for the WaveSurfer-specific class to be sure.
                     if (container.shadowRoot || container.querySelector('shadow-root') || container.innerHTML.includes('wavesurfer')) {
                         console.warn(`Container ${containerId} already occupied, skipping init.`);
@@ -1462,7 +1305,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     const handleStemRegionUpdate = (region: any) => {
                         // Skip saved regions
                         if (region.id && region.id.startsWith('saved-')) return;
-                        
+
                         let newStart = region.start;
                         const stemMarkers = stem.markers || [];
 
@@ -1742,15 +1585,23 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         const frames = getValidLtxFrameCount(rawDuration, fps);
         if (onStatusChange) onStatusChange(`Segment added: ${formatTime(start)} – ${formatTime(alignedEnd)} (${frames} frames @ ${fps}fps, ${alignedDuration.toFixed(2)}s)`);
+
+        if (activeProject) {
+            onUpdateProject(activeProject.id, { clips: [...clips, newClip] });
+        }
     };
 
     // Remove a clip/segment from the timeline
     const handleRemoveClip = (clipId: string) => {
-        setClips(prev => prev.filter(c => c.id !== clipId));
+        const filtered = clips.filter(c => c.id !== clipId);
+        setClips(filtered);
+        if (activeProject) {
+            onUpdateProject(activeProject.id, { clips: filtered });
+        }
     };
 
     // Save clips to the active project
-    const handleSaveToProject = async () => {
+    const handleSaveToProject = async (overrideClips?: VideoClip[]) => {
         if (!activeProject) {
             if (onStatusChange) onStatusChange('No project selected.');
             return;
@@ -1788,7 +1639,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         color: m.color || '#ffffff',
                         note: s.type,
                         type: m.type as 'beat' | 'onset' | 'loudness',
-                        duration_sec: 0
+                        duration_sec: 0.05 // Default duration for markers
                     }))
                     : []
             }));
@@ -1800,13 +1651,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 color: m.color || (m.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat),
                 note: '',
                 type: m.type as 'beat' | 'onset' | 'loudness',
-                duration_sec: 0
+                duration_sec: 0.05 // Default duration for markers
             }));
 
             // Update project with all available data
             const beatOnlyMarkers = mainMarkers.filter(m => m.type === 'beat');
             onUpdateProject(activeProject.id, {
-                clips,
+                clips: overrideClips || clips,
                 outputDir: baseOutputDir,
                 markers: mainMarkersToSave,
                 stems: projectStemsToSave,
@@ -1837,75 +1688,131 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const filePath = await ipcRenderer.invoke('open-image-dialog', imagesDir);
 
         if (filePath) {
-            setClips(prev => prev.map(c => c.id === clipId ? { ...c, [field]: filePath } : c));
+            const updated = clips.map(c => c.id === clipId ? { ...c, [field]: filePath } : c);
+            setClips(updated);
+            if (activeProject) {
+                onUpdateProject(activeProject.id, { clips: updated });
+            }
         }
     };
 
     const handleUpdateClipLabel = (clipId: string, newLabel: string) => {
-        setClips(prev => prev.map(c => c.id === clipId ? { ...c, label: newLabel } : c));
+        const updated = clips.map(c => c.id === clipId ? { ...c, label: newLabel } : c);
+        setClips(updated);
+        if (activeProject) {
+            onUpdateProject(activeProject.id, { clips: updated });
+        }
     };
 
     const handleUpdateClipPrompt = (clipId: string, newPrompt: string) => {
-        setClips(prev => prev.map(c => 
-            c.id === clipId 
-                ? { ...c, notes: { ...(c.notes || { action: '', dialogue: '', sound: '' }), action: newPrompt } } 
+        const updated = clips.map(c =>
+            c.id === clipId
+                ? { ...c, notes: { ...(c.notes || { action: '', dialogue: '', sound: '' }), action: newPrompt } }
                 : c
-        ));
+        );
+        setClips(updated);
+        if (activeProject) {
+            onUpdateProject(activeProject.id, { clips: updated });
+        }
     };
 
     const handleUpdateClipStartTime = (clipId: string, newStartTime: number) => {
-        setClips(prev => prev.map(c => {
+        const updated = clips.map(c => {
             if (c.id === clipId) {
-                // Moving start time shifts the whole clip (maintains current duration)
                 const duration = c.duration || (c.endTime - c.startTime);
-                return { 
-                    ...c, 
-                    startTime: newStartTime, 
+                return {
+                    ...c,
+                    startTime: newStartTime,
                     endTime: newStartTime + duration,
                     duration: duration
                 };
             }
             return c;
-        }));
+        });
+        setClips(updated);
+        if (activeProject) {
+            onUpdateProject(activeProject.id, { clips: updated });
+        }
     };
 
     const handleUpdateClipEndTime = (clipId: string, newEndTime: number) => {
         const frameRate = activeProject?.frameRate || 20;
-        setClips(prev => prev.map(c => {
-            if (c.id === clipId) {
-                // Moving end time changes duration - snap to LTX frame boundary
-                if (newEndTime <= c.startTime) return c;
-                const rawDuration = newEndTime - c.startTime;
-                const alignedDuration = getLtxAlignedDuration(rawDuration, frameRate);
-                
-                return { 
-                    ...c, 
-                    endTime: c.startTime + alignedDuration, 
-                    duration: alignedDuration 
-                };
+        setClips(prev => {
+            const sorted = [...prev].sort((a, b) => a.startTime - b.startTime);
+            const clipIndex = sorted.findIndex(c => c.id === clipId);
+            if (clipIndex === -1) return prev;
+            const current = sorted[clipIndex];
+            if (newEndTime <= current.startTime) return prev;
+            const rawDuration = newEndTime - current.startTime;
+            const alignedDuration = getLtxAlignedDuration(rawDuration, frameRate);
+            sorted[clipIndex] = { ...current, endTime: current.startTime + alignedDuration, duration: alignedDuration };
+            for (let i = clipIndex + 1; i < sorted.length; i++) {
+                const prevClip = sorted[i - 1];
+                const dur = sorted[i].duration || (sorted[i].endTime - sorted[i].startTime);
+                sorted[i] = { ...sorted[i], startTime: prevClip.endTime, endTime: prevClip.endTime + dur, duration: dur };
             }
-            return c;
-        }));
+            if (activeProject) onUpdateProject(activeProject.id, { clips: sorted });
+            return sorted;
+        });
     };
 
     // Render saved clip regions on the appropriate waveform whenever clips change
     useEffect(() => {
         // Clear all existing pinned regions first
         const renderSavedRegions = () => {
+            const alternatingColors = [
+                'rgba(99, 102, 241, 0.48)', // More Vivid Indigo
+                'rgba(168, 85, 247, 0.48)'  // More Vivid Purple
+            ];
+            const fps = activeProject?.frameRate || 20;
+
             // Render main-track clips
             if (wsRegions.current) {
                 wsRegions.current.clearRegions();
-                clips.filter(c => c.source === 'main').forEach(c => {
+                const mainClips = clips.filter(c => c.source === 'main');
+                mainClips.forEach((c, idx) => {
                     const region = wsRegions.current.addRegion({
                         id: `saved-${c.id}`,
                         start: c.startTime,
                         end: c.endTime,
-                        color: 'rgba(34, 197, 94, 0.18)',
+                        color: alternatingColors[idx % alternatingColors.length],
                         drag: false,
                         resize: false,
                     });
                     // Push behind waveform
-                    if (region.element) region.element.style.zIndex = '0';
+                    if (region.element) {
+                        region.element.style.zIndex = '10';
+                        region.element.style.border = `1px solid ${alternatingColors[idx % alternatingColors.length].replace('0.48', '0.8')}`;
+                        region.element.style.borderRadius = '2px';
+                        const frames = Math.round((c.duration || (c.endTime - c.startTime)) * fps);
+                        tippy(region.element, {
+                            content: `
+                                <div style="font-size: 10px; font-weight: 700; padding: 4px; pointer-events: none;">
+                                    <div style="color: #818cf8; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 2px;">${c.label || 'Unnamed Clip'}</div>
+                                    <div style="display: grid; grid-template-columns: auto auto; gap: 8px; color: #94a3b8;">
+                                        <span>START:</span><span style="color: white; font-family: monospace;">${formatTime(c.startTime)}</span>
+                                        <span>DUR:</span><span style="color: white; font-family: monospace;">${(c.duration || (c.endTime - c.startTime)).toFixed(2)}s</span>
+                                        <span>FRAMES:</span><span style="color: #f59e0b; font-family: monospace; font-weight: 800;">${frames}</span>
+                                    </div>
+                                </div>
+                            `,
+                            allowHTML: true,
+                            animation: 'shift-away',
+                            placement: 'top',
+                            offset: [0, 10],
+                            maxWidth: 200
+                        });
+                        region.element.addEventListener('contextmenu', (e: MouseEvent) => {
+                            e.preventDefault();
+                            setDurationPopup({
+                                clipId: c.id,
+                                duration: c.duration || (c.endTime - c.startTime),
+                                startTime: c.startTime,
+                                x: e.clientX,
+                                y: e.clientY,
+                            });
+                        });
+                    }
                 });
             }
 
@@ -1914,17 +1821,50 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 reg.clearRegions();
                 const stemType = stems[stemIdx]?.type;
                 if (!stemType) return;
-                clips.filter(c => c.source === 'stem' && c.stemName === stemType).forEach(c => {
+                const stemClips = clips.filter(c => c.source === 'stem' && c.stemName === stemType);
+                stemClips.forEach((c, idx) => {
                     const region = reg.addRegion({
                         id: `saved-${c.id}`,
                         start: c.startTime,
                         end: c.endTime,
-                        color: 'rgba(34, 197, 94, 0.18)',
+                        color: alternatingColors[idx % alternatingColors.length],
                         drag: false,
                         resize: false,
                     });
                     // Push behind waveform
-                    if (region.element) region.element.style.zIndex = '0';
+                    if (region.element) {
+                        region.element.style.zIndex = '10';
+                        region.element.style.border = `1px solid ${alternatingColors[idx % alternatingColors.length].replace('0.48', '0.8')}`;
+                        region.element.style.borderRadius = '2px';
+                        const frames = Math.round((c.duration || (c.endTime - c.startTime)) * fps);
+                        tippy(region.element, {
+                            content: `
+                                <div style="font-size: 10px; font-weight: 700; padding: 4px; pointer-events: none;">
+                                    <div style="color: #a78bfa; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 2px;">${c.label || 'Unnamed Clip'}</div>
+                                    <div style="display: grid; grid-template-columns: auto auto; gap: 8px; color: #94a3b8;">
+                                        <span>START:</span><span style="color: white; font-family: monospace;">${formatTime(c.startTime)}</span>
+                                        <span>DUR:</span><span style="color: white; font-family: monospace;">${(c.duration || (c.endTime - c.startTime)).toFixed(2)}s</span>
+                                        <span>FRAMES:</span><span style="color: #f59e0b; font-family: monospace; font-weight: 800;">${frames}</span>
+                                    </div>
+                                </div>
+                            `,
+                            allowHTML: true,
+                            animation: 'shift-away',
+                            placement: 'top',
+                            offset: [0, 10],
+                            maxWidth: 200
+                        });
+                        region.element.addEventListener('contextmenu', (e: MouseEvent) => {
+                            e.preventDefault();
+                            setDurationPopup({
+                                clipId: c.id,
+                                duration: c.duration || (c.endTime - c.startTime),
+                                startTime: c.startTime,
+                                x: e.clientX,
+                                y: e.clientY,
+                            });
+                        });
+                    }
                 });
             });
         };
@@ -1943,21 +1883,16 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const { start: startTime, end: endTime, source, stemIndex } = activeSelection;
         const duration = endTime - startTime;
 
-        // Constraint Math
+        // Constraint Math matches LTX template requirements
         // Frame Count: (n * 8) + 1
-        const fps = activeProject?.frameRate || 24;
-        const rawFrames = duration * fps;
-        // Round to nearest multiple of 8, then add 1
-        const targetFrames = Math.round(rawFrames / 8) * 8 + 1;
-
         // Dimensions: (n * 32) + 1
-        // Default to a reasonable resolution, can be configurable
-        const width = 512 + 1; // 513
-        const height = 512 + 1; // 513
+        // These are handled by the shared handleGenerateVideo in App.tsx
 
         // Checkerboard Track Logic
         const newIndex = clips.length;
         const track = (newIndex % 2) + 1;
+
+        if (!activeProject) return;
 
         const newClip: VideoClip = {
             id: Date.now().toString(),
@@ -1976,99 +1911,16 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             label: `clip_${clips.length}`
         };
 
-        setClips((prev) => [...prev, newClip]);
+        const updatedClips = [...clips, newClip];
+        onUpdateProject(activeProject.id, { clips: updatedClips });
+        setClips(updatedClips);
 
-        // Determine Audio Path
-        let targetAudioPath = (audioFile as any).path;
-
-        if (source === 'stem' && stemIndex !== undefined && stems[stemIndex]) {
-            targetAudioPath = stems[stemIndex].path;
-            console.log(`Generating using Stem: ${stems[stemIndex].type}`);
-        }
-
-        // Trigger ComfyUI Generation
-        await generateClipInComfy(newClip, targetFrames, width, height, targetAudioPath);
-    };
-
-    const generateClipInComfy = async (clip: VideoClip, frames: number, width: number, height: number, audioPath: string) => {
-        if (!workflowJsonTemplate || !audioPath) {
-            if (onStatusChange) onStatusChange("Workflow or Audio not loaded.");
-            return;
-        }
-
-        // Update status
-        setClips(prev => prev.map(c => c.id === clip.id ? { ...c, status: 'generating' } : c));
-
-        try {
-            const prompt = JSON.parse(JSON.stringify(workflowJsonTemplate));
-
-            // 1. Inject Audio Path
-            // Using passed audioPath
-
-            // Find Nodes
-            let loadAudioKey: string | null = null;
-            let audioTrimKey: string | null = null;
-            let videoGenKey: string | null = null; // KSampler or specific LTX/Video node
-            let ksamplerKey: string | null = null; // Standard KSampler logic
-
-            for (const [key, node] of Object.entries(prompt)) {
-                // @ts-ignore
-                const type = node.class_type;
-                if (type === 'LoadAudio' || type === 'LoadAudioPath') loadAudioKey = key;
-                if (type === 'Audio Trim' || type === 'AudioTrim') audioTrimKey = key; // Hypothetical node name, check user's workflow
-
-                if (type === 'KSampler' || type === 'KSamplerAdvanced') ksamplerKey = key;
-                if (type === 'EmptyLatentVideo' || type === 'EmptyLatentImage') videoGenKey = key; // Usually sets dimensions/frames
-            }
-
-            // Inject Audio
-            if (loadAudioKey) {
-                // @ts-ignore
-                prompt[loadAudioKey].inputs.audio = audioPath;
-            }
-
-            // Inject Trim
-            // If "Audio Trim" node exists, use it.
-            // If not, we might need to rely on the prompt to specify start/duration? No, ComfyUI needs explicit logic.
-            // *Assumption*: The user verifies their workflow has a node accepting start/duration.
-            // We will look for ANY node that has "start_time" and "duration" inputs and try to set them if they look like audio nodes.
-            // Or better, we notify the user if we can't find it.
-
-            // For now, let's assume standard "Audio Trim" behavior or similar.
-            if (audioTrimKey) {
-                // @ts-ignore
-                prompt[audioTrimKey].inputs.start_time = clip.startTime;
-                // @ts-ignore
-                prompt[audioTrimKey].inputs.duration = clip.duration;
-            }
-
-            // Inject Frames & Dimensions
-            if (videoGenKey) {
-                // @ts-ignore
-                prompt[videoGenKey].inputs.frame_count = frames;
-                // @ts-ignore
-                prompt[videoGenKey].inputs.width = width;
-                // @ts-ignore
-                prompt[videoGenKey].inputs.height = height;
-            } else if (ksamplerKey) {
-                // Determine if KSampler drives frames? Usually EmptyLatent does.
-            }
-
-            // Queue Prompt
-            const result = await queuePrompt(prompt);
-
-            if (result && result.prompt_id) {
-                // Poll for completion (similar to StemSeparation logic)
-                // For brevity/robustness, we'll reuse the polling logic or import it.
-                // Ideally, we wait for the file to appear in output.
-                if (onStatusChange) onStatusChange(`Started generation for Clip ${clip.id}`);
-            }
-
-        } catch (e) {
-            console.error("Generation failed", e);
-            setClips(prev => prev.map(c => c.id === clip.id ? { ...c, status: 'error' } : c));
+        // Trigger shared queue generation
+        if (onGenerateVideo) {
+            onGenerateVideo(newClip.id);
         }
     };
+
 
     const handleExportMarkers = async () => {
         if (!activeProject) {
@@ -2088,7 +1940,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 type: m.type,
                 color: m.color || (m.isDownbeat ? '#ff0000' : '#ffff00'),
                 note: m.isDownbeat ? 'DOWNBEAT' : 'BEAT',
-                duration_sec: 0
+                duration_sec: 0.05 // Default duration for markers
             });
         });
 
@@ -2103,7 +1955,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         type: m.type,
                         color: s.color || '#00ff00',
                         note: `${s.type.toUpperCase()}: ${m.type}`,
-                        duration_sec: 0
+                        duration_sec: 0.05 // Default duration for markers
                     });
                 });
             }
@@ -2349,8 +2201,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             <span className={`status-badge ${comfyConnected ? 'success' : 'error'}`}>
                                 {comfyConnected ? 'Connected' : 'Disconnected'}
                             </span>
-                            <span className={`status-badge ${workflow ? 'success' : 'warning'}`}>
-                                {workflow ? 'Ready' : 'No Workflow'}
+                            <span className={`status-badge success`}>
+                                Ready
                             </span>
                         </div>
                     }
@@ -2360,28 +2212,32 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         <div className="flex flex-col gap-6 flex-1" style={{ paddingRight: '8px' }}>
                             <div className="flex flex-col gap-2">
                                 <Tippy content="Uses ComfyUI to separate instruments into distinct audio tracks (Vocals, Drums, Bass, etc.)." placement="right" offset={[0, 48]}>
-                                    <button
-                                        onClick={handleRunSeparation}
-                                        disabled={isProcessing || !comfyConnected || !audioFile?.path || !workflow}
-                                        className={`btn w-full ${isProcessing || !comfyConnected || !audioFile?.path || !workflow ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
-                                        style={{ marginBottom: '5px' }}
-                                    >
-                                        {isProcessing && !detectionStatus.includes("main") ? (
-                                            <>Processing Music File...</>
-                                        ) : (
-                                            <>Start Stem Separation</>
-                                        )}
-                                    </button>
+                                    <span>
+                                        <button
+                                            onClick={handleRunSeparation}
+                                            disabled={isProcessing || !comfyConnected || !audioFile?.path}
+                                            className={`btn w-full ${isProcessing || !comfyConnected || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                                            style={{ marginBottom: '5px' }}
+                                        >
+                                            {isProcessing && !detectionStatus.includes("main") ? (
+                                                <>Processing Music File...</>
+                                            ) : (
+                                                <>Start Stem Separation</>
+                                            )}
+                                        </button>
+                                    </span>
                                 </Tippy>
                                 <Tippy content="Analyzes the master track for beats, downbeats, and energy changes." placement="right" offset={[0, 48]}>
-                                    <button
-                                        onClick={handleRunMainBeatAnalysis}
-                                        disabled={isProcessing || !activeProject || !audioFile?.path}
-                                        className={`btn w-full ${isProcessing || !activeProject || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
-                                        style={{ marginBottom: '5px' }}
-                                    >
-                                        {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
-                                    </button>
+                                    <span>
+                                        <button
+                                            onClick={handleRunMainBeatAnalysis}
+                                            disabled={isProcessing || !activeProject || !audioFile?.path}
+                                            className={`btn w-full ${isProcessing || !activeProject || !audioFile?.path ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-primary'}`}
+                                            style={{ marginBottom: '5px' }}
+                                        >
+                                            {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
+                                        </button>
+                                    </span>
                                 </Tippy>
                             </div>
 
@@ -2391,29 +2247,33 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                     <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Stem Analysis</h4>
                                     <div className="flex flex-col gap-2">
                                         <Tippy content="Run full beat and onset analysis on all successfully separated stem tracks." placement="top" offset={[0, 48]}>
-                                            <button
-                                                className="btn w-full btn-secondary justify-center border border-indigo-500/30 hover:border-indigo-500/80"
-                                                onClick={async () => {
-                                                    for (const s of stems) {
-                                                        await handleAnalyzeLocal(s.path, s.type);
-                                                    }
-                                                }}
-                                                disabled={isProcessing}
-                                            >
-                                                {isProcessing ? 'Analyzing...' : 'Analyze All Stems'}
-                                            </button>
+                                            <span>
+                                                <button
+                                                    className="btn w-full btn-secondary justify-center border border-indigo-500/30 hover:border-indigo-500/80"
+                                                    onClick={async () => {
+                                                        for (const s of stems) {
+                                                            await handleAnalyzeLocal(s.path, s.type);
+                                                        }
+                                                    }}
+                                                    disabled={isProcessing}
+                                                >
+                                                    {isProcessing ? 'Analyzing...' : 'Analyze All Stems'}
+                                                </button>
+                                            </span>
                                         </Tippy>
                                         <div className="grid grid-cols-2 gap-2">
                                             {stems.map((stem, index) => (
                                                 <Tippy key={index} content={`Analyze ${stem.type} for beats and onsets.`} placement="top" offset={[0, 48]}>
-                                                    <button
-                                                        className="btn btn-secondary text-xs py-1 px-2 border border-gray-700 hover:border-indigo-500/50 flex justify-center items-center gap-2"
-                                                        onClick={() => handleAnalyzeLocal(stem.path, stem.type)}
-                                                        disabled={isProcessing}
-                                                    >
-                                                        <span style={{ color: stem.color, fontSize: '8px' }}>⬤</span>
-                                                        {stem.type}
-                                                    </button>
+                                                    <span>
+                                                        <button
+                                                            className="btn btn-secondary text-xs py-1 px-2 border border-gray-700 hover:border-indigo-500/50 flex justify-center items-center gap-2"
+                                                            onClick={() => handleAnalyzeLocal(stem.path, stem.type)}
+                                                            disabled={isProcessing}
+                                                        >
+                                                            <span style={{ color: stem.color, fontSize: '8px' }}>⬤</span>
+                                                            {stem.type}
+                                                        </button>
+                                                    </span>
                                                 </Tippy>
                                             ))}
                                         </div>
@@ -2493,6 +2353,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         clips={clips}
                         onSelectionChange={(sel) => setActiveSelection(sel)}
                         onSaveFrame={handleSaveVideoFrame}
+                        onClipContextMenu={(id, duration, startTime, x, y) => setDurationPopup({ clipId: id, duration, startTime, x, y })}
                     />
                 </CollapsibleCard>
             )}
@@ -2509,22 +2370,26 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         <h4 className="text-sm font-semibold text-gray-400">Audio Preview</h4>
                         <div className="flex gap-2">
                             <Tippy content="Play the master track along with any unmuted preview audio." placement="top" offset={[0, 48]}>
-                                <button
-                                    className="btn btn-primary flex items-center justify-center gap-1 px-4 py-1.5"
-                                    onClick={handlePlayMain}
-                                    disabled={!audioUrl}
-                                >
-                                    <span className="text-lg">▶</span> Play
-                                </button>
+                                <span>
+                                    <button
+                                        className="btn btn-primary flex items-center justify-center gap-1 px-4 py-1.5"
+                                        onClick={handlePlayMain}
+                                        disabled={!audioUrl}
+                                    >
+                                        <span className="text-lg">▶</span> Play
+                                    </button>
+                                </span>
                             </Tippy>
                             <Tippy content="Pause playback across all tracks." placement="top" offset={[0, 48]}>
-                                <button
-                                    className="btn btn-secondary flex items-center justify-center gap-1 px-4 py-1.5"
-                                    onClick={handlePauseMain}
-                                    disabled={!audioUrl}
-                                >
-                                    <span className="text-lg">⏸</span> Pause
-                                </button>
+                                <span>
+                                    <button
+                                        className="btn btn-secondary flex items-center justify-center gap-1 px-4 py-1.5"
+                                        onClick={handlePauseMain}
+                                        disabled={!audioUrl}
+                                    >
+                                        <span className="text-lg">⏸</span> Pause
+                                    </button>
+                                </span>
                             </Tippy>
                         </div>
                     </div>
@@ -2593,9 +2458,24 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
                         <div className="flex flex-col gap-1 items-end">
                             <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Duration</label>
-                            <span className="text-xs text-gray-300 font-mono">
-                                {duration > 0 ? `${duration.toFixed(2)}s` : '--'}
-                            </span>
+                            {audioFile ? (
+                                <span className="text-xs text-gray-300 font-mono">
+                                    {duration > 0 ? `${duration.toFixed(2)}s` : '--'}
+                                </span>
+                            ) : (
+                                <div className="flex items-center gap-1 group">
+                                    <input
+                                        type="number"
+                                        step="0.1"
+                                        min="1"
+                                        value={duration}
+                                        onChange={(e) => handleUpdateDuration(parseFloat(e.target.value) || 0)}
+                                        className="bg-gray-800 text-indigo-300 text-xs font-mono rounded border border-gray-600 outline-none focus:border-indigo-500 w-20 px-2 py-0.5 text-right transition-all hover:border-indigo-500/50"
+                                        title="Manually edit project duration (Blank projects only)"
+                                    />
+                                    <span className="text-[10px] text-gray-500 font-bold group-hover:text-indigo-400">s</span>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -2620,7 +2500,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
 
 
-            {/* Calculate tooltips for legend based on marker data */}
             {
                 (() => {
                     const getCountData = (filterFn: (m: AudioMarker) => boolean) => {
@@ -2757,23 +2636,27 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 <h4 className="text-sm font-semibold text-gray-400">Project Stems Controls</h4>
                                                 <div className="flex gap-4 w-1/2">
                                                     <Tippy content="Synchronize and play all stem tracks from the beginning." placement="top" offset={[0, 48]}>
-                                                        <button
-                                                            className="btn w-full mt-2 btn-primary flex items-center justify-center gap-2"
-                                                            onClick={handlePlayStems}
-                                                            disabled={!audioUrl}
-                                                        >
-                                                            <span className="text-lg">▶</span> Play Stems
-                                                        </button>
+                                                        <span>
+                                                            <button
+                                                                className="btn w-full mt-2 btn-primary flex items-center justify-center gap-2"
+                                                                onClick={handlePlayStems}
+                                                                disabled={!audioUrl}
+                                                            >
+                                                                <span className="text-lg">▶</span> Play Stems
+                                                            </button>
+                                                        </span>
                                                     </Tippy>
 
                                                     <Tippy content="Pause all stem track previews." placement="top" offset={[0, 48]}>
-                                                        <button
-                                                            className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-2"
-                                                            onClick={handlePauseAll}
-                                                            disabled={!audioUrl}
-                                                        >
-                                                            <span className="text-lg">⏸</span> Pause
-                                                        </button>
+                                                        <span>
+                                                            <button
+                                                                className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-2"
+                                                                onClick={handlePauseAll}
+                                                                disabled={!audioUrl}
+                                                            >
+                                                                <span className="text-lg">⏸</span> Pause
+                                                            </button>
+                                                        </span>
                                                     </Tippy>
                                                 </div>
                                             </div>
@@ -2786,20 +2669,24 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                         </div>
                                                         <div className="flex gap-2">
                                                             <Tippy content={`Listen to the ${stem.type} stem only.`} placement="top" offset={[0, 48]}>
-                                                                <button
-                                                                    className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                                                    onClick={() => handlePlayStem(index)}
-                                                                >
-                                                                    ▶ Play
-                                                                </button>
+                                                                <span>
+                                                                    <button
+                                                                        className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
+                                                                        onClick={() => handlePlayStem(index)}
+                                                                    >
+                                                                        ▶ Play
+                                                                    </button>
+                                                                </span>
                                                             </Tippy>
                                                             <Tippy content={`Pause ${stem.type} preview.`} placement="top" offset={[0, 48]}>
-                                                                <button
-                                                                    className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                                                    onClick={() => handlePauseStem(index)}
-                                                                >
-                                                                    ⏸ Pause
-                                                                </button>
+                                                                <span>
+                                                                    <button
+                                                                        className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
+                                                                        onClick={() => handlePauseStem(index)}
+                                                                    >
+                                                                        ⏸ Pause
+                                                                    </button>
+                                                                </span>
                                                             </Tippy>
                                                         </div>
                                                     </div>
@@ -2820,54 +2707,78 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             {/* Controls Container — outside collapsible section to stay persistent */}
                             <div className="controls-container flex flex-wrap gap-4 mt-8 bg-gray-900/40 p-6 rounded-xl border border-gray-800/80">
                                 <Tippy content="Queue a ComfyUI video generation task based on the current selection's duration." placement="top" offset={[0, 48]}>
-                                    <button
-                                        className="btn btn-primary shadow-lg shadow-indigo-500/20"
-                                        onClick={handleGenerateClipFromRegion}
-                                        disabled={!activeSelection || isAnalyzing}
-                                    >
-                                        Generate Clip from Selection
-                                    </button>
+                                    <span>
+                                        <button
+                                            className="btn btn-primary shadow-lg shadow-indigo-500/20"
+                                            onClick={handleGenerateClipFromRegion}
+                                            disabled={!activeSelection || isAnalyzing}
+                                        >
+                                            Generate Clip from Selection
+                                        </button>
+                                    </span>
                                 </Tippy>
 
                                 <div className="flex gap-2">
                                     <Tippy content="Step 1: Load all media into Resolve bin (Audio & Video)" placement="top" offset={[0, 48]}>
-                                        <button
-                                            className="btn bg-indigo-700 hover:bg-indigo-600 text-white border-none rounded font-bold text-sm"
-                                            onClick={handleExportMediaOnly}
-                                            disabled={clips.length === 0}
-                                        >
-                                            🎬 (1) Export Load Media Script
-                                        </button>
+                                        <span>
+                                            <button
+                                                className="btn bg-indigo-700 hover:bg-indigo-600 text-white border-none rounded font-bold text-sm"
+                                                onClick={handleExportMediaOnly}
+                                                disabled={clips.length === 0}
+                                            >
+                                                🎬 (1) Export Load Media Script
+                                            </button>
+                                        </span>
                                     </Tippy>
                                     <Tippy content="Step 2: Place media items from bin onto timeline at designed positions" placement="top" offset={[0, 48]}>
-                                        <button
-                                            className="btn bg-indigo-800 hover:bg-indigo-700 text-white border-none rounded font-bold text-sm"
-                                            onClick={handleExportManifest}
-                                            disabled={clips.length === 0}
-                                        >
-                                            🎨 (2) Place Media Script
-                                        </button>
+                                        <span>
+                                            <button
+                                                className="btn bg-indigo-800 hover:bg-indigo-700 text-white border-none rounded font-bold text-sm"
+                                                onClick={handleExportManifest}
+                                                disabled={clips.length === 0}
+                                            >
+                                                🎨 (2) Place Media Script
+                                            </button>
+                                        </span>
                                     </Tippy>
                                     <Tippy content="Step 3: Set all detected beat markers and onsets onto the Resolve timeline" placement="top" offset={[0, 48]}>
-                                        <button
-                                            className="btn bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded font-bold text-sm"
-                                            onClick={handleExportMarkers}
-                                            disabled={mainMarkers.length === 0 && stems.length === 0}
-                                        >
-                                            🚩 (3) Set Beat Markers
-                                        </button>
+                                        <span>
+                                            <button
+                                                className="btn bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded font-bold text-sm"
+                                                onClick={handleExportMarkers}
+                                                disabled={mainMarkers.length === 0 && stems.length === 0}
+                                            >
+                                                🚩 (3) Set Beat Markers
+                                            </button>
+                                        </span>
                                     </Tippy>
                                 </div>
 
-                                <Tippy content="Save all current project data, markers, and clip status." placement="top" offset={[0, 48]}>
-                                    <button
-                                        className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm ml-auto"
-                                        onClick={handleSaveToProject}
-                                        disabled={!activeProject}
-                                    >
-                                        💾 Save to Project
-                                    </button>
-                                </Tippy>
+                                <div className="flex gap-2 ml-auto">
+                                    <Tippy content="Scan the project folder for generated videos that might have been missed." placement="top" offset={[0, 48]}>
+                                        <span>
+                                            <button
+                                                className="btn bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded font-bold text-sm"
+                                                onClick={handleSyncGeneratedVideos}
+                                                disabled={!activeProject}
+                                            >
+                                                🔄 Sync Videos
+                                            </button>
+                                        </span>
+                                    </Tippy>
+
+                                    <Tippy content="Save all current project data, markers, and clip status." placement="top" offset={[0, 48]}>
+                                        <span>
+                                            <button
+                                                className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm"
+                                                onClick={() => handleSaveToProject()}
+                                                disabled={!activeProject}
+                                            >
+                                                💾 Save Project
+                                            </button>
+                                        </span>
+                                    </Tippy>
+                                </div>
                             </div>
 
                             {/* Project Timeline Table */}
@@ -2911,8 +2822,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                     onUpdateClipEndTime={handleUpdateClipEndTime}
                                     onRemoveClip={handleRemoveClip}
                                     onPickImage={handlePickImage}
-                                    onGenerateClip={handleGenerateTimelineClip}
-                                    onError={(msg) => onStatusChange && onStatusChange(`Table Error: ${msg}`)}
+                                    onGenerateClip={onGenerateVideo || (() => {})}
+                                    onError={(msg) => onStatusChange?.(msg)}
                                 />
                             </div>
 
@@ -2936,6 +2847,21 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     );
                 })()
             }
+
+            {durationPopup && (
+                <DurationEditPopup 
+                    clipId={durationPopup.clipId}
+                    initialDuration={durationPopup.duration}
+                    startTime={durationPopup.startTime}
+                    frameRate={activeProject?.frameRate || 20}
+                    position={{ x: durationPopup.x, y: durationPopup.y }}
+                    onClose={() => setDurationPopup(null)}
+                    onSave={(id, newDur) => {
+                        handleUpdateClipEndTime(id, durationPopup.startTime + newDur);
+                        setDurationPopup(null);
+                    }}
+                />
+            )}
 
         </div >
     );

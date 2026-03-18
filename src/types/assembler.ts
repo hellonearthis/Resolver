@@ -11,7 +11,7 @@ export interface VideoClip {
     duration: number;
     endTime: number;
     track: number; // 1 or 2 for checkerboarding
-    status: 'pending' | 'generating' | 'done' | 'error';
+    status: 'pending' | 'queued' | 'generating' | 'done' | 'error';
     videoPath?: string;
     generatedVideos?: string[]; // Array of generated video paths, if multiple variations exist
     source: 'main' | 'stem' | 'video';
