@@ -196,12 +196,23 @@ function App() {
   const handleResetStuckStatuses = useCallback(() => {
     if (!activeProject) return;
     const stuckClips = activeProject.clips?.filter(c => c.status === 'generating' || c.status === 'queued') || [];
+    
+    // Also reset the internal processing state
+    setIsProcessing(false);
+    
     if (stuckClips.length > 0) {
       addLog(`Manually resetting ${stuckClips.length} stuck statuses for "${activeProject.name}"`);
       const cleanedClips = activeProject.clips?.map(c => 
         (c.status === 'generating' || c.status === 'queued') ? { ...c, status: 'pending' as const } : c
       );
       handleUpdateProject(activeProject.id, { clips: cleanedClips });
+
+      // Update queue items too
+      setVideoQueue(prev => prev.map(item => 
+        (item.status === 'processing' || item.status === 'queued') 
+          ? { ...item, status: 'queued' } // Reset to queued so it can retry, or remove if desired
+          : item
+      ));
     } else {
       addLog("No stuck statuses found in current project.");
     }
@@ -385,7 +396,6 @@ function App() {
 
   // --- Queue Processor Effect ---
   useEffect(() => {
-    let active = true;
     const processNext = async () => {
       if (isProcessing || isQueuePaused) return;
 
@@ -423,18 +433,15 @@ function App() {
 
       const result = await handleGenerateVideo(nextItem);
       
-      if (active) {
-        setVideoQueue(prev => prev.map(item => 
-          item.id === nextItem.id 
-            ? { ...item, status: (result?.success ? 'done' : 'error'), error: result?.error } 
-            : item
-        ));
-        setIsProcessing(false);
-      }
+      setVideoQueue(prev => prev.map(item => 
+        item.id === nextItem.id 
+          ? { ...item, status: (result?.success ? 'done' : 'error'), error: result?.error } 
+          : item
+      ));
+      setIsProcessing(false);
     };
 
     processNext();
-    return () => { active = false; };
   }, [videoQueue, isQueuePaused, isProcessing, handleGenerateVideo]);
 
   const handleCreateBlankProject = async (projectName?: string) => {

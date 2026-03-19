@@ -180,6 +180,7 @@ export const waitForPromptWebSocket = (
         let ws: WebSocket;
         let resolved = false;
         let connectionTimeout: ReturnType<typeof setTimeout>;
+        let safetyPollInterval: ReturnType<typeof setInterval>;
 
         // Helper: look up a human-readable node title from the workflow
         const getNodeTitle = (nodeId: string): string => {
@@ -192,15 +193,45 @@ export const waitForPromptWebSocket = (
 
         const cleanup = () => {
             clearTimeout(connectionTimeout);
+            clearInterval(safetyPollInterval);
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.close();
             }
         };
 
-        // Fallback: poll /history if WebSocket fails
+        const resolveWithHistory = async () => {
+            if (resolved) return;
+            cleanup();
+            resolved = true;
+            // Small delay to let ComfyUI finalize history
+            setTimeout(async () => {
+                try {
+                    const res = await nodeFetch(`${COMFY_API_URL}/history/${promptId}`);
+                    if (res.ok) {
+                        const history = await res.json();
+                        if (history[promptId]?.status?.status_str === 'error') {
+                            const msgs = history[promptId].status.messages;
+                            let errMsg = 'ComfyUI reported an error';
+                            if (msgs?.[1]?.exception_message) {
+                                errMsg = `ComfyUI Error (${msgs[1].node_type}): ${msgs[1].exception_message}`;
+                            }
+                            reject(new Error(errMsg));
+                        } else {
+                            resolve(history[promptId]?.outputs || {});
+                        }
+                    } else {
+                        resolve({});
+                    }
+                } catch (e) {
+                    reject(e);
+                }
+            }, 600);
+        };
+
+        // Fallback: poll /history if WebSocket fails or as a safety net
         const fallbackToPolling = () => {
             if (resolved) return;
-            console.warn('[ComfyProgress] WebSocket unavailable, falling back to polling.');
+            console.warn('[ComfyProgress] WebSocket unavailable or safety net triggered, falling back to polling.');
             if (onProgress) onProgress('Processing... (polling mode)');
 
             const interval = setInterval(async () => {
@@ -226,7 +257,10 @@ export const waitForPromptWebSocket = (
                 } catch (e) {
                     console.error('[ComfyProgress] Polling error:', e);
                 }
-            }, 1500);
+            }, 2000);
+            
+            // Return the interval so it can be cleared if needed
+            return interval;
         };
 
         try {
@@ -240,6 +274,20 @@ export const waitForPromptWebSocket = (
                 }
             }, 3000);
 
+            // Safety net: check history every 8 seconds regardless of WebSocket
+            safetyPollInterval = setInterval(async () => {
+                try {
+                    const res = await nodeFetch(`${COMFY_API_URL}/history/${promptId}`);
+                    if (res.ok) {
+                        const history = await res.json();
+                        if (history[promptId] && !resolved) {
+                            console.log('[ComfyProgress] Safety poll detected completion.');
+                            resolveWithHistory();
+                        }
+                    }
+                } catch (e) {}
+            }, 8000);
+
             ws.onopen = () => {
                 clearTimeout(connectionTimeout);
                 console.log('[ComfyProgress] WebSocket connected');
@@ -251,15 +299,11 @@ export const waitForPromptWebSocket = (
                     const msg = JSON.parse(event.data);
                     const { type, data } = msg;
 
-                    // Only process messages for our prompt
-                    // Some messages don't include prompt_id (e.g. status), skip those checks
-
                     if (type === 'execution_start') {
                         if (data.prompt_id === promptId) {
                             if (onProgress) onProgress('Execution starting...');
                         }
                     } else if (type === 'execution_cached') {
-                        // Nodes that were cached and skipped
                         if (data.prompt_id === promptId && data.nodes?.length) {
                             if (onProgress) onProgress(`Cached ${data.nodes.length} nodes, skipping...`);
                         }
@@ -267,49 +311,37 @@ export const waitForPromptWebSocket = (
                         if (data.prompt_id === promptId || !data.prompt_id) {
                             if (data.node === null) {
                                 // Execution complete — fetch history to get outputs
-                                cleanup();
-                                resolved = true;
-                                // Small delay to let ComfyUI finalize history
-                                setTimeout(async () => {
-                                    try {
-                                        const res = await nodeFetch(`${COMFY_API_URL}/history/${promptId}`);
-                                        if (res.ok) {
-                                            const history = await res.json();
-                                            if (history[promptId]?.status?.status_str === 'error') {
-                                                const msgs = history[promptId].status.messages;
-                                                let errMsg = 'ComfyUI reported an error';
-                                                if (msgs?.[1]?.exception_message) {
-                                                    errMsg = `ComfyUI Error (${msgs[1].node_type}): ${msgs[1].exception_message}`;
-                                                }
-                                                reject(new Error(errMsg));
-                                            } else {
-                                                resolve(history[promptId]?.outputs || {});
-                                            }
-                                        } else {
-                                            resolve({});
-                                        }
-                                    } catch (e) {
-                                        reject(e);
-                                    }
-                                }, 500);
+                                console.log('[ComfyProgress] Execution signal: Idle/Complete');
+                                resolveWithHistory();
                             } else {
                                 const title = getNodeTitle(data.node);
                                 if (onProgress) onProgress(`Running: ${title}...`);
                             }
+                        } else if (data.prompt_id !== promptId && data.node !== null) {
+                            // Another prompt is running. If ours was running but we missed the end,
+                            // this might be a hint to check history.
+                            // We don't resolve immediately here to avoid race conditions, 
+                            // as the safety poll will catch it anyway.
                         }
                     } else if (type === 'progress') {
-                        // Step-level progress within a node (e.g. KSampler steps)
                         const { value, max, node } = data;
                         const pct = Math.round((value / max) * 100);
                         const title = node ? getNodeTitle(node) : 'Processing';
                         if (onProgress) onProgress(`${title}: Step ${value}/${max} (${pct}%)`, pct);
+                    } else if (type === 'execution_success' || type === 'execution_complete') {
+                        if (data.prompt_id === promptId) {
+                            console.log(`[ComfyProgress] Explicit completion signal: ${type}`);
+                            resolveWithHistory();
+                        }
                     } else if (type === 'execution_error') {
-                        cleanup();
-                        resolved = true;
-                        const errMsg = data.exception_message
-                            ? `ComfyUI Error (${data.node_type || 'unknown'}): ${data.exception_message}`
-                            : 'ComfyUI execution error';
-                        reject(new Error(errMsg));
+                        if (data.prompt_id === promptId || !data.prompt_id) {
+                            cleanup();
+                            resolved = true;
+                            const errMsg = data.exception_message
+                                ? `ComfyUI Error (${data.node_type || 'unknown'}): ${data.exception_message}`
+                                : 'ComfyUI execution error';
+                            reject(new Error(errMsg));
+                        }
                     }
                 } catch (e) {
                     // Non-JSON message or parse error, ignore
@@ -326,6 +358,7 @@ export const waitForPromptWebSocket = (
 
             ws.onclose = () => {
                 if (!resolved) {
+                    cleanup();
                     fallbackToPolling();
                 }
             };
@@ -335,3 +368,4 @@ export const waitForPromptWebSocket = (
         }
     });
 };
+

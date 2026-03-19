@@ -144,6 +144,8 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
 
             const updatedClips = cards.map(clip => {
                 const safeLabel = clip.label.replace(/[^a-z0-9]/gi, '_');
+                
+                // 1. Identify which videos currently exist in the videos folder for this clip
                 const matchingFiles = files.filter((f: string) => {
                     const regex = new RegExp(`^${safeLabel}_take(\\d+)\\.mp4$`, 'i');
                     return regex.test(f);
@@ -155,21 +157,39 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                     };
                 }).sort((a: any, b: any) => b.take - a.take);
 
-                if (matchingFiles.length > 0) {
-                    const existingVideos = clip.generatedVideos || [];
-                    const foundPaths = matchingFiles.map((m: any) => m.fullPath);
-                    const combinedVideos = Array.from(new Set([...existingVideos, ...foundPaths]));
+                const foundPaths = matchingFiles.map((m: any) => m.fullPath);
+                
+                // 2. Cross-reference with existing project data to catch deleted or manual additions
+                const existingVideos = clip.generatedVideos || [];
+                // Only keep existing videos that still exist on disk
+                const stillExisting = existingVideos.filter((p: string) => fs.existsSync(p));
+                
+                // Combine and deduplicate
+                const combinedVideos = Array.from(new Set([...stillExisting, ...foundPaths]));
+                
+                // 3. Check active video path
+                let currentVideoPath = clip.videoPath;
+                const activeExists = currentVideoPath ? fs.existsSync(currentVideoPath) : false;
+
+                // Determine if we need an update
+                const videosChanged = combinedVideos.length !== existingVideos.length;
+                const activeMissing = currentVideoPath && !activeExists;
+                const statusUpdate = (combinedVideos.length > 0 && clip.status !== 'done');
+
+                if (videosChanged || activeMissing || statusUpdate) {
+                    updateCount++;
                     
-                    if (combinedVideos.length !== existingVideos.length || clip.status !== 'done') {
-                        updateCount++;
-                        const latestVideo = matchingFiles[0].fullPath; 
-                        return {
-                            ...clip,
-                            status: 'done' as const,
-                            videoPath: latestVideo,
-                            generatedVideos: combinedVideos
-                        };
+                    // If active video is missing, try to pick the latest take
+                    if (activeMissing || !currentVideoPath) {
+                        currentVideoPath = matchingFiles.length > 0 ? matchingFiles[0].fullPath : (combinedVideos.length > 0 ? combinedVideos[0] : undefined);
                     }
+
+                    return {
+                        ...clip,
+                        status: combinedVideos.length > 0 ? 'done' as const : (clip.status === 'done' ? 'pending' : clip.status),
+                        videoPath: currentVideoPath,
+                        generatedVideos: combinedVideos
+                    };
                 }
                 return clip;
             });
