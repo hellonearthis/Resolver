@@ -201,14 +201,16 @@ export function useProjectStorage() {
 
     /**
      * Updates an existing project by ID with partial data and commits changes to disk.
+     * Supports either a partial update object or a functional update.
      * @param id The ID of the project to update
-     * @param updates The new data to merge into the project
+     * @param updates The new data to merge into the project, or a function returning updates
      */
-    const updateProject = useCallback((id: string, updates: Partial<BeatProject>) => {
-        console.log(`[useProjectStorage] updateProject called for ${id}`, Object.keys(updates));
+    const updateProject = useCallback((id: string, updates: Partial<BeatProject> | ((prev: BeatProject) => Partial<BeatProject>)) => {
+        console.log(`[useProjectStorage] updateProject called for ${id}`);
         setProjects(prev => prev.map(p => {
             if (p.id === id) {
-                const updatedProject = { ...p, ...updates, updatedAt: new Date().toISOString() };
+                const appliedUpdates = typeof updates === 'function' ? updates(p) : updates;
+                const updatedProject = { ...p, ...appliedUpdates, updatedAt: new Date().toISOString() };
                 // Save to file and use the returned object with resolved outputDir
                 const finalProject = saveProjectFile(updatedProject);
                 return finalProject;

@@ -118,7 +118,7 @@ function App() {
     }
   }, [activeProjectId]); // Only run when changing project IDs
 
-  const handleUpdateProject = (id: string, updates: Partial<BeatProject>) => {
+  const handleUpdateProject = (id: string, updates: Partial<BeatProject> | ((prev: BeatProject) => Partial<BeatProject>)) => {
     updateProject(id, updates);
   };
 
@@ -142,11 +142,10 @@ function App() {
       };
       
       // Update clip status in project
-      const project = projects.find(p => p.id === projectId);
-      if (project) {
-        const updatedClips = project.clips?.map(c => c.id === clipId ? { ...c, status: 'queued' as const } : c);
-        handleUpdateProject(projectId, { clips: updatedClips });
-      }
+      handleUpdateProject(projectId, (prevProject: BeatProject) => {
+        const updatedClips = prevProject.clips?.map(c => c.id === clipId ? { ...c, status: 'queued' as const } : c);
+        return { clips: updatedClips };
+      });
 
       return [...prev, newItem];
     });
@@ -237,10 +236,12 @@ function App() {
 
     try {
       // 1. Update status to processing (already set in queue, but sync to project)
-      const generatingClips = project.clips?.map((c: VideoClip) => 
-        c.id === clipId ? { ...c, status: 'generating' as const } : c
-      );
-      handleUpdateProject(project.id, { clips: generatingClips });
+      handleUpdateProject(project.id, (prev) => {
+        const generatingClips = prev.clips?.map((c: VideoClip) => 
+          c.id === clipId ? { ...c, status: 'generating' as const } : c
+        );
+        return { clips: generatingClips };
+      });
 
       const frameRate = project.frameRate || 20;
       addLog(`[Queue] Processing "${clipToUpdate.label}"...`);
@@ -367,29 +368,32 @@ function App() {
       fs.copyFileSync(latestSourcePath, destPath);
       
       // 7. Success Update
-      const finalClips = project.clips?.map((c: VideoClip) => {
-        if (c.id === clipId) {
-          return {
-            ...c,
-            status: 'done' as const,
-            videoPath: destPath,
-            generatedVideos: [...(c.generatedVideos || []), destPath]
-          };
-        }
-        return c;
+      handleUpdateProject(project.id, (prev: BeatProject) => {
+        const finalClips = prev.clips?.map((c: any) => {
+          if (c.id === clipId) {
+            return {
+              ...c,
+              status: 'done' as const,
+              videoPath: destPath,
+              generatedVideos: [...(c.generatedVideos || []), destPath]
+            };
+          }
+          return c;
+        });
+        return { clips: finalClips };
       });
-
-      handleUpdateProject(project.id, { clips: finalClips });
       addLog(`Successfully generated video for "${clipToUpdate.label}"`);
       return { success: true };
 
     } catch (err: any) {
       console.error('Generation Error:', err);
       addLog(`Error generating clip: ${err.message}`);
-      const errorClips = project.clips?.map((c: VideoClip) => 
-        c.id === clipId ? { ...c, status: 'error' as const } : c
-      );
-      handleUpdateProject(project.id, { clips: errorClips });
+      handleUpdateProject(project.id, (prev: BeatProject) => {
+        const errorClips = prev.clips?.map((c: any) => 
+          c.id === clipId ? { ...c, status: 'error' as const } : c
+        );
+        return { clips: errorClips };
+      });
       return { success: false, error: err.message };
     }
   }, [projects, comfyConnected, comfyOutputDir, handleUpdateProject]);
@@ -408,11 +412,10 @@ function App() {
       setVideoQueue(prev => prev.map(item => item.id === nextItem.id ? { ...item, status: 'processing' } : item));
 
       // Update clip status in project to 'generating'
-      const project = projects.find(p => p.id === nextItem.projectId);
-      if (project) {
-        const updatedClips = project.clips?.map(c => c.id === nextItem.clipId ? { ...c, status: 'generating' as const } : c);
-        handleUpdateProject(nextItem.projectId, { clips: updatedClips });
-      }
+      handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
+        const updatedClips = prev.clips?.map((c: any) => c.id === nextItem.clipId ? { ...c, status: 'generating' as const } : c);
+        return { clips: updatedClips };
+      });
 
       // Health check ComfyUI before starting
       const isAlive = await checkComfyConnection();
@@ -422,10 +425,10 @@ function App() {
         setVideoQueue(prev => prev.map(item => item.id === nextItem.id ? { ...item, status: 'queued' } : item));
         
         // Reset clip status back to 'queued'
-        if (project) {
-          const resetClips = project.clips?.map(c => c.id === nextItem.clipId ? { ...c, status: 'queued' as const } : c);
-          handleUpdateProject(nextItem.projectId, { clips: resetClips });
-        }
+        handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
+          const resetClips = prev.clips?.map(c => c.id === nextItem.clipId ? { ...c, status: 'queued' as const } : c);
+          return { clips: resetClips };
+        });
 
         setIsProcessing(false);
         return;

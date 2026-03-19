@@ -182,7 +182,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                                                         : 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
                                         }`}
                                     >
-                                        <span>🎬</span> {card.status === 'generating' ? 'Generating...' : card.status === 'queued' ? 'Queued...' : 'Video'}
+                                        <span>🎬</span> {card.status === 'generating' ? 'Generating...' : card.status === 'queued' ? 'Queued...' : 'Generate'}
                                     </button>
                                 </span>
                             </Tippy>
