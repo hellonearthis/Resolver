@@ -35,6 +35,7 @@ export interface QueueItem {
   progress?: number;
   label: string;
   addedAt: number;
+  type?: 'video' | 'description';
 }
 
 function App() {
@@ -128,9 +129,9 @@ function App() {
   };
 
   // --- Queue Management Handlers ---
-  const handleAddToQueue = useCallback((clipId: string, projectId: string, label: string) => {
+  const handleAddToQueue = useCallback((clipId: string, projectId: string, label: string, type: 'video' | 'description' = 'video') => {
     setVideoQueue(prev => {
-      if (prev.find(item => item.clipId === clipId && (item.status === 'queued' || item.status === 'processing'))) {
+      if (prev.find(item => item.clipId === clipId && item.type === type && (item.status === 'queued' || item.status === 'processing'))) {
         return prev;
       }
       const newItem: QueueItem = {
@@ -138,19 +139,24 @@ function App() {
         clipId,
         projectId,
         status: 'queued',
-        label,
-        addedAt: Date.now()
+        label: type === 'description' ? `Description: ${label}` : label,
+        addedAt: Date.now(),
+        type
       };
       
       // Update clip status in project
       handleUpdateProject(projectId, (prevProject: BeatProject) => {
-        const updatedClips = prevProject.clips?.map(c => c.id === clipId ? { ...c, status: 'queued' as const } : c);
+        const updatedClips = prevProject.clips?.map(c => 
+          c.id === clipId 
+            ? (type === 'video' ? { ...c, status: 'queued' as const } : { ...c, isDescribing: true })
+            : c
+        );
         return { clips: updatedClips };
       });
 
       return [...prev, newItem];
     });
-    addLog(`Added clip "${label}" to generation queue.`);
+    addLog(`Added ${type === 'description' ? 'description task' : 'clip'} "${label}" to generation queue.`);
   }, [projects, handleUpdateProject]);
 
   const handleRemoveFromQueue = useCallback((id: string) => {
@@ -408,6 +414,82 @@ function App() {
     }
   }, [projects, comfyConnected, comfyOutputDir, handleUpdateProject]);
 
+  // --- Shared Image Description Logic ---
+  const handleGenerateDescription = useCallback(async (queueItem: QueueItem) => {
+    const { clipId, projectId } = queueItem;
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
+    
+    const clipToUpdate = project.clips?.find((c: VideoClip) => c.id === clipId);
+    if (!clipToUpdate || !clipToUpdate.startImagePath) {
+      addLog(`Error: Clip ${clipId} missing or has no start image.`);
+      return { success: false, error: "Missing start image" };
+    }
+
+    if (!comfyConnected) {
+      addLog('Cannot generate: ComfyUI is not connected.');
+      return { success: false, error: "ComfyUI not connected" };
+    }
+
+    try {
+      addLog(`[Queue] Describing "${clipToUpdate.label}"...`);
+
+      // 1. Upload image to ComfyUI
+      const uploadResult = await uploadFileToComfyUI(clipToUpdate.startImagePath);
+      if (!uploadResult) {
+        throw new Error("Failed to upload image to AI service.");
+      }
+
+      // 2. Prepare workflow
+      const workflow = JSON.parse(JSON.stringify(imageDescriptionWorkflow));
+      workflow["13"].inputs.image = uploadResult.name;
+
+      // 3. Queue and wait
+      const queueResult = await queuePrompt(workflow);
+      if (!queueResult) throw new Error("Failed to queue description task.");
+
+      const historyOutputs = await waitForPromptWebSocket(queueResult.prompt_id, workflow, (status, progress) => {
+        if (status) addLog(status);
+        if (progress !== undefined) {
+          setVideoQueue(prev => prev.map(item => item.id === queueItem.id ? { ...item, progress } : item));
+        }
+      });
+      
+      // 4. Extract description from Node 14
+      const outputNode = historyOutputs["14"];
+      let description = "";
+      
+      if (outputNode?.text && Array.isArray(outputNode.text) && outputNode.text.length > 0) {
+        description = outputNode.text[0];
+      } else if (typeof outputNode?.text === 'string') {
+        description = outputNode.text;
+      }
+
+      if (!description) throw new Error("AI returned an empty description.");
+
+      // 5. Update project with result
+      handleUpdateProject(project.id, (prevProject: BeatProject) => {
+        const updatedClips = (prevProject.clips || []).map(c => 
+          c.id === clipId ? { ...c, actionDescription: description, isDescribing: false } : c
+        );
+        return { clips: updatedClips };
+      });
+      addLog(`Successfully generated description for "${clipToUpdate.label}"`);
+      return { success: true };
+
+    } catch (err: any) {
+      console.error('Description Error:', err);
+      addLog(`Error generating description: ${err.message}`);
+      handleUpdateProject(project.id, (prev: BeatProject) => {
+        const errorClips = prev.clips?.map((c: any) => 
+          c.id === clipId ? { ...c, isDescribing: false } : c
+        );
+        return { clips: errorClips };
+      });
+      return { success: false, error: err.message };
+    }
+  }, [projects, comfyConnected, handleUpdateProject]);
+
   // --- Queue Processor Effect ---
   useEffect(() => {
     const processNext = async () => {
@@ -434,9 +516,13 @@ function App() {
         setIsQueuePaused(true);
         setVideoQueue(prev => prev.map(item => item.id === nextItem.id ? { ...item, status: 'queued' } : item));
         
-        // Reset clip status back to 'queued'
+        // Reset clip status back to 'queued' or clear describing
         handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
-          const resetClips = prev.clips?.map(c => c.id === nextItem.clipId ? { ...c, status: 'queued' as const } : c);
+          const resetClips = prev.clips?.map(c => 
+            c.id === nextItem.clipId 
+              ? (nextItem.type === 'description' ? { ...c, isDescribing: false } : { ...c, status: 'queued' as const })
+              : c
+          );
           return { clips: resetClips };
         });
 
@@ -444,7 +530,9 @@ function App() {
         return;
       }
 
-      const result = await handleGenerateVideo(nextItem);
+      const result = nextItem.type === 'description' 
+        ? await handleGenerateDescription(nextItem)
+        : await handleGenerateVideo(nextItem);
       
       setVideoQueue(prev => prev.map(item => 
         item.id === nextItem.id 
@@ -455,7 +543,7 @@ function App() {
     };
 
     processNext();
-  }, [videoQueue, isQueuePaused, isProcessing, handleGenerateVideo]);
+  }, [videoQueue, isQueuePaused, isProcessing, handleGenerateVideo, handleGenerateDescription]);
 
   const handleCreateBlankProject = async (projectName?: string) => {
     let initialOutputDir = undefined;
@@ -602,69 +690,7 @@ function App() {
         return;
       }
 
-      try {
-        // 1. Set loading state
-        handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
-          const updatedClips = (prevProject.clips || []).map(c => 
-            c.id === clipId ? { ...c, isDescribing: true } : c
-          );
-          return { ...prevProject, clips: updatedClips };
-        });
-        addLog("Sending image for AI description...");
-
-        // 2. Upload image to ComfyUI
-        const uploadResult = await uploadFileToComfyUI(clip.startImagePath);
-        if (!uploadResult) {
-          throw new Error("Failed to upload image to AI service.");
-        }
-
-        // 3. Prepare workflow
-        const workflow = JSON.parse(JSON.stringify(imageDescriptionWorkflow));
-        workflow["13"].inputs.image = uploadResult.name;
-
-        // 4. Queue and wait
-        const queueResult = await queuePrompt(workflow);
-        if (!queueResult) {
-          throw new Error("Failed to queue description task.");
-        }
-
-        const historyOutputs = await waitForPromptWebSocket(queueResult.prompt_id, workflow);
-        
-        // 5. Extract description from Node 14
-        const outputNode = historyOutputs["14"];
-        let description = "";
-        
-        if (outputNode?.text && Array.isArray(outputNode.text) && outputNode.text.length > 0) {
-          description = outputNode.text[0];
-        } else if (typeof outputNode?.text === 'string') {
-          description = outputNode.text;
-        }
-
-        if (!description) {
-          throw new Error("AI returned an empty description.");
-        }
-
-        // 6. Update project with result
-        handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
-          const updatedClips = (prevProject.clips || []).map(c => 
-            c.id === clipId ? { ...c, actionDescription: description, isDescribing: false } : c
-          );
-          return { ...prevProject, clips: updatedClips };
-        });
-        addLog("Image description retrieved successfully!");
-
-      } catch (err) {
-        console.error("AI Description Error:", err);
-        addLog(`Error: ${err instanceof Error ? err.message : String(err)}`);
-        
-        // Reset loading state on error
-        handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
-          const updatedClips = (prevProject.clips || []).map(c => 
-            c.id === clipId ? { ...c, isDescribing: false } : c
-          );
-          return { ...prevProject, clips: updatedClips };
-        });
-      }
+      handleAddToQueue(clip.id, activeProject.id, clip.label, 'description');
     };
 
     const onGenerateVideo = async (clipId: string): Promise<void> => {
