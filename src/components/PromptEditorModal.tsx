@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 interface PromptEditorModalProps {
     isOpen: boolean;
@@ -25,10 +26,10 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
 
     if (!isOpen) return null;
 
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+    const modalContent = (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200" style={{ isolation: 'isolate' }}>
             <div 
-                className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+                className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
@@ -52,7 +53,7 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
                         autoFocus
                         value={text}
                         onChange={(e) => setText(e.target.value)}
-                        className="w-full h-64 bg-gray-950 border border-gray-700 rounded-lg p-4 text-gray-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none font-mono text-sm leading-relaxed"
+                        className="w-full h-[500px] bg-gray-950 border border-gray-700 rounded-lg p-4 text-gray-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none font-mono text-sm leading-relaxed"
                         placeholder="Enter prompt text here..."
                     />
                 </div>
@@ -75,6 +76,8 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
             </div>
         </div>
     );
+
+    return createPortal(modalContent, document.body);
 };
 
 export default PromptEditorModal;

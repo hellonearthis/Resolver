@@ -4,6 +4,7 @@ import 'tippy.js/dist/tippy.css';
 import 'tippy.js/animations/shift-away.css';
 import type { VideoClip } from '../../types/assembler';
 import { formatTime, pathToMediaUrl, getLtxAlignedDuration } from '../../utils/timelineUtils';
+import PromptEditorModal from '../PromptEditorModal';
 
 interface CardProps {
     card: VideoClip;
@@ -12,6 +13,7 @@ interface CardProps {
     onGenerateVideo?: (clipId: string) => Promise<void>;
     onPickImage?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
+    onGetImageDescription?: (clipId: string) => Promise<void>;
     nextClipStartImage?: string;
     comfyConnected?: boolean;
     frameRate?: number;
@@ -24,11 +26,20 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
     onGenerateVideo,
     onPickImage,
     onCopyImageFromNext,
+    onGetImageDescription,
     nextClipStartImage,
     comfyConnected,
     frameRate = 20
 }) => {
     const [isHovered, setIsHovered] = React.useState(false);
+    const [startTippy, setStartTippy] = React.useState<any>(null);
+    const [endTippy, setEndTippy] = React.useState<any>(null);
+    const [isEditorOpen, setIsEditorOpen] = React.useState(false);
+    const [editorConfig, setEditorConfig] = React.useState<{
+        title: string;
+        initialValue: string;
+        onSave: (val: string) => void;
+    }>({ title: '', initialValue: '', onSave: () => {} });
 
     React.useEffect(() => {
         if (!isHovered) return;
@@ -60,39 +71,68 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
     const dialogueValue = card.notes?.dialogue || (card as any).dialogue || '';
     const soundValue = card.notes?.sound || (card as any).soundCues || '';
 
-    const renderImageOptions = (field: 'startImagePath' | 'endImagePath') => (
-        <div className="flex flex-col bg-[#11111e] border border-indigo-500/30 rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.5)] overflow-hidden min-w-[220px] backdrop-blur-xl">
-            <button 
-                onClick={() => onPickImage?.(card.id, field)}
-                className="flex items-center gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest"
-            >
-                <span className="text-sm">📂</span> Load Image
-            </button>
-            <button 
-                onClick={() => onCopyImageFromNext?.(card.id, field)}
-                className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest group/item"
-            >
-                <div className="flex items-center gap-3">
-                    <span className="text-sm">⏭️</span> Next Clip Start
-                </div>
-                {nextClipStartImage ? (
-                    <img 
-                        src={pathToMediaUrl(nextClipStartImage)} 
-                        alt="Preview" 
-                        className="w-10 h-6 object-cover rounded border border-indigo-500/30 group-hover/item:border-indigo-400 transition-all" 
-                    />
-                ) : (
-                    <span className="text-[8px] text-gray-500 italic lowercase tracking-normal">no image</span>
+    const renderImageOptions = (field: 'startImagePath' | 'endImagePath') => {
+        const instance = field === 'startImagePath' ? startTippy : endTippy;
+        
+        return (
+            <div className="flex flex-col bg-[#11111e] border border-indigo-500/30 rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.5)] overflow-hidden min-w-[220px] backdrop-blur-xl">
+                <button 
+                    onClick={() => {
+                        instance?.hide();
+                        onPickImage?.(card.id, field);
+                    }}
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest"
+                >
+                    <span className="text-sm">📂</span> Load Image
+                </button>
+                {field === 'startImagePath' && (
+                    <button 
+                        onClick={() => {
+                            instance?.hide();
+                            onGetImageDescription?.(card.id);
+                        }}
+                        disabled={!card.startImagePath || !comfyConnected || card.isDescribing}
+                        className={`flex items-center gap-3 px-4 py-3 transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest ${
+                            !card.startImagePath || !comfyConnected || card.isDescribing
+                                ? 'text-gray-600 cursor-not-allowed opacity-50'
+                                : 'hover:bg-indigo-600/20 text-indigo-400 hover:text-indigo-300 font-black text-[10px]'
+                        }`}
+                    >
+                        <span className="text-sm">🔍</span> {card.isDescribing ? 'Describing...' : 'Get Description'}
+                    </button>
                 )}
-            </button>
-            <button 
-                onClick={() => onUpdate(card.id, { [field]: undefined })}
-                className="flex items-center gap-3 px-4 py-3 hover:bg-red-600/20 text-[10px] font-black text-gray-300 hover:text-red-400 transition-all text-left uppercase tracking-widest"
-            >
-                <span className="text-sm">🗑️</span> Remove Image
-            </button>
-        </div>
-    );
+                <button 
+                    onClick={() => {
+                        instance?.hide();
+                        onCopyImageFromNext?.(card.id, field);
+                    }}
+                    className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest group/item"
+                >
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm">⏭️</span> Next Clip Start
+                    </div>
+                    {nextClipStartImage ? (
+                        <img 
+                            src={pathToMediaUrl(nextClipStartImage)} 
+                            alt="Preview" 
+                            className="w-10 h-6 object-cover rounded border border-indigo-500/30 group-hover/item:border-indigo-400 transition-all" 
+                        />
+                    ) : (
+                        <span className="text-[8px] text-gray-500 italic lowercase tracking-normal">no image</span>
+                    )}
+                </button>
+                <button 
+                    onClick={() => {
+                        instance?.hide();
+                        onUpdate(card.id, { [field]: undefined });
+                    }}
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-red-600/20 text-[10px] font-black text-gray-300 hover:text-red-400 transition-all text-left uppercase tracking-widest"
+                >
+                    <span className="text-sm">🗑️</span> Remove Image
+                </button>
+            </div>
+        );
+    };
 
     return (
         <div 
@@ -132,6 +172,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         content={renderImageOptions('startImagePath')} 
                         interactive={true} 
                         trigger="click" 
+                        onCreate={setStartTippy}
                         placement="bottom"
                         animation="shift-away"
                         theme="custom"
@@ -156,6 +197,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         content={renderImageOptions('endImagePath')} 
                         interactive={true} 
                         trigger="click" 
+                        onCreate={setEndTippy}
                         placement="bottom"
                         animation="shift-away"
                         theme="custom"
@@ -226,9 +268,37 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
 
             {/* Content Areas */}
             <div className="p-5 space-y-5 flex-1 overflow-y-auto">
+                {/* Image Description Box */}
+                <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Image description</label>
+                    <div className="relative">
+                        <textarea 
+                            className={`w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed ${card.isDescribing ? 'opacity-50' : ''}`}
+                            placeholder="AI generated image description will appear here..."
+                            value={card.actionDescription || ''}
+                            onChange={(e) => onUpdate(card.id, { actionDescription: e.target.value })}
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setEditorConfig({
+                                    title: "Edit Image Description",
+                                    initialValue: card.actionDescription || '',
+                                    onSave: (val) => onUpdate(card.id, { actionDescription: val })
+                                });
+                                setIsEditorOpen(true);
+                            }}
+                        />
+                        {card.isDescribing && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-lg">
+                                <span className="text-[10px] font-bold text-indigo-400 animate-pulse">Describing...</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
                 <div className="space-y-1">
                     <div className="flex justify-between items-center pr-1">
-                        <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Action Prompt</label>
+                        <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Clip Action</label>
                         <div className="flex gap-1">
                             <Tippy content={comfyConnected ? "Generate video for this shot." : "ComfyUI not connected."} placement="top" offset={[0, 48]}>
                                 <span>
@@ -253,11 +323,23 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                     </div>
                     <textarea 
                         className="w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed"
-                        placeholder="Describe the shot prompt..."
+                        placeholder="Describe the clip action for video generation..."
                         value={actionPromptValue}
                         onChange={(e) => onUpdate(card.id, { 
                             notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), action: e.target.value } 
                         })}
+                        onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setEditorConfig({
+                                title: "Edit Clip Action",
+                                initialValue: actionPromptValue,
+                                onSave: (val) => onUpdate(card.id, { 
+                                    notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), action: val } 
+                                })
+                            });
+                            setIsEditorOpen(true);
+                        }}
                     />
                 </div>
 
@@ -271,6 +353,18 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                             onChange={(e) => onUpdate(card.id, { 
                                 notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), dialogue: e.target.value } 
                             })}
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setEditorConfig({
+                                    title: "Edit Dialogue",
+                                    initialValue: dialogueValue,
+                                    onSave: (val) => onUpdate(card.id, { 
+                                        notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), dialogue: val } 
+                                    })
+                                });
+                                setIsEditorOpen(true);
+                            }}
                         />
                     </div>
                     <div className="space-y-1">
@@ -282,6 +376,18 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                             onChange={(e) => onUpdate(card.id, { 
                                 notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), sound: e.target.value } 
                             })}
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setEditorConfig({
+                                    title: "Edit Sound Cues",
+                                    initialValue: soundValue,
+                                    onSave: (val) => onUpdate(card.id, { 
+                                        notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), sound: val } 
+                                    })
+                                });
+                                setIsEditorOpen(true);
+                            }}
                         />
                     </div>
                 </div>
@@ -324,6 +430,17 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         </div>
                 </div>
             </div>
+
+            <PromptEditorModal 
+                isOpen={isEditorOpen}
+                title={editorConfig.title}
+                initialValue={editorConfig.initialValue}
+                onSave={(val) => {
+                    editorConfig.onSave(val);
+                    setIsEditorOpen(false);
+                }}
+                onCancel={() => setIsEditorOpen(false)}
+            />
         </div>
     );
 };

@@ -13,6 +13,7 @@ interface StoryboardModuleProps {
     onGenerateVideo?: (clipId: string) => Promise<void>;
     onPickImage?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
+    onGetImageDescription?: (clipId: string) => Promise<void>;
     comfyConnected?: boolean;
 }
 
@@ -22,6 +23,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
     onGenerateVideo,
     onPickImage,
     onCopyImageFromNext,
+    onGetImageDescription,
     comfyConnected
 }) => {
     const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
@@ -318,6 +320,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                     onGenerateVideo={onGenerateVideo}
                                     onPickImage={onPickImage}
                                     onCopyImageFromNext={onCopyImageFromNext}
+                                    onGetImageDescription={onGetImageDescription}
                                     nextClipStartImage={nextClip?.startImagePath}
                                     comfyConnected={comfyConnected}
                                 />

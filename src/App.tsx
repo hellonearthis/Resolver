@@ -17,6 +17,7 @@ import {
 import { getValidLtxFrameCount } from './utils/timelineUtils';
 import type { VideoClip } from './types/assembler';
 import workflowJsonTemplate from '../comfyui_workflows/video_ltx2_i2v.json';
+import imageDescriptionWorkflow from '../comfyui_workflows/llm_qwen3_image_discription_api.json';
 
 // Define types for Electron IPC
 declare global {
@@ -583,6 +584,80 @@ function App() {
       }
     };
 
+    const onGetImageDescription = async (clipId: string): Promise<void> => {
+      if (!activeProject?.clips || !comfyConnected) return;
+      
+      const clip = activeProject.clips.find(c => c.id === clipId);
+      if (!clip || !clip.startImagePath) {
+        addLog("No start image to describe.");
+        return;
+      }
+
+      try {
+        // 1. Set loading state
+        handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
+          const updatedClips = (prevProject.clips || []).map(c => 
+            c.id === clipId ? { ...c, isDescribing: true } : c
+          );
+          return { ...prevProject, clips: updatedClips };
+        });
+        addLog("Sending image for AI description...");
+
+        // 2. Upload image to ComfyUI
+        const uploadResult = await uploadFileToComfyUI(clip.startImagePath);
+        if (!uploadResult) {
+          throw new Error("Failed to upload image to AI service.");
+        }
+
+        // 3. Prepare workflow
+        const workflow = JSON.parse(JSON.stringify(imageDescriptionWorkflow));
+        workflow["13"].inputs.image = uploadResult.name;
+
+        // 4. Queue and wait
+        const queueResult = await queuePrompt(workflow);
+        if (!queueResult) {
+          throw new Error("Failed to queue description task.");
+        }
+
+        const historyOutputs = await waitForPromptWebSocket(queueResult.prompt_id, workflow);
+        
+        // 5. Extract description from Node 14
+        const outputNode = historyOutputs["14"];
+        let description = "";
+        
+        if (outputNode?.text && Array.isArray(outputNode.text) && outputNode.text.length > 0) {
+          description = outputNode.text[0];
+        } else if (typeof outputNode?.text === 'string') {
+          description = outputNode.text;
+        }
+
+        if (!description) {
+          throw new Error("AI returned an empty description.");
+        }
+
+        // 6. Update project with result
+        handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
+          const updatedClips = (prevProject.clips || []).map(c => 
+            c.id === clipId ? { ...c, actionDescription: description, isDescribing: false } : c
+          );
+          return { ...prevProject, clips: updatedClips };
+        });
+        addLog("Image description retrieved successfully!");
+
+      } catch (err) {
+        console.error("AI Description Error:", err);
+        addLog(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        
+        // Reset loading state on error
+        handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
+          const updatedClips = (prevProject.clips || []).map(c => 
+            c.id === clipId ? { ...c, isDescribing: false } : c
+          );
+          return { ...prevProject, clips: updatedClips };
+        });
+      }
+    };
+
     const onGenerateVideo = async (clipId: string): Promise<void> => {
       if (activeProject) {
         const clip = activeProject.clips?.find(c => c.id === clipId);
@@ -606,6 +681,7 @@ function App() {
             onGenerateVideo={onGenerateVideo}
             onPickImage={onPickImage}
             onCopyImageFromNext={onCopyImageFromNext}
+            onGetImageDescription={onGetImageDescription}
             comfyConnected={comfyConnected}
           />
         );

@@ -19,6 +19,8 @@ export interface VideoClip {
     label: string;
     startImagePath?: string;
     endImagePath?: string;
+    actionDescription?: string;
+    isDescribing?: boolean;
 
     // --- Storyboard & Narrative Metadata ---
     sceneNumber?: string;
