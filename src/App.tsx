@@ -8,11 +8,12 @@ import SettingsModule from './modules/SettingsModule';
 import WorkflowAnalyzerModule from './modules/WorkflowAnalyzerModule';
 import StoryboardModule from './modules/StoryboardModule';
 
-import { 
+import {
   checkComfyConnection, 
   queuePrompt, 
   uploadFileToComfyUI, 
-  waitForPromptWebSocket 
+  waitForPromptWebSocket,
+  convertAudioForComfyUI
 } from './services/comfyService';
 import { getValidLtxFrameCount } from './utils/timelineUtils';
 import type { VideoClip } from './types/assembler';
@@ -166,8 +167,10 @@ function App() {
         const project = projects.find(p => p.id === itemToRemove.projectId);
         if (project) {
           const updatedClips = project.clips?.map(c => 
-            (c.id === itemToRemove.clipId && (c.status === 'queued' || c.status === 'generating'))
-              ? { ...c, status: 'pending' as const } 
+            (c.id === itemToRemove.clipId)
+              ? (itemToRemove.type === 'description' 
+                   ? { ...c, isDescribing: false } 
+                   : (c.status === 'queued' || c.status === 'generating') ? { ...c, status: 'pending' as const } : c)
               : c
           );
           handleUpdateProject(itemToRemove.projectId, { clips: updatedClips });
@@ -188,8 +191,10 @@ function App() {
         const project = projects.find(p => p.id === item.projectId);
         if (project) {
           const updatedClips = project.clips?.map(c => 
-            (c.id === item.clipId && c.status === 'queued') 
-              ? { ...c, status: 'pending' as const } 
+            (c.id === item.clipId) 
+              ? (item.type === 'description' 
+                   ? { ...c, isDescribing: false } 
+                   : (c.status === 'queued' ? { ...c, status: 'pending' as const } : c))
               : c
           );
           handleUpdateProject(item.projectId, { clips: updatedClips });
@@ -201,16 +206,19 @@ function App() {
 
   const handleResetStuckStatuses = useCallback(() => {
     if (!activeProject) return;
-    const stuckClips = activeProject.clips?.filter(c => c.status === 'generating' || c.status === 'queued') || [];
+    const stuckClips = activeProject.clips?.filter(c => c.status === 'generating' || c.status === 'queued' || c.isDescribing) || [];
     
     // Also reset the internal processing state
     setIsProcessing(false);
     
     if (stuckClips.length > 0) {
       addLog(`Manually resetting ${stuckClips.length} stuck statuses for "${activeProject.name}"`);
-      const cleanedClips = activeProject.clips?.map(c => 
-        (c.status === 'generating' || c.status === 'queued') ? { ...c, status: 'pending' as const } : c
-      );
+      const cleanedClips = activeProject.clips?.map(c => {
+        let updated = { ...c };
+        if (c.status === 'generating' || c.status === 'queued') updated.status = 'pending' as const;
+        if (c.isDescribing) updated.isDescribing = false;
+        return updated;
+      });
       handleUpdateProject(activeProject.id, { clips: cleanedClips });
 
       // Update queue items too
@@ -301,7 +309,16 @@ function App() {
           absoluteAudioPath = path.resolve(project.outputDir || '', absoluteAudioPath);
         }
 
-        const uploadResult = await uploadFileToComfyUI(absoluteAudioPath);
+        // --- NEW: Convert to WAV if it's an MP3 or other format to avoid header errors ---
+        let finalPathToUpload = absoluteAudioPath;
+        const ext = path.extname(absoluteAudioPath).toLowerCase();
+        if (ext === '.mp3' || ext === '.m4a' || ext === '.aac' || ext === '.ogg') {
+            const wavPath = await convertAudioForComfyUI(absoluteAudioPath);
+            if (wavPath) finalPathToUpload = wavPath;
+            else console.warn(`Failed to convert ${absoluteAudioPath} to WAV, trying raw upload.`);
+        }
+
+        const uploadResult = await uploadFileToComfyUI(finalPathToUpload);
         if (uploadResult?.name) finalAudioName = uploadResult.name;
         else throw new Error(`Failed to upload audio to ComfyUI.`);
       }
@@ -503,9 +520,18 @@ function App() {
       // Update item to processing
       setVideoQueue(prev => prev.map(item => item.id === nextItem.id ? { ...item, status: 'processing' } : item));
 
-      // Update clip status in project to 'generating'
+      // Update clip state in project
       handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
-        const updatedClips = prev.clips?.map((c: any) => c.id === nextItem.clipId ? { ...c, status: 'generating' as const } : c);
+        const updatedClips = prev.clips?.map((c: any) => {
+          if (c.id === nextItem.clipId) {
+            if (nextItem.type === 'description') {
+              return { ...c, isDescribing: true };
+            } else {
+              return { ...c, status: 'generating' as const };
+            }
+          }
+          return c;
+        });
         return { clips: updatedClips };
       });
 
