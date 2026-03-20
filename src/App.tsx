@@ -306,14 +306,16 @@ function App() {
 
       if (workflow["98"]?.inputs) workflow["98"].inputs.image = finalImageName;
       if (workflow["92:3"]?.inputs) {
-        const actionText = clipToUpdate.notes?.action?.trim() || '';
+        const actionText = (clipToUpdate.notes?.action || (clipToUpdate as any).actionNotes || (clipToUpdate as any).promptText || '')?.trim() || '';
         const descText = clipToUpdate.actionDescription?.trim() || '';
         
         const promptParts = [];
-        if (actionText) promptParts.push(actionText);
         if (descText) promptParts.push(descText);
+        if (actionText) promptParts.push(`action: ${actionText}`);
         
-        workflow["92:3"].inputs.text = promptParts.length > 0 ? promptParts.join(", ") : clipToUpdate.label;
+        const combinedText = promptParts.length > 0 ? promptParts.join(", ") : clipToUpdate.label;
+        console.log("🎥 [Generate Video] Combined Prompt:", combinedText);
+        workflow["92:3"].inputs.text = combinedText;
       }
       const rng_seed = Math.floor(Math.random() * 1000000000000000);
       if (workflow["92:11"]?.inputs) workflow["92:11"].inputs.noise_seed = rng_seed;
