@@ -36,11 +36,13 @@ interface MusicVideoAssemblerModuleProps {
     onSelectProject: (id: string) => void;
     onCreateProject: (file: File, preferredOutputDir?: string) => BeatProject;
     onCreateBlankProject: (name?: string) => Promise<BeatProject>;
-    onUpdateProject: (id: string, updates: Partial<BeatProject>) => void;
+    onUpdateProject: (id: string, updates: Partial<BeatProject> | ((prev: BeatProject) => Partial<BeatProject>)) => void;
     onDeleteProject: (id: string) => void;
     onRefreshProjects: () => void;
     onStatusChange?: (msg: string) => void;
     onGenerateVideo?: (clipId: string) => Promise<void>;
+    onPickImage?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
+    onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     comfyConnected?: boolean;
     comfyOutputDir?: string;
     panelVisibility?: {
@@ -84,6 +86,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     onRefreshProjects,
     onStatusChange,
     onGenerateVideo,
+    onPickImage,
     comfyConnected,
     comfyOutputDir,
     panelVisibility,
@@ -96,7 +99,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
     const [mainMarkers, setMainMarkers] = useState<AudioMarker[]>([]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [clips, setClips] = useState<VideoClip[]>([]);
+    const clips = (activeProject?.clips || []) as VideoClip[];
     const [stems, setStems] = useState<StemData[]>([]);
     const stemSurfers = useRef<WaveSurfer[]>([]);
     const stemRegionsRefs = useRef<Map<number, any>>(new Map());
@@ -172,7 +175,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
         } else if (!activeProject) {
             lastProjectIdRef.current = null;
-            setClips([]);
             setDuration(0);
             setAudioUrl(null);
             setStems([]);
@@ -668,7 +670,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         if (onStatusChange && isNewProject) onStatusChange(`Loading project audio: ${project.audioFileName}`);
 
         // Always sync basic metadata
-        setClips(project.clips || []);
 
         try {
             // @ts-ignore
@@ -804,12 +805,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
 
             if (onStatusChange) onStatusChange("Ready.");
-            // 4. Load Clips
-            if (project.clips) {
-                setClips(project.clips);
-            } else {
-                setClips([]);
-            }
+            // 4. Load Clips (Already synced via props)
 
             // 5. Restore Video Timeline State
             if (project.videoPath && isNewProject) {
@@ -1000,7 +996,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             });
 
             if (updateCount > 0) {
-                setClips(updatedClips);
                 if (onStatusChange) onStatusChange(`Sync complete: Updated ${updateCount} clips with missing videos.`);
 
                 // Save immediately with the FRESH clips array to avoid stale closure issues
@@ -1591,7 +1586,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             label: `clip_${clips.length}`,
         };
 
-        setClips(prev => [...prev, newClip]);
+        onUpdateProject(activeProject!.id, (prev: BeatProject) => ({ clips: [...(prev.clips || []), newClip] }) as Partial<BeatProject>);
         setActiveSelection(null);
 
         // Clear interactive drag regions so only saved ones remain
@@ -1609,10 +1604,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     // Remove a clip/segment from the timeline
     const handleRemoveClip = (clipId: string) => {
         const filtered = clips.filter(c => c.id !== clipId);
-        setClips(filtered);
-        if (activeProject) {
-            onUpdateProject(activeProject.id, { clips: filtered });
-        }
+        onUpdateProject(activeProject!.id, { clips: filtered });
     };
 
     // Save clips to the active project
@@ -1692,28 +1684,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
     // Image picker for start/end images
     const handlePickImage = async (clipId: string, field: 'startImagePath' | 'endImagePath') => {
-        if (!activeProject?.outputDir) {
-            if (onStatusChange) onStatusChange('No project folder available. Save the project first.');
-            return;
-        }
-
-        const path = window.require('path');
-        const imagesDir = path.join(activeProject.outputDir, 'images');
-
-        const filePath = await ipcRenderer.invoke('open-image-dialog', imagesDir);
-
-        if (filePath) {
-            const updated = clips.map(c => c.id === clipId ? { ...c, [field]: filePath } : c);
-            setClips(updated);
-            if (activeProject) {
-                onUpdateProject(activeProject.id, { clips: updated });
-            }
+        if (onPickImage) {
+            onPickImage(clipId, field);
         }
     };
 
     const handleUpdateClipLabel = (clipId: string, newLabel: string) => {
         const updated = clips.map(c => c.id === clipId ? { ...c, label: newLabel } : c);
-        setClips(updated);
         if (activeProject) {
             onUpdateProject(activeProject.id, { clips: updated });
         }
@@ -1725,7 +1702,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 ? { ...c, notes: { ...(c.notes || { action: '', dialogue: '', sound: '' }), action: newPrompt } }
                 : c
         );
-        setClips(updated);
         if (activeProject) {
             onUpdateProject(activeProject.id, { clips: updated });
         }
@@ -1744,7 +1720,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
             return c;
         });
-        setClips(updated);
         if (activeProject) {
             onUpdateProject(activeProject.id, { clips: updated });
         }
@@ -1752,8 +1727,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
     const handleUpdateClipEndTime = (clipId: string, newEndTime: number) => {
         const frameRate = activeProject?.frameRate || 20;
-        setClips(prev => {
-            const sorted = [...prev].sort((a, b) => a.startTime - b.startTime);
+        onUpdateProject(activeProject!.id, (prev: BeatProject) => {
+            const currentClips = prev.clips || [];
+            const sorted = [...currentClips].sort((a, b) => a.startTime - b.startTime);
             const clipIndex = sorted.findIndex(c => c.id === clipId);
             if (clipIndex === -1) return prev;
             const current = sorted[clipIndex];
@@ -1767,7 +1743,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 sorted[i] = { ...sorted[i], startTime: prevClip.endTime, endTime: prevClip.endTime + dur, duration: dur };
             }
             if (activeProject) onUpdateProject(activeProject.id, { clips: sorted });
-            return sorted;
+            return { clips: sorted };
         });
     };
 
@@ -1928,7 +1904,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         const updatedClips = [...clips, newClip];
         onUpdateProject(activeProject.id, { clips: updatedClips });
-        setClips(updatedClips);
 
         // Trigger shared queue generation
         if (onGenerateVideo) {

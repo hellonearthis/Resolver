@@ -537,6 +537,52 @@ function App() {
   };
 
   const renderModule = () => {
+    const onPickImage = async (clipId: string, field: 'startImagePath' | 'endImagePath') => {
+      if (!activeProject?.outputDir) {
+        addLog('No project folder available. Save the project first.');
+        return;
+      }
+
+      try {
+        const { ipcRenderer } = window.require('electron');
+        const path = window.require('path');
+        const imagesDir = path.join(activeProject.outputDir, 'images');
+
+        const filePath = await ipcRenderer.invoke('open-image-dialog', imagesDir);
+
+        if (filePath) {
+          handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
+            const updatedClips = prevProject.clips?.map(c => c.id === clipId ? { ...c, [field]: filePath } : c);
+            return { clips: updatedClips };
+          });
+          addLog(`Updated ${field === 'startImagePath' ? 'Start' : 'End'} Image for clip.`);
+        }
+      } catch (err) {
+        console.error("Failed to pick image:", err);
+        addLog("Error opening image dialog.");
+      }
+    };
+
+    const onCopyImageFromNext = async (clipId: string, field: 'startImagePath' | 'endImagePath') => {
+      if (!activeProject?.clips) return;
+      const currentClip = activeProject.clips.find(c => c.id === clipId);
+      if (!currentClip) return;
+      const nextClip = activeProject.clips
+        .filter(c => c.startTime > currentClip.startTime)
+        .sort((a, b) => a.startTime - b.startTime)[0];
+      if (nextClip?.startImagePath) {
+        handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
+          const updatedClips = (prevProject.clips || []).map(c => 
+            c.id === clipId ? { ...c, [field]: nextClip.startImagePath } : c
+          );
+          return { ...prevProject, clips: updatedClips };
+        });
+        addLog(`Copied Start Image from next clip to ${field === 'startImagePath' ? 'Start' : 'End'} field.`);
+      } else {
+        addLog("No start image found in the next clip.");
+      }
+    };
+
     const onGenerateVideo = async (clipId: string): Promise<void> => {
       if (activeProject) {
         const clip = activeProject.clips?.find(c => c.id === clipId);
@@ -558,6 +604,8 @@ function App() {
             activeProject={activeProject}
             onUpdateProject={handleUpdateProject}
             onGenerateVideo={onGenerateVideo}
+            onPickImage={onPickImage}
+            onCopyImageFromNext={onCopyImageFromNext}
             comfyConnected={comfyConnected}
           />
         );
@@ -574,6 +622,7 @@ function App() {
             onRefreshProjects={refreshProjects}
             onStatusChange={addLog}
             onGenerateVideo={onGenerateVideo}
+            onPickImage={onPickImage}
             comfyConnected={comfyConnected}
             comfyOutputDir={comfyOutputDir}
             panelVisibility={panelVisibility}
@@ -594,6 +643,7 @@ function App() {
             onRefreshProjects={refreshProjects}
             onStatusChange={addLog}
             onGenerateVideo={onGenerateVideo}
+            onPickImage={onPickImage}
             comfyConnected={comfyConnected}
             comfyOutputDir={comfyOutputDir}
           />

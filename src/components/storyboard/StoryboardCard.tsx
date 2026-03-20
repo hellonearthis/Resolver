@@ -10,6 +10,9 @@ interface CardProps {
     onUpdate: (id: string, updates: Partial<VideoClip>) => void;
     onDelete: (id: string) => void;
     onGenerateVideo?: (clipId: string) => Promise<void>;
+    onPickImage?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
+    onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
+    nextClipStartImage?: string;
     comfyConnected?: boolean;
     frameRate?: number;
 }
@@ -19,6 +22,9 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
     onUpdate, 
     onDelete, 
     onGenerateVideo,
+    onPickImage,
+    onCopyImageFromNext,
+    nextClipStartImage,
     comfyConnected,
     frameRate = 20
 }) => {
@@ -53,6 +59,41 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
     const actionPromptValue = card.notes?.action || (card as any).actionNotes || (card as any).promptText || '';
     const dialogueValue = card.notes?.dialogue || (card as any).dialogue || '';
     const soundValue = card.notes?.sound || (card as any).soundCues || '';
+
+    const renderImageOptions = (field: 'startImagePath' | 'endImagePath') => (
+        <div className="flex flex-col bg-[#11111e] border border-indigo-500/30 rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.5)] overflow-hidden min-w-[220px] backdrop-blur-xl">
+            <button 
+                onClick={() => onPickImage?.(card.id, field)}
+                className="flex items-center gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest"
+            >
+                <span className="text-sm">📂</span> Load Image
+            </button>
+            <button 
+                onClick={() => onCopyImageFromNext?.(card.id, field)}
+                className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest group/item"
+            >
+                <div className="flex items-center gap-3">
+                    <span className="text-sm">⏭️</span> Next Clip Start
+                </div>
+                {nextClipStartImage ? (
+                    <img 
+                        src={pathToMediaUrl(nextClipStartImage)} 
+                        alt="Preview" 
+                        className="w-10 h-6 object-cover rounded border border-indigo-500/30 group-hover/item:border-indigo-400 transition-all" 
+                    />
+                ) : (
+                    <span className="text-[8px] text-gray-500 italic lowercase tracking-normal">no image</span>
+                )}
+            </button>
+            <button 
+                onClick={() => onUpdate(card.id, { [field]: undefined })}
+                className="flex items-center gap-3 px-4 py-3 hover:bg-red-600/20 text-[10px] font-black text-gray-300 hover:text-red-400 transition-all text-left uppercase tracking-widest"
+            >
+                <span className="text-sm">🗑️</span> Remove Image
+            </button>
+        </div>
+    );
+
     return (
         <div 
             onMouseEnter={() => setIsHovered(true)}
@@ -87,7 +128,17 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
             <div className="space-y-2 p-4 bg-black/20">
                 <div className="flex gap-2 aspect-[32/9]">
                     {/* Start Image */}
-                    <div className="flex-1 relative aspect-video bg-black/40 rounded-lg overflow-hidden border border-gray-800 flex items-center justify-center group/img">
+                    <Tippy 
+                        content={renderImageOptions('startImagePath')} 
+                        interactive={true} 
+                        trigger="click" 
+                        placement="bottom"
+                        animation="shift-away"
+                        theme="custom"
+                    >
+                        <div 
+                            className="flex-1 relative aspect-video bg-black/40 rounded-lg overflow-hidden border border-gray-800 flex items-center justify-center group/img cursor-pointer hover:ring-2 hover:ring-indigo-500 transition-all"
+                        >
                         {card.startImagePath ? (
                             <img src={pathToMediaUrl(card.startImagePath)} alt="Start Frame" className="w-full h-full object-cover" />
                         ) : (
@@ -98,11 +149,22 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         )}
                         <div className="absolute top-1 left-1 px-1 bg-black/60 rounded text-[8px] font-bold text-gray-400 uppercase tracking-tighter">Start</div>
                     </div>
+                </Tippy>
 
                     {/* End Image */}
-                    <div className="flex-1 relative aspect-video bg-black/40 rounded-lg overflow-hidden border border-gray-800 flex items-center justify-center group/img">
-                        {card.endImagePath ? (
-                            <img src={pathToMediaUrl(card.endImagePath)} alt="End Frame" className="w-full h-full object-cover" />
+                    <Tippy 
+                        content={renderImageOptions('endImagePath')} 
+                        interactive={true} 
+                        trigger="click" 
+                        placement="bottom"
+                        animation="shift-away"
+                        theme="custom"
+                    >
+                        <div 
+                            className="flex-1 relative aspect-video bg-black/40 rounded-lg overflow-hidden border border-gray-800 flex items-center justify-center group/img cursor-pointer hover:ring-2 hover:ring-indigo-500 transition-all"
+                        >
+                        {Boolean(card.endImagePath) ? (
+                            <img src={pathToMediaUrl(card.endImagePath!)} alt="End Frame" className="w-full h-full object-cover" />
                         ) : (
                             <div className="flex flex-col items-center opacity-30">
                                 <span className="text-xl">🏁</span>
@@ -111,7 +173,8 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         )}
                         <div className="absolute top-1 left-1 px-1 bg-black/60 rounded text-[8px] font-bold text-gray-400 uppercase tracking-tighter">End</div>
                     </div>
-                </div>
+                </Tippy>
+            </div>
 
                 {/* Video Preview & Selector Dropdown */}
                 {((card.generatedVideos && card.generatedVideos.length > 0) || card.videoPath) && (

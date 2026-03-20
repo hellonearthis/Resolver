@@ -11,6 +11,8 @@ interface StoryboardModuleProps {
     activeProject?: BeatProject;
     onUpdateProject: (id: string, updates: Partial<BeatProject>) => void;
     onGenerateVideo?: (clipId: string) => Promise<void>;
+    onPickImage?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
+    onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     comfyConnected?: boolean;
 }
 
@@ -18,6 +20,8 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
     activeProject, 
     onUpdateProject, 
     onGenerateVideo,
+    onPickImage,
+    onCopyImageFromNext,
     comfyConnected
 }) => {
     const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
@@ -301,17 +305,24 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                 {/* Grid View - Interleaved Clips and Padding */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
                     {timelineItems.map((item, idx) => (
-                        item.type === 'clip' ? (
-                            <StoryboardCardComponent 
-                                key={item.clip.id}
-                                card={item.clip}
-                                frameRate={activeProject?.frameRate || 20}
-                                onUpdate={handleUpdateCard}
-                                onDelete={handleDeleteCard}
-                                onGenerateVideo={onGenerateVideo}
-                                comfyConnected={comfyConnected}
-                            />
-                        ) : (
+                        item.type === 'clip' ? (() => {
+                            const currentIdx = sortedClips.findIndex(c => c.id === item.clip.id);
+                            const nextClip = sortedClips[currentIdx + 1];
+                            return (
+                                <StoryboardCardComponent 
+                                    key={item.clip.id}
+                                    card={item.clip}
+                                    frameRate={activeProject?.frameRate || 20}
+                                    onUpdate={handleUpdateCard}
+                                    onDelete={handleDeleteCard}
+                                    onGenerateVideo={onGenerateVideo}
+                                    onPickImage={onPickImage}
+                                    onCopyImageFromNext={onCopyImageFromNext}
+                                    nextClipStartImage={nextClip?.startImagePath}
+                                    comfyConnected={comfyConnected}
+                                />
+                            );
+                        })() : (
                             <StoryboardPaddingCard 
                                 key={`padding-${idx}-${item.startTime}`}
                                 startTime={item.startTime}
