@@ -12,7 +12,7 @@ interface StoryboardPaddingCardProps {
 
 const StoryboardPaddingCard: React.FC<StoryboardPaddingCardProps> = ({ startTime, duration, onAdd }) => {
     const endTime = startTime + duration;
-    const [inputDuration, setInputDuration] = useState<string>(duration.toFixed(1));
+    const [inputDuration, setInputDuration] = useState<string>("6.0");
 
     const handleAddClick = () => {
         const parsedDuration = parseFloat(inputDuration);
