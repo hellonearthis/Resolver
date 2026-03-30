@@ -317,13 +317,13 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
             </div>
 
             {/* Content Areas */}
-            <div className="p-5 space-y-5 flex-1 overflow-y-auto">
+            <div className="p-5 space-y-5 flex-1 overflow-hidden">
                 {/* Image Description Box */}
                 <div className="space-y-1">
                     <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Image description</label>
                     <div className="relative">
                         <textarea 
-                            className={`w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed ${card.isDescribing ? 'opacity-50' : ''}`}
+                            className={`w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden ${card.isDescribing ? 'opacity-50' : ''}`}
                             style={{ height: contentWidth > 0 ? `${Math.max(60, getTextHeight(card.actionDescription || '', contentWidth - 16) + 16)}px` : undefined }}
                             placeholder="AI generated image description will appear here..."
                             value={card.actionDescription || ''}
@@ -373,7 +373,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         </div>
                     </div>
                     <textarea 
-                        className="w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed"
+                        className="w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden"
                         style={{ height: contentWidth > 0 ? `${Math.max(60, getTextHeight(actionPromptValue, contentWidth - 16) + 16)}px` : undefined }}
                         placeholder="Describe the clip action for video generation..."
                         value={actionPromptValue}
