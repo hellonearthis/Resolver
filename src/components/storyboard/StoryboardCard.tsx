@@ -13,8 +13,10 @@ interface CardProps {
     onGenerateVideo?: (clipId: string) => Promise<void>;
     onPickImage?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
+    onCopyEndFrameFromPrev?: (clipId: string) => void;
     onGetImageDescription?: (clipId: string) => Promise<void>;
     nextClipStartImage?: string;
+    prevClipEndImage?: string;
     comfyConnected?: boolean;
     frameRate?: number;
 }
@@ -26,8 +28,10 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
     onGenerateVideo,
     onPickImage,
     onCopyImageFromNext,
+    onCopyEndFrameFromPrev,
     onGetImageDescription,
     nextClipStartImage,
+    prevClipEndImage,
     comfyConnected,
     frameRate = 20
 }) => {
@@ -93,23 +97,24 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
     const soundValue = card.notes?.sound || (card as any).soundCues || '';
 
     const renderImageOptions = (field: 'startImagePath' | 'endImagePath') => {
+        const closePopover = () => {
+            if (field === 'startImagePath') setIsStartPopoverOpen(false); else setIsEndPopoverOpen(false);
+        };
+
         return (
             <div className="flex flex-col bg-[#11111e] border border-indigo-500/30 rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.5)] overflow-hidden min-w-[220px] backdrop-blur-xl">
+                {/* Load a new image from disk */}
                 <button 
-                    onClick={() => {
-                        if (field === 'startImagePath') setIsStartPopoverOpen(false); else setIsEndPopoverOpen(false);
-                        onPickImage?.(card.id, field);
-                    }}
+                    onClick={() => { closePopover(); onPickImage?.(card.id, field); }}
                     className="flex items-center gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest"
                 >
                     <span className="text-sm">📂</span> Load Image
                 </button>
+
+                {/* AI Description — start image only */}
                 {field === 'startImagePath' && (
                     <button 
-                        onClick={() => {
-                            if (field === 'startImagePath') setIsStartPopoverOpen(false); else setIsEndPopoverOpen(false);
-                            onGetImageDescription?.(card.id);
-                        }}
+                        onClick={() => { closePopover(); onGetImageDescription?.(card.id); }}
                         disabled={!card.startImagePath || !comfyConnected || card.isDescribing}
                         className={`flex items-center gap-3 px-4 py-3 transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest ${
                             !card.startImagePath || !comfyConnected || card.isDescribing
@@ -120,31 +125,52 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         <span className="text-sm">🔍</span> {card.isDescribing ? 'Describing...' : 'Get Description'}
                     </button>
                 )}
+
+                {/* Start image: copy end frame from previous video */}
+                {field === 'startImagePath' && (
+                    <button 
+                        onClick={() => { closePopover(); onCopyEndFrameFromPrev?.(card.id); }}
+                        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest group/item"
+                    >
+                        <div className="flex items-center gap-3">
+                            <span className="text-sm">⏮️</span> Prev Video End Frame
+                        </div>
+                        {prevClipEndImage ? (
+                            <img 
+                                src={pathToMediaUrl(prevClipEndImage)} 
+                                alt="Preview" 
+                                className="w-10 h-6 object-cover rounded border border-indigo-500/30 group-hover/item:border-indigo-400 transition-all" 
+                            />
+                        ) : (
+                            <span className="text-[8px] text-gray-500 italic lowercase tracking-normal">no video</span>
+                        )}
+                    </button>
+                )}
+
+                {/* End image: copy start image from next clip */}
+                {field === 'endImagePath' && (
+                    <button 
+                        onClick={() => { closePopover(); onCopyImageFromNext?.(card.id, field); }}
+                        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest group/item"
+                    >
+                        <div className="flex items-center gap-3">
+                            <span className="text-sm">⏭️</span> Next Clip Start
+                        </div>
+                        {nextClipStartImage ? (
+                            <img 
+                                src={pathToMediaUrl(nextClipStartImage)} 
+                                alt="Preview" 
+                                className="w-10 h-6 object-cover rounded border border-indigo-500/30 group-hover/item:border-indigo-400 transition-all" 
+                            />
+                        ) : (
+                            <span className="text-[8px] text-gray-500 italic lowercase tracking-normal">no image</span>
+                        )}
+                    </button>
+                )}
+
+                {/* Remove image */}
                 <button 
-                    onClick={() => {
-                        if (field === 'startImagePath') setIsStartPopoverOpen(false); else setIsEndPopoverOpen(false);
-                        onCopyImageFromNext?.(card.id, field);
-                    }}
-                    className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest group/item"
-                >
-                    <div className="flex items-center gap-3">
-                        <span className="text-sm">⏭️</span> Next Clip Start
-                    </div>
-                    {nextClipStartImage ? (
-                        <img 
-                            src={pathToMediaUrl(nextClipStartImage)} 
-                            alt="Preview" 
-                            className="w-10 h-6 object-cover rounded border border-indigo-500/30 group-hover/item:border-indigo-400 transition-all" 
-                        />
-                    ) : (
-                        <span className="text-[8px] text-gray-500 italic lowercase tracking-normal">no image</span>
-                    )}
-                </button>
-                <button 
-                    onClick={() => {
-                        if (field === 'startImagePath') setIsStartPopoverOpen(false); else setIsEndPopoverOpen(false);
-                        onUpdate(card.id, { [field]: undefined });
-                    }}
+                    onClick={() => { closePopover(); onUpdate(card.id, { [field]: undefined }); }}
                     className="flex items-center gap-3 px-4 py-3 hover:bg-red-600/20 text-[10px] font-black text-gray-300 hover:text-red-400 transition-all text-left uppercase tracking-widest"
                 >
                     <span className="text-sm">🗑️</span> Remove Image

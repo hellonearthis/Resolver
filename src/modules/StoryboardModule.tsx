@@ -14,6 +14,7 @@ interface StoryboardModuleProps {
     onGenerateVideo?: (clipId: string) => Promise<void>;
     onPickImage?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
+    onCopyEndFrameFromPrev?: (clipId: string) => void;
     onGetImageDescription?: (clipId: string) => Promise<void>;
     comfyConnected?: boolean;
 }
@@ -24,6 +25,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
     onGenerateVideo,
     onPickImage,
     onCopyImageFromNext,
+    onCopyEndFrameFromPrev,
     onGetImageDescription,
     comfyConnected
 }) => {
@@ -313,6 +315,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                         const item = timelineItems[idx];
                         if (item.type === 'clip') {
                             const currentIdx = sortedClips.findIndex(c => c.id === item.clip.id);
+                            const prevClip = sortedClips[currentIdx - 1];
                             const nextClip = sortedClips[currentIdx + 1];
                             return (
                                 <div className="h-full">
@@ -325,8 +328,10 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                         onGenerateVideo={onGenerateVideo}
                                         onPickImage={onPickImage}
                                         onCopyImageFromNext={onCopyImageFromNext}
+                                        onCopyEndFrameFromPrev={onCopyEndFrameFromPrev}
                                         onGetImageDescription={onGetImageDescription}
                                         nextClipStartImage={nextClip?.startImagePath}
+                                        prevClipEndImage={prevClip?.endImagePath}
                                         comfyConnected={comfyConnected}
                                     />
                                 </div>

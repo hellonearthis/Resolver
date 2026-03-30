@@ -708,6 +708,58 @@ function App() {
       }
     };
 
+    const onCopyEndFrameFromPrev = async (clipId: string): Promise<void> => {
+      if (!activeProject?.clips || !activeProject.outputDir) return;
+
+      const currentClip = activeProject.clips.find(c => c.id === clipId);
+      if (!currentClip) return;
+      
+      const prevClip = activeProject.clips
+        .filter(c => c.startTime < currentClip.startTime)
+        .sort((a, b) => b.startTime - a.startTime)[0];
+
+      if (!prevClip || !prevClip.videoPath) {
+        addLog("No generated video found in the preceding clip.");
+        return;
+      }
+
+      addLog(`Extracting end frame from previous clip's video...`);
+
+      try {
+        const { ipcRenderer } = window.require('electron');
+        const infoResult = await ipcRenderer.invoke('get-video-info', prevClip.videoPath);
+        
+        let targetTime = prevClip.duration;
+        if (infoResult.success && infoResult.info?.duration) {
+            targetTime = Math.max(0, infoResult.info.duration - 0.1);
+        } else {
+            targetTime = Math.max(0, prevClip.duration - 0.1);
+        }
+
+        const result = await ipcRenderer.invoke('save-video-frame', {
+            filePath: prevClip.videoPath,
+            time: targetTime,
+            outputDir: activeProject.outputDir,
+            filename: `endframe_${prevClip.id}_${Date.now()}.png`
+        });
+
+        if (result.success && result.framePath) {
+            handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
+                const updatedClips = (prevProject.clips || []).map(c => 
+                    c.id === clipId ? { ...c, startImagePath: result.framePath } : c
+                );
+                return { ...prevProject, clips: updatedClips };
+            });
+            addLog(`Successfully extracted and applied end frame from previous clip.`);
+        } else {
+            addLog(`Failed to extract end frame: ${result.error}`);
+        }
+      } catch (err: any) {
+          console.error("Error extracting end frame:", err);
+          addLog("Error extracting end frame.");
+      }
+    };
+
     const onGetImageDescription = async (clipId: string): Promise<void> => {
       if (!activeProject?.clips || !comfyConnected) return;
       
@@ -743,6 +795,7 @@ function App() {
             onGenerateVideo={onGenerateVideo}
             onPickImage={onPickImage}
             onCopyImageFromNext={onCopyImageFromNext}
+            onCopyEndFrameFromPrev={onCopyEndFrameFromPrev}
             onGetImageDescription={onGetImageDescription}
             comfyConnected={comfyConnected}
           />
@@ -761,6 +814,7 @@ function App() {
             onStatusChange={addLog}
             onGenerateVideo={onGenerateVideo}
             onPickImage={onPickImage}
+            onCopyImageFromNext={onCopyImageFromNext}
             comfyConnected={comfyConnected}
             comfyOutputDir={comfyOutputDir}
             panelVisibility={panelVisibility}
@@ -782,6 +836,7 @@ function App() {
             onStatusChange={addLog}
             onGenerateVideo={onGenerateVideo}
             onPickImage={onPickImage}
+            onCopyImageFromNext={onCopyImageFromNext}
             comfyConnected={comfyConnected}
             comfyOutputDir={comfyOutputDir}
           />
