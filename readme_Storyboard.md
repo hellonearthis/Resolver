@@ -9,10 +9,12 @@ The **Storyboard Module** provides a narrative-driven, card-based interface for 
 ### 🃏 The Card-Based Design
 Each card in the storyboard represents a single shot or segment on your project timeline.
 - **Visual Evidence**: Shows side-by-side **Start** (head) and **End** (tail) frames of the shot.
+    - **Contextual Frame Linking**: Click a frame slot to open a menu. For **Start Images**, you can now "Copy Prev Video End Frame" or "Copy Prev Beat Frame" (exact sync). For **End Images**, you can copy the "Next Clip Start" frame for visual continuity.
 - **Motion Preview**: Hover over the card to play a muted preview of the currently selected video version.
 - **Duration Shortcuts**: While hovering over a card, use the **Up/Down arrow keys** to instantly adjust the shot's duration in LTX-aligned units (8 frames at a time). The active card will glow indigo to indicate it is ready for keyboard input.
-- **Right-Click Edit**: Right-click any card to open the universal **Duration Edit Popup** for precise, frame-perfect timing adjustments.
+- **Right-Click Edit**: Right-click any card or text field to open the universal **Prompt/Duration Editor** for precise control. A "Right-click to open large editor" tooltip is visible on hover.
 - **Empty Slots (Padding)**: Unused timeline space is visually represented by "Empty Slot" placeholder cards. These fill the entire gap between shots or at the end of the project, allowing you to "Fill Gap" with a single click.
+- **Clean Layout**: Textareas are now capped at ~10 lines (200px) and hide scrollbars to keep cards uniform. The entire grid uses native browser scrolling for a glitch-free experience with variable-height content.
 
 ---
 

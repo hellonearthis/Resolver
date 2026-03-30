@@ -4,7 +4,7 @@ import { AppPopover } from '../ui/Popover';
 import type { VideoClip } from '../../types/assembler';
 import { formatTime, pathToMediaUrl, getLtxAlignedDuration } from '../../utils/timelineUtils';
 import PromptEditorModal from '../PromptEditorModal';
-import { calculateCardHeight, getTextHeight } from '../../utils/pretextUtils';
+import { getTextHeight } from '../../utils/pretextUtils';
 
 interface CardProps {
     card: VideoClip;
@@ -47,24 +47,10 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
 
     // Pretext strict height measurement
     const cardRef = React.useRef<HTMLDivElement>(null);
-    const [exactHeight, setExactHeight] = React.useState<number | undefined>(undefined);
-    const [contentWidth, setContentWidth] = React.useState<number>(0);
-
-    React.useEffect(() => {
-        if (!cardRef.current) return;
-        const observer = new ResizeObserver((entries) => {
-            const width = entries[0].contentRect.width;
-            if (width > 0) {
-                // Ensure padding is accounted for to get the actual border-box width
-                const fullWidth = width + 10; // since padding is 5px on the element
-                setContentWidth(Math.max(0, fullWidth - 50)); // card width minus 10 padding minus 40 container padding
-                const h = calculateCardHeight(card, fullWidth);
-                setExactHeight(h);
-            }
-        });
-        observer.observe(cardRef.current);
-        return () => observer.disconnect();
-    }, [card.notes?.action, card.actionDescription, card.startTime, card.duration, card.generatedVideos, card.videoPath]);
+    // Width for text calculations
+    // We'll just define a rough inner width based on standard card width (approx 300px minus padding)
+    // allowing pretext to do a decent estimate for the max 10-line view
+    const assumedWidth = 260;
 
     React.useEffect(() => {
         if (!isHovered) return;
@@ -195,7 +181,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
             className={`bg-[#1a1a2e] border rounded-xl shadow-2xl transition-all group flex flex-col h-full ${isHovered ? 'border-indigo-400 ring-1 ring-indigo-500/20 scale-[1.01]' : 'border-gray-700/50 hover:border-gray-600'}`}
-            style={{ padding: '5px', height: exactHeight ? `${exactHeight}px` : '100%', overflow: 'hidden' }}
+            style={{ padding: '5px', overflow: 'hidden' }}
         >
             {/* Header: Scene/Shot Info */}
             <div className="px-4 py-3 bg-black/40 border-b border-gray-700/30 flex justify-between items-center shrink-0">
@@ -324,7 +310,8 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                     <div className="relative">
                         <textarea 
                             className={`w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden ${card.isDescribing ? 'opacity-50' : ''}`}
-                            style={{ height: contentWidth > 0 ? `${Math.max(60, getTextHeight(card.actionDescription || '', contentWidth - 16) + 16)}px` : undefined }}
+                            style={{ height: `${Math.min(200, Math.max(60, getTextHeight(card.actionDescription || '', assumedWidth) + 16))}px` }}
+                            title="Right-click to open large editor"
                             placeholder="AI generated image description will appear here..."
                             value={card.actionDescription || ''}
                             onChange={(e) => onUpdate(card.id, { actionDescription: e.target.value })}
@@ -374,7 +361,8 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                     </div>
                     <textarea 
                         className="w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden"
-                        style={{ height: contentWidth > 0 ? `${Math.max(60, getTextHeight(actionPromptValue, contentWidth - 16) + 16)}px` : undefined }}
+                        style={{ height: `${Math.min(200, Math.max(60, getTextHeight(actionPromptValue, assumedWidth) + 16))}px` }}
+                        title="Right-click to open large editor"
                         placeholder="Describe the clip action for video generation..."
                         value={actionPromptValue}
                         onChange={(e) => onUpdate(card.id, { 
@@ -400,6 +388,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Dialogue</label>
                         <input 
                             className="w-full bg-black/20 border-none rounded-lg text-xs text-indigo-300 focus:ring-1 focus:ring-indigo-500/30 p-2"
+                            title="Right-click to open large editor"
                             placeholder="..." 
                             value={dialogueValue}
                             onChange={(e) => onUpdate(card.id, { 
@@ -423,6 +412,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Sound Cues</label>
                         <input 
                             className="w-full bg-black/20 border-none rounded-lg text-xs text-amber-500/80 focus:ring-1 focus:ring-indigo-500/30 p-2"
+                            title="Right-click to open large editor"
                             placeholder="..." 
                             value={soundValue}
                             onChange={(e) => onUpdate(card.id, { 
