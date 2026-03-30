@@ -14,7 +14,7 @@ interface StoryboardModuleProps {
     onGenerateVideo?: (clipId: string) => Promise<void>;
     onPickImage?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
-    onCopyEndFrameFromPrev?: (clipId: string) => void;
+    onCopyEndFrameFromPrev?: (clipId: string, exactBeat?: boolean) => void;
     onGetImageDescription?: (clipId: string) => Promise<void>;
     comfyConnected?: boolean;
 }

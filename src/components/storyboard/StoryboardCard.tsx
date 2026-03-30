@@ -13,7 +13,7 @@ interface CardProps {
     onGenerateVideo?: (clipId: string) => Promise<void>;
     onPickImage?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
-    onCopyEndFrameFromPrev?: (clipId: string) => void;
+    onCopyEndFrameFromPrev?: (clipId: string, exactBeat?: boolean) => void;
     onGetImageDescription?: (clipId: string) => Promise<void>;
     nextClipStartImage?: string;
     prevClipEndImage?: string;
@@ -128,23 +128,33 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
 
                 {/* Start image: copy end frame from previous video */}
                 {field === 'startImagePath' && (
-                    <button 
-                        onClick={() => { closePopover(); onCopyEndFrameFromPrev?.(card.id); }}
-                        className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest group/item"
-                    >
-                        <div className="flex items-center gap-3">
-                            <span className="text-sm">⏮️</span> Prev Video End Frame
-                        </div>
-                        {prevClipEndImage ? (
-                            <img 
-                                src={pathToMediaUrl(prevClipEndImage)} 
-                                alt="Preview" 
-                                className="w-10 h-6 object-cover rounded border border-indigo-500/30 group-hover/item:border-indigo-400 transition-all" 
-                            />
-                        ) : (
-                            <span className="text-[8px] text-gray-500 italic lowercase tracking-normal">no video</span>
-                        )}
-                    </button>
+                    <>
+                        <button 
+                            onClick={() => { closePopover(); onCopyEndFrameFromPrev?.(card.id, false); }}
+                            className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest group/item"
+                        >
+                            <div className="flex items-center gap-3">
+                                <span className="text-sm">⏮️</span> Prev Video End Frame
+                            </div>
+                            {prevClipEndImage ? (
+                                <img 
+                                    src={pathToMediaUrl(prevClipEndImage)} 
+                                    alt="Preview" 
+                                    className="w-10 h-6 object-cover rounded border border-indigo-500/30 group-hover/item:border-indigo-400 transition-all" 
+                                />
+                            ) : (
+                                <span className="text-[8px] text-gray-500 italic lowercase tracking-normal">no video</span>
+                            )}
+                        </button>
+                        <button 
+                            onClick={() => { closePopover(); onCopyEndFrameFromPrev?.(card.id, true); }}
+                            className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest group/item"
+                        >
+                            <div className="flex items-center gap-3">
+                                <span className="text-sm">⏱️</span> Prev Beat Frame
+                            </div>
+                        </button>
+                    </>
                 )}
 
                 {/* End image: copy start image from next clip */}

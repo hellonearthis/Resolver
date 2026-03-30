@@ -708,7 +708,7 @@ function App() {
       }
     };
 
-    const onCopyEndFrameFromPrev = async (clipId: string): Promise<void> => {
+    const onCopyEndFrameFromPrev = async (clipId: string, exactBeat: boolean = false): Promise<void> => {
       if (!activeProject?.clips || !activeProject.outputDir) return;
 
       const currentClip = activeProject.clips.find(c => c.id === clipId);
@@ -723,17 +723,28 @@ function App() {
         return;
       }
 
-      addLog(`Extracting end frame from previous clip's video...`);
+      addLog(`Extracting end frame from previous clip's video (${exactBeat ? 'exact beat' : 'video end'})...`);
 
       try {
         const { ipcRenderer } = window.require('electron');
         const infoResult = await ipcRenderer.invoke('get-video-info', prevClip.videoPath);
         
         let targetTime = prevClip.duration;
-        if (infoResult.success && infoResult.info?.duration) {
-            targetTime = Math.max(0, infoResult.info.duration - 0.1);
+        
+        if (exactBeat) {
+            // Use the exact planned duration (which corresponds to the beat markers)
+            targetTime = prevClip.duration;
+            // Bound it slightly just in case the video is physically shorter than planned
+            if (infoResult.success && infoResult.info?.duration) {
+                targetTime = Math.min(targetTime, Math.max(0, infoResult.info.duration - 0.1));
+            }
         } else {
-            targetTime = Math.max(0, prevClip.duration - 0.1);
+            // Use the physical end of the generated wrapper video
+            if (infoResult.success && infoResult.info?.duration) {
+                targetTime = Math.max(0, infoResult.info.duration - 0.1);
+            } else {
+                targetTime = Math.max(0, prevClip.duration - 0.1);
+            }
         }
 
         const result = await ipcRenderer.invoke('save-video-frame', {
