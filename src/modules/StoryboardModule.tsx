@@ -6,7 +6,6 @@ import StoryboardCardComponent from '../components/storyboard/StoryboardCard';
 import AnimaticTimeline from '../components/storyboard/AnimaticTimeline';
 import StoryboardPaddingCard from '../components/storyboard/StoryboardPaddingCard';
 import type { BeatProject } from '../hooks/useProjectStorage';
-import { VirtuosoGrid } from 'react-virtuoso';
 
 interface StoryboardModuleProps {
     activeProject?: BeatProject;
@@ -306,21 +305,16 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
             </div>
 
             {/* Main Content Area */}
-            <div className="flex-1 flex flex-col p-8 overflow-hidden">
-                <VirtuosoGrid
-                    style={{ flex: 1, height: '100%', width: '100%' }}
-                    totalCount={timelineItems.length}
-                    listClassName="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3"
-                    itemContent={(idx) => {
-                        const item = timelineItems[idx];
+            <div className="flex-1 overflow-y-auto p-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                    {timelineItems.map((item, idx) => {
                         if (item.type === 'clip') {
                             const currentIdx = sortedClips.findIndex(c => c.id === item.clip.id);
                             const prevClip = sortedClips[currentIdx - 1];
                             const nextClip = sortedClips[currentIdx + 1];
                             return (
-                                <div className="h-full">
+                                <div key={item.clip.id} className="h-full">
                                     <StoryboardCardComponent 
-                                        key={item.clip.id}
                                         card={item.clip}
                                         frameRate={activeProject?.frameRate || 20}
                                         onUpdate={handleUpdateCard}
@@ -346,8 +340,8 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                 />
                             );
                         }
-                    }}
-                />
+                    })}
+                </div>
             </div>
 
             {/* Persistent Animatic Timeline */}
