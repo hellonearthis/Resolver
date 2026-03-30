@@ -1,9 +1,9 @@
 const { ipcRenderer } = window.require('electron');
 import React, { useEffect, useRef, useState } from 'react';
-import Tippy from '@tippyjs/react';
-import tippy from 'tippy.js';
-import 'tippy.js/dist/tippy.css';
-import 'tippy.js/animations/shift-away.css';
+import { AppTooltip } from '../components/ui/Tooltip';
+
+
+
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { analyzeBeats, analyzeOnsets, analyzeLoudness, type BeatAlgorithm, initEssentia } from '../services/essentiaService';
@@ -1776,23 +1776,27 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         region.element.style.border = `1px solid ${alternatingColors[idx % alternatingColors.length].replace('0.48', '0.8')}`;
                         region.element.style.borderRadius = '2px';
                         const frames = Math.round((c.duration || (c.endTime - c.startTime)) * fps);
-                        tippy(region.element, {
-                            content: `
-                                <div style="font-size: 10px; font-weight: 700; padding: 4px; pointer-events: none;">
-                                    <div style="color: #818cf8; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 2px;">${c.label || 'Unnamed Clip'}</div>
-                                    <div style="display: grid; grid-template-columns: auto auto; gap: 8px; color: #94a3b8;">
-                                        <span>START:</span><span style="color: white; font-family: monospace;">${formatTime(c.startTime)}</span>
-                                        <span>DUR:</span><span style="color: white; font-family: monospace;">${(c.duration || (c.endTime - c.startTime)).toFixed(2)}s</span>
-                                        <span>FRAMES:</span><span style="color: #f59e0b; font-family: monospace; font-weight: 800;">${frames}</span>
+                        region.element.addEventListener('mouseenter', (e: MouseEvent) => {
+                            setTooltipState({
+                                visible: true,
+                                x: e.clientX,
+                                y: e.clientY - 60,
+                                content: (
+                                    <div style={{ backgroundColor: '#11111e', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '8px', padding: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', fontSize: '10px', fontWeight: '700', pointerEvents: 'none' }}>
+                                        <div style={{ color: '#818cf8', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '2px' }}>{c.label || 'Unnamed Clip'}</div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '8px', color: '#94a3b8' }}>
+                                            <span>START:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{formatTime(c.startTime)}</span>
+                                            <span>DUR:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{(c.duration || (c.endTime - c.startTime)).toFixed(2)}s</span>
+                                            <span>FRAMES:</span><span style={{ color: '#f59e0b', fontFamily: 'monospace', fontWeight: '800' }}>{frames}</span>
+                                        </div>
                                     </div>
-                                </div>
-                            `,
-                            allowHTML: true,
-                            animation: 'shift-away',
-                            placement: 'top',
-                            offset: [0, 10],
-                            maxWidth: 200
+                                )
+                            });
                         });
+                        region.element.addEventListener('mousemove', (e: MouseEvent) => {
+                            setTooltipState(prev => prev.visible ? { ...prev, x: e.clientX, y: e.clientY - 60 } : prev);
+                        });
+                        region.element.addEventListener('mouseleave', () => setTooltipState(prev => ({ ...prev, visible: false })));
                         region.element.addEventListener('contextmenu', (e: MouseEvent) => {
                             e.preventDefault();
                             setDurationPopup({
@@ -1828,23 +1832,27 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         region.element.style.border = `1px solid ${alternatingColors[idx % alternatingColors.length].replace('0.48', '0.8')}`;
                         region.element.style.borderRadius = '2px';
                         const frames = Math.round((c.duration || (c.endTime - c.startTime)) * fps);
-                        tippy(region.element, {
-                            content: `
-                                <div style="font-size: 10px; font-weight: 700; padding: 4px; pointer-events: none;">
-                                    <div style="color: #a78bfa; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 2px;">${c.label || 'Unnamed Clip'}</div>
-                                    <div style="display: grid; grid-template-columns: auto auto; gap: 8px; color: #94a3b8;">
-                                        <span>START:</span><span style="color: white; font-family: monospace;">${formatTime(c.startTime)}</span>
-                                        <span>DUR:</span><span style="color: white; font-family: monospace;">${(c.duration || (c.endTime - c.startTime)).toFixed(2)}s</span>
-                                        <span>FRAMES:</span><span style="color: #f59e0b; font-family: monospace; font-weight: 800;">${frames}</span>
+                        region.element.addEventListener('mouseenter', (e: MouseEvent) => {
+                            setTooltipState({
+                                visible: true,
+                                x: e.clientX,
+                                y: e.clientY - 60,
+                                content: (
+                                    <div style={{ backgroundColor: '#11111e', border: '1px solid rgba(167,139,250,0.3)', borderRadius: '8px', padding: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', fontSize: '10px', fontWeight: '700', pointerEvents: 'none' }}>
+                                        <div style={{ color: '#a78bfa', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '2px' }}>{c.label || 'Unnamed Clip'}</div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '8px', color: '#94a3b8' }}>
+                                            <span>START:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{formatTime(c.startTime)}</span>
+                                            <span>DUR:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{(c.duration || (c.endTime - c.startTime)).toFixed(2)}s</span>
+                                            <span>FRAMES:</span><span style={{ color: '#f59e0b', fontFamily: 'monospace', fontWeight: '800' }}>{frames}</span>
+                                        </div>
                                     </div>
-                                </div>
-                            `,
-                            allowHTML: true,
-                            animation: 'shift-away',
-                            placement: 'top',
-                            offset: [0, 10],
-                            maxWidth: 200
+                                )
+                            });
                         });
+                        region.element.addEventListener('mousemove', (e: MouseEvent) => {
+                            setTooltipState(prev => prev.visible ? { ...prev, x: e.clientX, y: e.clientY - 60 } : prev);
+                        });
+                        region.element.addEventListener('mouseleave', () => setTooltipState(prev => ({ ...prev, visible: false })));
                         region.element.addEventListener('contextmenu', (e: MouseEvent) => {
                             e.preventDefault();
                             setDurationPopup({
@@ -2201,7 +2209,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         {/* Left column — Generation Actions */}
                         <div className="flex flex-col gap-6 flex-1" style={{ paddingRight: '8px' }}>
                             <div className="flex flex-col gap-2">
-                                <Tippy content="Uses ComfyUI to separate instruments into distinct audio tracks (Vocals, Drums, Bass, etc.)." placement="right" offset={[0, 48]}>
+                                <AppTooltip content="Uses ComfyUI to separate instruments into distinct audio tracks (Vocals, Drums, Bass, etc.)." placement="right" offset={[0, 48]}>
                                     <span>
                                         <button
                                             onClick={handleRunSeparation}
@@ -2216,8 +2224,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                             )}
                                         </button>
                                     </span>
-                                </Tippy>
-                                <Tippy content="Analyzes the master track for beats, downbeats, and energy changes." placement="right" offset={[0, 48]}>
+                                </AppTooltip>
+                                <AppTooltip content="Analyzes the master track for beats, downbeats, and energy changes." placement="right" offset={[0, 48]}>
                                     <span>
                                         <button
                                             onClick={handleRunMainBeatAnalysis}
@@ -2228,7 +2236,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                             {isProcessing && detectionStatus.includes("main") ? <>Analyzing Main Track...</> : <>Run Main Track Beat Analysis</>}
                                         </button>
                                     </span>
-                                </Tippy>
+                                </AppTooltip>
                             </div>
 
                             {/* Individual Stem Analysis Section */}
@@ -2236,7 +2244,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 <div className="border-t border-gray-700/50 pt-3">
                                     <h4 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Stem Analysis</h4>
                                     <div className="flex flex-col gap-2">
-                                        <Tippy content="Run full beat and onset analysis on all successfully separated stem tracks." placement="top" offset={[0, 48]}>
+                                        <AppTooltip content="Run full beat and onset analysis on all successfully separated stem tracks." placement="top" offset={[0, 48]}>
                                             <span>
                                                 <button
                                                     className="btn w-full btn-secondary justify-center border border-indigo-500/30 hover:border-indigo-500/80"
@@ -2250,10 +2258,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                     {isProcessing ? 'Analyzing...' : 'Analyze All Stems'}
                                                 </button>
                                             </span>
-                                        </Tippy>
+                                        </AppTooltip>
                                         <div className="grid grid-cols-2 gap-2">
                                             {stems.map((stem, index) => (
-                                                <Tippy key={index} content={`Analyze ${stem.type} for beats and onsets.`} placement="top" offset={[0, 48]}>
+                                                <AppTooltip key={index} content={`Analyze ${stem.type} for beats and onsets.`} placement="top" offset={[0, 48]}>
                                                     <span>
                                                         <button
                                                             className="btn btn-secondary text-xs py-1 px-2 border border-gray-700 hover:border-indigo-500/50 flex justify-center items-center gap-2"
@@ -2264,7 +2272,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                             {stem.type}
                                                         </button>
                                                     </span>
-                                                </Tippy>
+                                                </AppTooltip>
                                             ))}
                                         </div>
                                     </div>
@@ -2359,7 +2367,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     <div className="flex items-center gap-4">
                         <h4 className="text-sm font-semibold text-gray-400">Audio Preview</h4>
                         <div className="flex gap-2">
-                            <Tippy content="Play the master track along with any unmuted preview audio." placement="top" offset={[0, 48]}>
+                            <AppTooltip content="Play the master track along with any unmuted preview audio." placement="top" offset={[0, 48]}>
                                 <span>
                                     <button
                                         className="btn btn-primary flex items-center justify-center gap-1 px-4 py-1.5"
@@ -2369,8 +2377,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                         <span className="text-lg">▶</span> Play
                                     </button>
                                 </span>
-                            </Tippy>
-                            <Tippy content="Pause playback across all tracks." placement="top" offset={[0, 48]}>
+                            </AppTooltip>
+                            <AppTooltip content="Pause playback across all tracks." placement="top" offset={[0, 48]}>
                                 <span>
                                     <button
                                         className="btn btn-secondary flex items-center justify-center gap-1 px-4 py-1.5"
@@ -2380,7 +2388,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                         <span className="text-lg">⏸</span> Pause
                                     </button>
                                 </span>
-                            </Tippy>
+                            </AppTooltip>
                         </div>
                     </div>
 
@@ -2625,7 +2633,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                             <div className="flex justify-between items-center bg-gray-900/50 p-3 rounded">
                                                 <h4 className="text-sm font-semibold text-gray-400">Project Stems Controls</h4>
                                                 <div className="flex gap-4 w-1/2">
-                                                    <Tippy content="Synchronize and play all stem tracks from the beginning." placement="top" offset={[0, 48]}>
+                                                    <AppTooltip content="Synchronize and play all stem tracks from the beginning." placement="top" offset={[0, 48]}>
                                                         <span>
                                                             <button
                                                                 className="btn w-full mt-2 btn-primary flex items-center justify-center gap-2"
@@ -2635,9 +2643,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                                 <span className="text-lg">▶</span> Play Stems
                                                             </button>
                                                         </span>
-                                                    </Tippy>
+                                                    </AppTooltip>
 
-                                                    <Tippy content="Pause all stem track previews." placement="top" offset={[0, 48]}>
+                                                    <AppTooltip content="Pause all stem track previews." placement="top" offset={[0, 48]}>
                                                         <span>
                                                             <button
                                                                 className="btn w-full mt-2 btn-secondary flex items-center justify-center gap-2"
@@ -2647,7 +2655,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                                 <span className="text-lg">⏸</span> Pause
                                                             </button>
                                                         </span>
-                                                    </Tippy>
+                                                    </AppTooltip>
                                                 </div>
                                             </div>
 
@@ -2658,7 +2666,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                             <div className="text-xs font-bold uppercase" style={{ color: stem.color }}>{stem.type}</div>
                                                         </div>
                                                         <div className="flex gap-2">
-                                                            <Tippy content={`Listen to the ${stem.type} stem only.`} placement="top" offset={[0, 48]}>
+                                                            <AppTooltip content={`Listen to the ${stem.type} stem only.`} placement="top" offset={[0, 48]}>
                                                                 <span>
                                                                     <button
                                                                         className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
@@ -2667,8 +2675,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                                         ▶ Play
                                                                     </button>
                                                                 </span>
-                                                            </Tippy>
-                                                            <Tippy content={`Pause ${stem.type} preview.`} placement="top" offset={[0, 48]}>
+                                                            </AppTooltip>
+                                                            <AppTooltip content={`Pause ${stem.type} preview.`} placement="top" offset={[0, 48]}>
                                                                 <span>
                                                                     <button
                                                                         className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
@@ -2677,7 +2685,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                                         ⏸ Pause
                                                                     </button>
                                                                 </span>
-                                                            </Tippy>
+                                                            </AppTooltip>
                                                         </div>
                                                     </div>
                                                     <div
@@ -2696,7 +2704,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
                             {/* Controls Container — outside collapsible section to stay persistent */}
                             <div className="controls-container flex flex-wrap gap-4 mt-8 bg-gray-900/40 p-6 rounded-xl border border-gray-800/80">
-                                <Tippy content="Queue a ComfyUI video generation task based on the current selection's duration." placement="top" offset={[0, 48]}>
+                                <AppTooltip content="Queue a ComfyUI video generation task based on the current selection's duration." placement="top" offset={[0, 48]}>
                                     <span>
                                         <button
                                             className="btn btn-primary shadow-lg shadow-indigo-500/20"
@@ -2706,10 +2714,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                             Generate Clip from Selection
                                         </button>
                                     </span>
-                                </Tippy>
+                                </AppTooltip>
 
                                 <div className="flex gap-2">
-                                    <Tippy content="Step 1: Load all media into Resolve bin (Audio & Video)" placement="top" offset={[0, 48]}>
+                                    <AppTooltip content="Step 1: Load all media into Resolve bin (Audio & Video)" placement="top" offset={[0, 48]}>
                                         <span>
                                             <button
                                                 className="btn bg-indigo-700 hover:bg-indigo-600 text-white border-none rounded font-bold text-sm"
@@ -2719,8 +2727,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 🎬 (1) Export Load Media Script
                                             </button>
                                         </span>
-                                    </Tippy>
-                                    <Tippy content="Step 2: Place media items from bin onto timeline at designed positions" placement="top" offset={[0, 48]}>
+                                    </AppTooltip>
+                                    <AppTooltip content="Step 2: Place media items from bin onto timeline at designed positions" placement="top" offset={[0, 48]}>
                                         <span>
                                             <button
                                                 className="btn bg-indigo-800 hover:bg-indigo-700 text-white border-none rounded font-bold text-sm"
@@ -2730,8 +2738,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 🎨 (2) Place Media Script
                                             </button>
                                         </span>
-                                    </Tippy>
-                                    <Tippy content="Step 3: Set all detected beat markers and onsets onto the Resolve timeline" placement="top" offset={[0, 48]}>
+                                    </AppTooltip>
+                                    <AppTooltip content="Step 3: Set all detected beat markers and onsets onto the Resolve timeline" placement="top" offset={[0, 48]}>
                                         <span>
                                             <button
                                                 className="btn bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded font-bold text-sm"
@@ -2741,11 +2749,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 🚩 (3) Set Beat Markers
                                             </button>
                                         </span>
-                                    </Tippy>
+                                    </AppTooltip>
                                 </div>
 
                                 <div className="flex gap-2 ml-auto">
-                                    <Tippy content="Scan the project folder for generated videos that might have been missed." placement="top" offset={[0, 48]}>
+                                    <AppTooltip content="Scan the project folder for generated videos that might have been missed." placement="top" offset={[0, 48]}>
                                         <span>
                                             <button
                                                 className="btn bg-indigo-600 hover:bg-indigo-500 text-white border-none rounded font-bold text-sm"
@@ -2755,9 +2763,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 🔄 Sync Videos
                                             </button>
                                         </span>
-                                    </Tippy>
+                                    </AppTooltip>
 
-                                    <Tippy content="Save all current project data, markers, and clip status." placement="top" offset={[0, 48]}>
+                                    <AppTooltip content="Save all current project data, markers, and clip status." placement="top" offset={[0, 48]}>
                                         <span>
                                             <button
                                                 className="btn btn-primary bg-emerald-600 hover:bg-emerald-500 border-none text-white rounded font-bold text-sm"
@@ -2767,7 +2775,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 💾 Save Project
                                             </button>
                                         </span>
-                                    </Tippy>
+                                    </AppTooltip>
                                 </div>
                             </div>
 

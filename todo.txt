@@ -1,0 +1,25 @@
+The REST API (For your Electron App)
+
+If you want your Electron app to manage VRAM for you, you can send a POST request to the local server. This is perfect for an "Automatic Music Video Assembler" because your app can:
+
+    Load the LLM to process lyrics/beats.
+
+    Unload it via API.
+
+    Start the ComfyUI video generation.
+
+Endpoint: POST http://localhost:1234/api/v1/models/unload
+Body:
+JSON
+
+{
+  "instance_id": "your-model-identifier"
+}
+
+4. ComfyUI Integration
+
+If you want to keep everything inside ComfyUI, there are custom nodes that handle this "juggling" specifically:
+
+    ComfyUI-Manager: Search for "SageUtils" or "LLM Party".
+
+    The Logic: These nodes can send the "unload" command to LM Studio as the last step of a text-generation node, ensuring the VRAM is "empty" by the time the workflow reaches the K-Sampler for your video clips.

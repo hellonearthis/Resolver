@@ -6,6 +6,7 @@ import StoryboardCardComponent from '../components/storyboard/StoryboardCard';
 import AnimaticTimeline from '../components/storyboard/AnimaticTimeline';
 import StoryboardPaddingCard from '../components/storyboard/StoryboardPaddingCard';
 import type { BeatProject } from '../hooks/useProjectStorage';
+import { VirtuosoGrid } from 'react-virtuoso';
 
 interface StoryboardModuleProps {
     activeProject?: BeatProject;
@@ -303,38 +304,45 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
             </div>
 
             {/* Main Content Area */}
-            <div className="flex-1 overflow-auto p-8">
-                {/* Grid View - Interleaved Clips and Padding */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-                    {timelineItems.map((item, idx) => (
-                        item.type === 'clip' ? (() => {
+            <div className="flex-1 flex flex-col p-8 overflow-hidden">
+                <VirtuosoGrid
+                    style={{ flex: 1, height: '100%', width: '100%' }}
+                    totalCount={timelineItems.length}
+                    listClassName="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3"
+                    itemContent={(idx) => {
+                        const item = timelineItems[idx];
+                        if (item.type === 'clip') {
                             const currentIdx = sortedClips.findIndex(c => c.id === item.clip.id);
                             const nextClip = sortedClips[currentIdx + 1];
                             return (
-                                <StoryboardCardComponent 
-                                    key={item.clip.id}
-                                    card={item.clip}
-                                    frameRate={activeProject?.frameRate || 20}
-                                    onUpdate={handleUpdateCard}
-                                    onDelete={handleDeleteCard}
-                                    onGenerateVideo={onGenerateVideo}
-                                    onPickImage={onPickImage}
-                                    onCopyImageFromNext={onCopyImageFromNext}
-                                    onGetImageDescription={onGetImageDescription}
-                                    nextClipStartImage={nextClip?.startImagePath}
-                                    comfyConnected={comfyConnected}
+                                <div className="h-full">
+                                    <StoryboardCardComponent 
+                                        key={item.clip.id}
+                                        card={item.clip}
+                                        frameRate={activeProject?.frameRate || 20}
+                                        onUpdate={handleUpdateCard}
+                                        onDelete={handleDeleteCard}
+                                        onGenerateVideo={onGenerateVideo}
+                                        onPickImage={onPickImage}
+                                        onCopyImageFromNext={onCopyImageFromNext}
+                                        onGetImageDescription={onGetImageDescription}
+                                        nextClipStartImage={nextClip?.startImagePath}
+                                        comfyConnected={comfyConnected}
+                                    />
+                                </div>
+                            );
+                        } else {
+                            return (
+                                <StoryboardPaddingCard 
+                                    key={`padding-${idx}-${item.startTime}`}
+                                    startTime={item.startTime}
+                                    duration={item.duration}
+                                    onAdd={handleFillPadding}
                                 />
                             );
-                        })() : (
-                            <StoryboardPaddingCard 
-                                key={`padding-${idx}-${item.startTime}`}
-                                startTime={item.startTime}
-                                duration={item.duration}
-                                onAdd={handleFillPadding}
-                            />
-                        )
-                    ))}
-                </div>
+                        }
+                    }}
+                />
             </div>
 
             {/* Persistent Animatic Timeline */}

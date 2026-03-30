@@ -1,10 +1,10 @@
 import React from 'react';
-import Tippy from '@tippyjs/react';
-import 'tippy.js/dist/tippy.css';
-import 'tippy.js/animations/shift-away.css';
+import { AppTooltip } from '../ui/Tooltip';
+import { AppPopover } from '../ui/Popover';
 import type { VideoClip } from '../../types/assembler';
 import { formatTime, pathToMediaUrl, getLtxAlignedDuration } from '../../utils/timelineUtils';
 import PromptEditorModal from '../PromptEditorModal';
+import { calculateCardHeight, getTextHeight } from '../../utils/pretextUtils';
 
 interface CardProps {
     card: VideoClip;
@@ -32,14 +32,35 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
     frameRate = 20
 }) => {
     const [isHovered, setIsHovered] = React.useState(false);
-    const [startTippy, setStartTippy] = React.useState<any>(null);
-    const [endTippy, setEndTippy] = React.useState<any>(null);
+    const [isStartPopoverOpen, setIsStartPopoverOpen] = React.useState(false);
+    const [isEndPopoverOpen, setIsEndPopoverOpen] = React.useState(false);
     const [isEditorOpen, setIsEditorOpen] = React.useState(false);
     const [editorConfig, setEditorConfig] = React.useState<{
         title: string;
         initialValue: string;
         onSave: (val: string) => void;
     }>({ title: '', initialValue: '', onSave: () => {} });
+
+    // Pretext strict height measurement
+    const cardRef = React.useRef<HTMLDivElement>(null);
+    const [exactHeight, setExactHeight] = React.useState<number | undefined>(undefined);
+    const [contentWidth, setContentWidth] = React.useState<number>(0);
+
+    React.useEffect(() => {
+        if (!cardRef.current) return;
+        const observer = new ResizeObserver((entries) => {
+            const width = entries[0].contentRect.width;
+            if (width > 0) {
+                // Ensure padding is accounted for to get the actual border-box width
+                const fullWidth = width + 10; // since padding is 5px on the element
+                setContentWidth(Math.max(0, fullWidth - 50)); // card width minus 10 padding minus 40 container padding
+                const h = calculateCardHeight(card, fullWidth);
+                setExactHeight(h);
+            }
+        });
+        observer.observe(cardRef.current);
+        return () => observer.disconnect();
+    }, [card.notes?.action, card.actionDescription, card.startTime, card.duration, card.generatedVideos, card.videoPath]);
 
     React.useEffect(() => {
         if (!isHovered) return;
@@ -72,13 +93,11 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
     const soundValue = card.notes?.sound || (card as any).soundCues || '';
 
     const renderImageOptions = (field: 'startImagePath' | 'endImagePath') => {
-        const instance = field === 'startImagePath' ? startTippy : endTippy;
-        
         return (
             <div className="flex flex-col bg-[#11111e] border border-indigo-500/30 rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.5)] overflow-hidden min-w-[220px] backdrop-blur-xl">
                 <button 
                     onClick={() => {
-                        instance?.hide();
+                        if (field === 'startImagePath') setIsStartPopoverOpen(false); else setIsEndPopoverOpen(false);
                         onPickImage?.(card.id, field);
                     }}
                     className="flex items-center gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest"
@@ -88,7 +107,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                 {field === 'startImagePath' && (
                     <button 
                         onClick={() => {
-                            instance?.hide();
+                            if (field === 'startImagePath') setIsStartPopoverOpen(false); else setIsEndPopoverOpen(false);
                             onGetImageDescription?.(card.id);
                         }}
                         disabled={!card.startImagePath || !comfyConnected || card.isDescribing}
@@ -103,7 +122,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                 )}
                 <button 
                     onClick={() => {
-                        instance?.hide();
+                        if (field === 'startImagePath') setIsStartPopoverOpen(false); else setIsEndPopoverOpen(false);
                         onCopyImageFromNext?.(card.id, field);
                     }}
                     className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-indigo-600/20 text-[10px] font-black text-gray-300 hover:text-white transition-all border-b border-indigo-500/10 text-left uppercase tracking-widest group/item"
@@ -123,7 +142,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                 </button>
                 <button 
                     onClick={() => {
-                        instance?.hide();
+                        if (field === 'startImagePath') setIsStartPopoverOpen(false); else setIsEndPopoverOpen(false);
                         onUpdate(card.id, { [field]: undefined });
                     }}
                     className="flex items-center gap-3 px-4 py-3 hover:bg-red-600/20 text-[10px] font-black text-gray-300 hover:text-red-400 transition-all text-left uppercase tracking-widest"
@@ -136,10 +155,11 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
 
     return (
         <div 
+            ref={cardRef}
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
-            className={`bg-[#1a1a2e] border rounded-xl overflow-hidden shadow-2xl transition-all group flex flex-col h-full ${isHovered ? 'border-indigo-400 ring-1 ring-indigo-500/20 scale-[1.01]' : 'border-gray-700/50 hover:border-gray-600'}`}
-            style={{ padding: '5px' }}
+            className={`bg-[#1a1a2e] border rounded-xl shadow-2xl transition-all group flex flex-col h-full ${isHovered ? 'border-indigo-400 ring-1 ring-indigo-500/20 scale-[1.01]' : 'border-gray-700/50 hover:border-gray-600'}`}
+            style={{ padding: '5px', height: exactHeight ? `${exactHeight}px` : '100%', overflow: 'hidden' }}
         >
             {/* Header: Scene/Shot Info */}
             <div className="px-4 py-3 bg-black/40 border-b border-gray-700/30 flex justify-between items-center shrink-0">
@@ -152,7 +172,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         placeholder="UNNAMED SHOT"
                     />
                 </div>
-                <Tippy content="Remove this shot from the timeline." placement="top" offset={[0, 48]}>
+                <AppTooltip content="Remove this shot from the timeline." placement="top" offset={[0, 48]}>
                     <span>
                         <button 
                             onClick={() => onDelete(card.id)}
@@ -161,21 +181,18 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                             ✕
                         </button>
                     </span>
-                </Tippy>
+                </AppTooltip>
             </div>
 
             {/* Visual Previews & Video Selector */}
             <div className="space-y-2 p-4 bg-black/20">
                 <div className="flex gap-2 aspect-[32/9]">
                     {/* Start Image */}
-                    <Tippy 
+                    <AppPopover 
                         content={renderImageOptions('startImagePath')} 
-                        interactive={true} 
-                        trigger="click" 
-                        onCreate={setStartTippy}
                         placement="bottom"
-                        animation="shift-away"
-                        theme="custom"
+                        open={isStartPopoverOpen}
+                        onOpenChange={setIsStartPopoverOpen}
                     >
                         <div 
                             className="flex-1 relative aspect-video bg-black/40 rounded-lg overflow-hidden border border-gray-800 flex items-center justify-center group/img cursor-pointer hover:ring-2 hover:ring-indigo-500 transition-all"
@@ -190,17 +207,14 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         )}
                         <div className="absolute top-1 left-1 px-1 bg-black/60 rounded text-[8px] font-bold text-gray-400 uppercase tracking-tighter">Start</div>
                     </div>
-                </Tippy>
+                </AppPopover>
 
                     {/* End Image */}
-                    <Tippy 
+                    <AppPopover 
                         content={renderImageOptions('endImagePath')} 
-                        interactive={true} 
-                        trigger="click" 
-                        onCreate={setEndTippy}
                         placement="bottom"
-                        animation="shift-away"
-                        theme="custom"
+                        open={isEndPopoverOpen}
+                        onOpenChange={setIsEndPopoverOpen}
                     >
                         <div 
                             className="flex-1 relative aspect-video bg-black/40 rounded-lg overflow-hidden border border-gray-800 flex items-center justify-center group/img cursor-pointer hover:ring-2 hover:ring-indigo-500 transition-all"
@@ -215,7 +229,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         )}
                         <div className="absolute top-1 left-1 px-1 bg-black/60 rounded text-[8px] font-bold text-gray-400 uppercase tracking-tighter">End</div>
                     </div>
-                </Tippy>
+                </AppPopover>
             </div>
 
                 {/* Video Preview & Selector Dropdown */}
@@ -274,6 +288,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                     <div className="relative">
                         <textarea 
                             className={`w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed ${card.isDescribing ? 'opacity-50' : ''}`}
+                            style={{ height: contentWidth > 0 ? `${Math.max(60, getTextHeight(card.actionDescription || '', contentWidth - 16) + 16)}px` : undefined }}
                             placeholder="AI generated image description will appear here..."
                             value={card.actionDescription || ''}
                             onChange={(e) => onUpdate(card.id, { actionDescription: e.target.value })}
@@ -300,7 +315,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                     <div className="flex justify-between items-center pr-1">
                         <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Clip Action</label>
                         <div className="flex gap-1">
-                            <Tippy content={comfyConnected ? "Generate video for this shot." : "ComfyUI not connected."} placement="top" offset={[0, 48]}>
+                            <AppTooltip content={comfyConnected ? "Generate video for this shot." : "ComfyUI not connected."} placement="top" offset={[0, 48]}>
                                 <span>
                                     <button 
                                         onClick={() => onGenerateVideo?.(card.id)}
@@ -318,11 +333,12 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                                         <span>🎬</span> {card.status === 'generating' ? 'Generating...' : card.status === 'queued' ? 'Queued...' : 'Generate'}
                                     </button>
                                 </span>
-                            </Tippy>
+                            </AppTooltip>
                         </div>
                     </div>
                     <textarea 
                         className="w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed"
+                        style={{ height: contentWidth > 0 ? `${Math.max(60, getTextHeight(actionPromptValue, contentWidth - 16) + 16)}px` : undefined }}
                         placeholder="Describe the clip action for video generation..."
                         value={actionPromptValue}
                         onChange={(e) => onUpdate(card.id, { 

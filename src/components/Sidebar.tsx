@@ -1,7 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import Tippy from '@tippyjs/react';
-import 'tippy.js/dist/tippy.css';
-import 'tippy.js/animations/shift-away.css';
+import { AppTooltip } from './ui/Tooltip';
 
 interface SidebarProps {
     activeModule: string;
@@ -58,12 +56,12 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
 
             <nav className="sidebar-nav">
                 {modules.map((module) => (
-                    <Tippy 
+                    <AppTooltip 
                         key={module.id} 
                         content={module.description} 
                         placement="right" 
                         offset={[0, 48]} 
-                        animation="shift-away"
+                        
                     >
                         <span className="w-full">
                             <button
@@ -76,7 +74,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
                                 {!module.enabled && <span className="sidebar-item-badge">Soon</span>}
                             </button>
                         </span>
-                    </Tippy>
+                    </AppTooltip>
                 ))}
 
                 {activeProjectName && (
@@ -96,94 +94,94 @@ const Sidebar: React.FC<SidebarProps> = ({ activeModule, onModuleChange, statusL
                             <span>👁</span> Panel Visibility
                         </div>
                         <div className="flex flex-col gap-2">
-                            <Tippy content="Show/Hide secondary audio tracks and separators." placement="right" offset={[0, 48]}>
-                                <span className="block w-full">
-                                    <button 
-                                        onClick={() => onToggleVisibility('showAudioSource')}
-                                        className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showAudioSource ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
-                                    >
-                                        <span>🔈 Audio Source</span>
-                                        <span>{panelVisibility.showAudioSource ? 'ON' : 'OFF'}</span>
-                                    </button>
-                                </span>
-                            </Tippy>
-                            <Tippy content="Show/Hide the directory for local video files." placement="right" offset={[0, 48]}>
-                                <span className="block w-full">
-                                    <button 
-                                        onClick={() => onToggleVisibility('showVideoSource')}
-                                        className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showVideoSource ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
-                                    >
-                                        <span>📁 Video Source</span>
-                                        <span>{panelVisibility.showVideoSource ? 'ON' : 'OFF'}</span>
-                                    </button>
-                                </span>
-                            </Tippy>
-                            <Tippy content="Show/Hide the Generation Queue Manager." placement="right" offset={[0, 48]}>
+                            <AppTooltip content="Show/Hide the Generation Queue Manager." placement="right" offset={[0, 48]}>
                                 <span className="block w-full">
                                     <button 
                                         onClick={() => onToggleVisibility('showQueue')}
-                                        className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showQueue ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                        className={`flex items-center justify-between px-[5px] py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showQueue ? 'bg-yellow-500/20 text-yellow-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
                                     >
                                         <span>📋 Generation Queue</span>
                                         <span>{panelVisibility.showQueue ? 'ON' : 'OFF'}</span>
                                     </button>
                                 </span>
-                            </Tippy>
-                            <Tippy content="Toggle between available project files." placement="right" offset={[0, 48]}>
+                            </AppTooltip>
+                            <AppTooltip content="Show/Hide secondary audio tracks and separators." placement="right" offset={[0, 48]}>
+                                <span className="block w-full">
+                                    <button 
+                                        onClick={() => onToggleVisibility('showAudioSource')}
+                                        className={`flex items-center justify-between px-[5px] py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showAudioSource ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                    >
+                                        <span>🔈 Audio Source</span>
+                                        <span>{panelVisibility.showAudioSource ? 'ON' : 'OFF'}</span>
+                                    </button>
+                                </span>
+                            </AppTooltip>
+                            <AppTooltip content="Show/Hide the directory for local video files." placement="right" offset={[0, 48]}>
+                                <span className="block w-full">
+                                    <button 
+                                        onClick={() => onToggleVisibility('showVideoSource')}
+                                        className={`flex items-center justify-between px-[5px] py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showVideoSource ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                    >
+                                        <span>📁 Video Source</span>
+                                        <span>{panelVisibility.showVideoSource ? 'ON' : 'OFF'}</span>
+                                    </button>
+                                </span>
+                            </AppTooltip>
+                            <AppTooltip content="Toggle between available project files." placement="right" offset={[0, 48]}>
                                 <span className="block w-full">
                                     <button 
                                         onClick={() => onToggleVisibility('showProjectSelection')}
-                                        className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showProjectSelection ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                        className={`flex items-center justify-between px-[5px] py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showProjectSelection ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
                                     >
                                         <span>🗂 Project Selection</span>
                                         <span>{panelVisibility.showProjectSelection ? 'ON' : 'OFF'}</span>
                                     </button>
                                 </span>
-                            </Tippy>
-                            <Tippy content="Show/Hide beat detection and stem separation tools." placement="right" offset={[0, 48]}>
+                            </AppTooltip>
+                            <AppTooltip content="Show/Hide beat detection and stem separation tools." placement="right" offset={[0, 48]}>
                                 <span className="block w-full">
                                     <button 
                                         onClick={() => onToggleVisibility('showAudioAnalysis')}
-                                        className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showAudioAnalysis ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                        className={`flex items-center justify-between px-[5px] py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showAudioAnalysis ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
                                     >
                                         <span>🎛 Audio Analysis</span>
                                         <span>{panelVisibility.showAudioAnalysis ? 'ON' : 'OFF'}</span>
                                     </button>
                                 </span>
-                            </Tippy>
-                            <Tippy content="Toggle the main track video editor view." placement="right" offset={[0, 48]}>
+                            </AppTooltip>
+                            <AppTooltip content="Toggle the main track video editor view." placement="right" offset={[0, 48]}>
                                 <span className="block w-full">
                                     <button 
                                         onClick={() => onToggleVisibility('showVideo')}
-                                        className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showVideo ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                        className={`flex items-center justify-between px-[5px] py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showVideo ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
                                     >
                                         <span>🎥 Video Timeline</span>
                                         <span>{panelVisibility.showVideo ? 'ON' : 'OFF'}</span>
                                     </button>
                                 </span>
-                            </Tippy>
-                            <Tippy content="Show/Hide the master track waveform." placement="right" offset={[0, 48]}>
+                            </AppTooltip>
+                            <AppTooltip content="Show/Hide the master track waveform." placement="right" offset={[0, 48]}>
                                 <span className="block w-full">
                                     <button 
                                         onClick={() => onToggleVisibility('showMainTrack')}
-                                        className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showMainTrack ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                        className={`flex items-center justify-between px-[5px] py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showMainTrack ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
                                     >
                                         <span>🌊 Main Track</span>
                                         <span>{panelVisibility.showMainTrack ? 'ON' : 'OFF'}</span>
                                     </button>
                                 </span>
-                            </Tippy>
-                            <Tippy content="Show/Hide all generated stem tracks." placement="right" offset={[0, 48]}>
+                            </AppTooltip>
+                            <AppTooltip content="Show/Hide all generated stem tracks." placement="right" offset={[0, 48]}>
                                 <span className="block w-full">
                                     <button 
                                         onClick={() => onToggleVisibility('showStems')}
-                                        className={`flex items-center justify-between px-2 py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showStems ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
+                                        className={`flex items-center justify-between px-[5px] py-1.5 rounded text-[11px] transition-all w-full ${panelVisibility.showStems ? 'bg-indigo-500/20 text-indigo-200' : 'bg-gray-900/40 text-gray-500 opacity-60'}`}
                                     >
                                         <span>🥁 Stems Area</span>
                                         <span>{panelVisibility.showStems ? 'ON' : 'OFF'}</span>
                                     </button>
                                 </span>
-                            </Tippy>
+                            </AppTooltip>
                         </div>
                     </div>
                 )}

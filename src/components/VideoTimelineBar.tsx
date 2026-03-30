@@ -1,9 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { SelectionState, VideoInfo, VideoThumbnail, VideoClip } from '../types/assembler';
 import { formatTime } from '../utils/timelineUtils';
-import Tippy from '@tippyjs/react';
-import 'tippy.js/dist/tippy.css';
-import 'tippy.js/animations/shift-away.css';
+import { AppTooltip } from './ui/Tooltip';
 import './VideoTimelineBar.css';
 
 interface VideoTimelineBarProps {
@@ -351,9 +349,8 @@ const VideoTimelineBar: React.FC<VideoTimelineBarProps> = ({
                             const frames = Math.round((clip.endTime - clip.startTime) * (videoInfo.fps || 24));
 
                             return (
-                                <Tippy
+                                <AppTooltip
                                     key={clip.id}
-                                    animation="shift-away"
                                     offset={[0, 8]}
                                     content={
                                         <div style={{ fontSize: '10px', fontWeight: '700', padding: '4px' }}>
@@ -392,7 +389,7 @@ const VideoTimelineBar: React.FC<VideoTimelineBarProps> = ({
                                             cursor: 'help'
                                         }}
                                     />
-                                </Tippy>
+                                </AppTooltip>
                             );
                         })}
 

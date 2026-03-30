@@ -19,6 +19,7 @@ import { getValidLtxFrameCount } from './utils/timelineUtils';
 import type { VideoClip } from './types/assembler';
 import workflowJsonTemplate from '../comfyui_workflows/video_ltx2_i2v.json';
 import imageDescriptionWorkflow from '../comfyui_workflows/llm_qwen3_image_discription_api.json';
+import { TooltipProvider } from './components/ui/Tooltip';
 
 // Define types for Electron IPC
 declare global {
@@ -789,22 +790,24 @@ function App() {
   };
 
   return (
-    <Layout
-      activeModule={activeModule}
-      onModuleChange={setActiveModule}
-      statusLogs={statusLogs}
-      activeProjectName={activeProject?.name}
-      panelVisibility={panelVisibility}
-      onToggleVisibility={toggleVisibility}
-      videoQueue={videoQueue}
-      isQueuePaused={isQueuePaused}
-      onTogglePauseQueue={handleTogglePauseQueue}
-      onRemoveFromQueue={handleRemoveFromQueue}
-      onClearQueue={handleClearQueue}
-      onResetStuck={handleResetStuckStatuses}
-    >
-      {renderModule()}
-    </Layout>
+    <TooltipProvider delayDuration={200}>
+      <Layout
+        activeModule={activeModule}
+        onModuleChange={setActiveModule}
+        statusLogs={statusLogs}
+        activeProjectName={activeProject?.name}
+        panelVisibility={panelVisibility}
+        onToggleVisibility={toggleVisibility}
+        videoQueue={videoQueue}
+        isQueuePaused={isQueuePaused}
+        onTogglePauseQueue={handleTogglePauseQueue}
+        onRemoveFromQueue={handleRemoveFromQueue}
+        onClearQueue={handleClearQueue}
+        onResetStuck={handleResetStuckStatuses}
+      >
+        {renderModule()}
+      </Layout>
+    </TooltipProvider>
   );
 }
 

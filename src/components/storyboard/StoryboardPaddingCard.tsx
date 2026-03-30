@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
-import Tippy from '@tippyjs/react';
-import 'tippy.js/dist/tippy.css';
-import 'tippy.js/animations/shift-away.css';
+import { AppTooltip } from '../ui/Tooltip';
 import { formatTime } from '../../utils/timelineUtils';
 
 interface StoryboardPaddingCardProps {
@@ -22,7 +20,7 @@ const StoryboardPaddingCard: React.FC<StoryboardPaddingCardProps> = ({ startTime
     };
 
     return (
-        <Tippy content="This is an empty slot in your timeline. Click to fill." placement="top" offset={[0, 48]}>
+        <AppTooltip content="This is an empty slot in your timeline. Click to fill." placement="top" offset={[0, 48]}>
             <span className="block h-full cursor-pointer" onClick={(e) => { e.stopPropagation(); handleAddClick(); }}>
                 <div 
                     className="group aspect-[4/5] border-2 border-dashed border-gray-800/50 rounded-xl bg-gray-900/10 flex flex-col p-6 transition-all hover:border-indigo-500/30 hover:bg-indigo-900/5"
@@ -51,7 +49,7 @@ const StoryboardPaddingCard: React.FC<StoryboardPaddingCardProps> = ({ startTime
                             <span className="text-[9px] text-gray-500 font-bold uppercase">sec</span>
                         </div>
 
-                        <Tippy content="Create a new shot to fill this temporal gap." placement="top" offset={[0, 48]}>
+                        <AppTooltip content="Create a new shot to fill this temporal gap." placement="top" offset={[0, 48]}>
                             <span>
                                 <button 
                                     onClick={(e) => {
@@ -63,11 +61,11 @@ const StoryboardPaddingCard: React.FC<StoryboardPaddingCardProps> = ({ startTime
                                     Add Card
                                 </button>
                             </span>
-                        </Tippy>
+                        </AppTooltip>
                     </div>
                 </div>
             </span>
-        </Tippy>
+        </AppTooltip>
     );
 };
 

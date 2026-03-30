@@ -1,7 +1,5 @@
 import React from 'react';
-import Tippy from '@tippyjs/react';
-import 'tippy.js/dist/tippy.css';
-import 'tippy.js/animations/shift-away.css';
+import { AppTooltip } from '../ui/Tooltip';
 import { formatTime, pathToMediaUrl } from '../../utils/timelineUtils';
 
 interface AnimaticTimelineProps {
@@ -186,13 +184,11 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ items, onSelectCard
                      );
 
                      return (
-                         <Tippy 
+                         <AppTooltip 
                             key={`${item.type}-${idx}`} 
                             content={tooltipContent} 
                             placement="top" 
-                            offset={[0, 48]} 
-                            animation="shift-away"
-                            theme="translucent"
+                            offset={[0, 48]}
                          >
                              <span className="contents">
                                  <div 
@@ -201,7 +197,7 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ items, onSelectCard
                                     style={{ width: `${percent}%` }}
                                  />
                              </span>
-                         </Tippy>
+                         </AppTooltip>
                      );
                  })}
             </div>
