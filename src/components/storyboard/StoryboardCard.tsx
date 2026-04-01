@@ -303,37 +303,8 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
             </div>
 
             {/* Content Areas */}
-            <div className="p-5 space-y-5 flex-1 overflow-hidden">
-                {/* Image Description Box */}
-                <div className="space-y-1">
-                    <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Image description</label>
-                    <div className="relative">
-                        <textarea 
-                            className={`w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden ${card.isDescribing ? 'opacity-50' : ''}`}
-                            style={{ height: `${Math.min(200, Math.max(60, getTextHeight(card.actionDescription || '', assumedWidth) + 16))}px` }}
-                            title="Right-click to open large editor"
-                            placeholder="AI generated image description will appear here..."
-                            value={card.actionDescription || ''}
-                            onChange={(e) => onUpdate(card.id, { actionDescription: e.target.value })}
-                            onContextMenu={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setEditorConfig({
-                                    title: "Edit Image Description",
-                                    initialValue: card.actionDescription || '',
-                                    onSave: (val) => onUpdate(card.id, { actionDescription: val })
-                                });
-                                setIsEditorOpen(true);
-                            }}
-                        />
-                        {card.isDescribing && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-lg">
-                                <span className="text-[10px] font-bold text-indigo-400 animate-pulse">Describing...</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
+            <div className="p-5 space-y-5 flex-1">
+                {/* Clip Action Box */}
                 <div className="space-y-1">
                     <div className="flex justify-between items-center pr-1">
                         <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Clip Action</label>
@@ -381,6 +352,57 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                             setIsEditorOpen(true);
                         }}
                     />
+                </div>
+
+                {/* Image Description Box */}
+                <div className="space-y-1">
+                    <div className="flex justify-between items-center pr-1">
+                        <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Image description</label>
+                        <div className="flex gap-1">
+                            <AppTooltip content={comfyConnected && card.startImagePath ? "Generate an AI description of the start image." : (!card.startImagePath ? "Start image required." : "ComfyUI not connected.")} placement="top" offset={[0, 48]}>
+                                <span>
+                                    <button 
+                                        onClick={() => onGetImageDescription?.(card.id)}
+                                        disabled={!card.startImagePath || !comfyConnected || card.isDescribing}
+                                        className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight transition-all flex items-center gap-1 border ${
+                                            card.isDescribing
+                                                ? 'bg-indigo-600/20 text-indigo-400 border-indigo-500/20 animate-pulse'
+                                                : (comfyConnected && card.startImagePath)
+                                                    ? 'bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white border-blue-500/20'
+                                                    : 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                                        }`}
+                                    >
+                                        <span>🔍</span> {card.isDescribing ? 'Describing...' : 'Get Description'}
+                                    </button>
+                                </span>
+                            </AppTooltip>
+                        </div>
+                    </div>
+                    <div className="relative">
+                        <textarea 
+                            className={`w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden ${card.isDescribing ? 'opacity-50' : ''}`}
+                            style={{ height: `${Math.min(200, Math.max(60, getTextHeight(card.actionDescription || '', assumedWidth) + 16))}px` }}
+                            title="Right-click to open large editor"
+                            placeholder="AI generated image description will appear here..."
+                            value={card.actionDescription || ''}
+                            onChange={(e) => onUpdate(card.id, { actionDescription: e.target.value })}
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setEditorConfig({
+                                    title: "Edit Image Description",
+                                    initialValue: card.actionDescription || '',
+                                    onSave: (val) => onUpdate(card.id, { actionDescription: val })
+                                });
+                                setIsEditorOpen(true);
+                            }}
+                        />
+                        {card.isDescribing && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-lg">
+                                <span className="text-[10px] font-bold text-indigo-400 animate-pulse">Describing...</span>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
