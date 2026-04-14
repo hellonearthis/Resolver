@@ -609,7 +609,7 @@ function App() {
       const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
       if (!ipcRenderer) throw new Error("Electron IPC not available.");
 
-      const systemPrompt = "You are a professional cinematographer. Rewrite the following scene into a 3-sentence visual description. Focus on camera movement, lighting, and textures. Do not use technical codes, use natural English.";
+      const systemPrompt = "You are a professional cinematographer. Rewrite the following scene into a 5-sentence visual description. Focus on camera movement, lighting, and textures. Do not use technical codes, use natural English. IMPORTANT: Output ONLY the 5-sentence visual description. Do not include any introductory remarks, notes, conversational filler, or meta-comments. Start directly with the description.";
       
       const parts = [];
       if (clip.actionDescription) parts.push(`Context: ${clip.actionDescription}`);
