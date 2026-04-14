@@ -7,7 +7,15 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-// Helper to format arrays of numbers on a single line instead of expanded
+/**
+ * COMPACT JSON STRINGIFICATION:
+ * 
+ * WHY: Standard JSON.stringify(obj, null, 2) makes large arrays of numbers (like 
+ * beat markers) take up thousands of lines, making project files hard to read.
+ * HOW: This utility uses a regular expression to find arrays containing only 
+ * numbers and collapses them onto a single line, while keeping the rest of 
+ * the object properly indented.
+ */
 const stringifyWithCompactArrays = (obj: any): string => {
     const jsonStr = JSON.stringify(obj, null, 2);
     // Find arrays that contain only numbers, commas, and whitespace
@@ -65,8 +73,13 @@ export interface BeatProject {
     updatedAt: string;
 }
 
-
-
+/**
+ * useProjectStorage
+ * 
+ * A custom hook that manages the lifecycle of BeatProjects.
+ * It handles loading from disk via Electron IPC, updating state, 
+ * and committing changes back to the filesystem as 'project.json' bundles.
+ */
 export function useProjectStorage() {
     const [projects, setProjects] = useState<BeatProject[]>([]);
     const [isLoaded, setIsLoaded] = useState(false);
@@ -113,8 +126,13 @@ export function useProjectStorage() {
     }, [refreshProjects]);
 
     /**
-     * Internal helper to commit a project object to the filesystem as a project.json bundle.
-     * Determines or creates the PRJ_ folder output directory.
+     * PROJECT BUNDLING (saveProjectFile):
+     * 
+     * WHY: To stay organized, every project should be its own self-contained folder
+     * (bundle) rather than just a loose JSON file.
+     * HOW: We create a folder prefixed with 'PRJ_' containing the project.json.
+     * We normalize paths to ensure no trailing slashes cause recursive nesting bugs.
+     * 
      * @param project The project data to save
      * @returns The updated project data with a resolved outputDir
      */

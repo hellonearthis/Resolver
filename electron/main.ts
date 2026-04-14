@@ -929,11 +929,24 @@ const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
 
 ipcMain.handle('get-config', async () => {
     try {
+        const defaultConfig = {
+            comfyOutputDir: '',
+            projectOutputDir: '',
+            llmProvider: 'lmstudio',
+            lmStudioUrl: 'http://localhost:1234',
+            llmMaxTokens: 128,
+            llmTemperature: 0.7,
+            llmTopP: 0.9,
+            llmTopK: 50,
+            llmRepetitionPenalty: 1.5
+        };
+
         if (fs.existsSync(CONFIG_PATH)) {
             const data = fs.readFileSync(CONFIG_PATH, 'utf8');
-            return { success: true, config: JSON.parse(data) };
+            const userConfig = JSON.parse(data);
+            return { success: true, config: { ...defaultConfig, ...userConfig } };
         }
-        return { success: true, config: {} };
+        return { success: true, config: defaultConfig };
     } catch (err) {
         console.error('Error reading config:', err);
         return { success: false, error: String(err) };
@@ -1228,6 +1241,128 @@ ipcMain.handle('scan-projects-folder', async (_event, folderPath: string) => {
         return { success: true, projects };
     } catch (err) {
         console.error('Error scanning projects folder:', err);
+        return { success: false, error: String(err) };
+    }
+});
+// ---------------------------------------------------------------------------
+// LLM Prompt Expansion (Vino & LM Studio)
+// ---------------------------------------------------------------------------
+
+let vinoPipeline: any = null;
+
+ipcMain.handle('llm-generate', async (_event, data: {
+    systemPrompt: string;
+    userPrompt: string;
+}) => {
+    try {
+        // Load latest config
+        let config: any = {};
+        if (fs.existsSync(CONFIG_PATH)) {
+            config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+        }
+
+        const provider = config.llmProvider || 'lmstudio';
+        const params = {
+            max_new_tokens: config.llmMaxTokens || 128,
+            do_sample: true,
+            temperature: config.llmTemperature || 0.7,
+            top_p: config.llmTopP || 0.9,
+            top_k: config.llmTopK || 50,
+            repetition_penalty: config.llmRepetitionPenalty || 1.5,
+        };
+
+        if (provider === 'vino') {
+            console.log('[LLM] Using Intel OpenVINO Backend');
+            
+            // Lazy load OpenVINO native module to prevent startup crashes if not installed
+            let VLMPipeline: any;
+            try {
+                // @ts-ignore
+                const mod = await import('openvino-genai-node') as any;
+                // VLM for Gemma 3, LLM fallback if types are weird
+                VLMPipeline = mod.VLMPipeline || mod.LLMPipeline;
+            } catch (e) {
+                return { success: false, error: "OpenVino library not found. Have you run 'npm install'?" };
+            }
+
+            // Initialize singleton pipeline
+            if (!vinoPipeline) {
+                const modelPath = path.join(process.cwd(), 'vino', 'gemma-3-openvino');
+                const cacheDir = path.join(process.cwd(), 'vino', 'ov_cache', 'gemma-3-openvino');
+                
+                if (!fs.existsSync(modelPath)) {
+                    return { success: false, error: `Model not found at: ${modelPath}. Please install Gemma 3 into the vino/ folder.` };
+                }
+
+                if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+
+                console.log(`[LLM] Loading Gemma 3 from: ${modelPath}`);
+                
+                const pipeOptions = {
+                    CACHE_DIR: cacheDir,
+                    NPUW_LLM_PREFILL_HINT: "STATIC",
+                    KV_CACHE_PRECISION: "u8",
+                    NPU_COMPILATION_MODE_CONFIG: "USER_CONFIG",
+                    NPU_MAX_NUM_THREADS: "8",
+                };
+
+                try {
+                    console.log(`[LLM] Targeting NPU accelerated hardware...`);
+                    vinoPipeline = await VLMPipeline(modelPath, "NPU", pipeOptions);
+                } catch (npuError: any) {
+                    console.warn(`[LLM] NPU Initialization Failed: ${npuError.message}. Falling back to CPU...`);
+                    try {
+                        // Fallback to CPU if NPU driver/compilation fails
+                        vinoPipeline = await VLMPipeline(modelPath, "CPU", { CACHE_DIR: cacheDir });
+                    } catch (cpuError: any) {
+                        return { success: false, error: `Critical: AI Load failed on both NPU and CPU: ${cpuError.message}` };
+                    }
+                }
+                console.log(`[LLM] AI Pipeline Ready on ${vinoPipeline ? 'Hardware' : 'Error State'}.`);
+            }
+
+            // Chat Template for Gemma 3
+            const fullPrompt = `<start_of_turn>user\n${data.systemPrompt}\n\nInput Scene: ${data.userPrompt}<end_of_turn>\n<start_of_turn>model\n`;
+            
+            console.log('[LLM] NPU Inference starting...');
+            const startTime = Date.now();
+            const result = await vinoPipeline.generate(fullPrompt, [], params);
+            console.log(`[LLM] NPU Inference complete in ${((Date.now() - startTime)/1000).toFixed(2)}s`);
+
+            // Explicitly cast to String to handle specialized OpenVINO return objects
+            return { success: true, text: String(result) };
+
+        } else {
+            console.log('[LLM] Using LM Studio Backend');
+            const endpoint = `${config.lmStudioUrl || 'http://localhost:1234'}/v1/chat/completions`;
+            
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: [
+                        { role: 'system', content: data.systemPrompt },
+                        { role: 'user', content: data.userPrompt }
+                    ],
+                    temperature: params.temperature,
+                    top_p: params.top_p,
+                    max_tokens: params.max_new_tokens,
+                    frequency_penalty: params.repetition_penalty - 1.0 // Map repetition to frequency slightly
+                })
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                return { success: false, error: `LM Studio Error: ${response.status} - ${errText}` };
+            }
+
+            const json = await response.json();
+            const text = json.choices?.[0]?.message?.content || '';
+            return { success: true, text };
+        }
+
+    } catch (err: any) {
+        console.error('[LLM] Generation Error:', err);
         return { success: false, error: String(err) };
     }
 });

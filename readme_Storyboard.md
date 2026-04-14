@@ -18,11 +18,34 @@ Each card in the storyboard represents a single shot or segment on your project 
 
 ---
 
-## 📝 Action Prompt & AI Integration
+## 🤖 AI Cinematic Expansion (Tri-Tier Workflow)
 
-The **Action Prompt** field is the "brain" of each card.
-- **Unified Logic**: The description you type here is the exact prompt sent to ComfyUI for image and video generation.
-- **🪄 Instant Generation**: Each card has a built-in magic wand to trigger AI frame generation directly from your prompt.
+The Storyboard features a brand-new **Tri-Tier Prompt Engineering** system designed for high-fidelity LTX video generation. This workflow transforms a simple idea into a professional cinematic description.
+
+### 1. The Tri-Tier System
+Your video generation prompt is built from three distinct layers:
+- **Tier 1: Image Description** (Top Box) — AI-generated description of your **Start Image**. This provides the "visual foundation" (lighting, costumes, location).
+- **Tier 2: Clip Action** (Middle Box) — Your manual intent. This is where you describe *what happens* in the shot (e.g., "The figure turns and walks toward the sunset").
+- **Tier 3: AI Expanded Prompt** (Bottom Box) — The professional LTX target. Clicking **✨ Reword** combines Tiers 1 & 2 into a single, high-fidelity LTX cinematic prompt.
+
+### 2. Magic Expansion (✨ Reword)
+Use the **✨ Reword** button to trigger the expansion. This uses either your **Local NPU (Intel Vino)** or **LM Studio** backend to rewrite your scene into professional cinema-speak.
+- **Provider Icons**: Look for the **🍷 (Vino)** or **🏢 (LM Studio)** icons to see which engine is currently active.
+- **Tooltips**: Hover over the icons or the Reword button to see exactly which hardware device will be used.
+
+### 3. Locking (🔒/🔓)
+High-quality AI results are precious. 
+- Click the **🔓 Lock** icon to protect a generated prompt.
+- Once locked, the **✨ Reword** button is disabled, preventing accidental overwrites. 
+- You can still manually edit a locked prompt (Right-click for the large editor), and common-sense updates still save instantly.
+
+### 4. Generation Logic
+When you click **🎬 Generate**, the app prioritizes the **AI Expanded Prompt** if it exists. If it's empty, it falls back to your manual **Clip Action**. This ensure you always have maximum control over the final video result.
+
+---
+
+## 🪄 Instant Generation & Versioning
+Each card has a built-in magic wand to trigger AI frame generation directly from your prompt.
 - **Video Versioning**: Generate multiple takes for a single shot and use the **Clip Version** dropdown to switch between them. The active version is immediately updated on your project timeline.
 
 ---

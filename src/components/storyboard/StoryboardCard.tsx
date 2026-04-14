@@ -1,3 +1,10 @@
+/**
+ * StoryboardCardComponent
+ * 
+ * A rich, interactive card representing a single shot in the storyboard.
+ * It handles image picking, AI description generation, video previews, and timing.
+ */
+
 import React from 'react';
 import { AppTooltip } from '../ui/Tooltip';
 import { AppPopover } from '../ui/Popover';
@@ -15,8 +22,10 @@ interface CardProps {
     onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     onCopyEndFrameFromPrev?: (clipId: string, exactBeat?: boolean) => void;
     onGetImageDescription?: (clipId: string) => Promise<void>;
+    onRewordPrompt?: (clipId: string) => Promise<void>;
     nextClipStartImage?: string;
     prevClipEndImage?: string;
+    llmProvider?: 'lmstudio' | 'vino';
     comfyConnected?: boolean;
     frameRate?: number;
 }
@@ -30,8 +39,10 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
     onCopyImageFromNext,
     onCopyEndFrameFromPrev,
     onGetImageDescription,
+    onRewordPrompt,
     nextClipStartImage,
     prevClipEndImage,
+    llmProvider,
     comfyConnected,
     frameRate = 20
 }) => {
@@ -47,9 +58,15 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
 
     // Pretext strict height measurement
     const cardRef = React.useRef<HTMLDivElement>(null);
-    // Width for text calculations
-    // We'll just define a rough inner width based on standard card width (approx 300px minus padding)
-    // allowing pretext to do a decent estimate for the max 10-line view
+    
+    /**
+     * TEXT MEASUREMENT (assumedWidth):
+     * 
+     * WHY: We want the textareas to automatically resize to fit their content (up to a limit), 
+     * giving a "script-like" feel without manual resizing.
+     * HOW: Pretext (via getTextHeight) calculates height based on a fixed width. We assume 
+     * 260px based on the standard responsive grid width of the card.
+     */
     const assumedWidth = 260;
 
     React.useEffect(() => {
@@ -59,6 +76,14 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
             // Don't intercept if an input is focused (handled natively)
             if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
 
+            /**
+             * DURATION STEPPING (ArrowUp/Down):
+             * 
+             * WHY: Creative editors often want to nudge durations by discrete intervals 
+             * (like 8-frame blocks) to match a beat or pace.
+             * HOW: We increment/decrement the duration and call onUpdate, which triggers 
+             * the 'ripple' process in the parent module to shift contiguous clips.
+             */
             if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 const currentDur = card.duration || 0;
@@ -77,10 +102,11 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [isHovered, card.duration, card.startTime, card.id, frameRate, onUpdate]);
 
-    // Legacy Fallback Helper
-    const actionPromptValue = card.notes?.action || (card as any).actionNotes || (card as any).promptText || '';
-    const dialogueValue = card.notes?.dialogue || (card as any).dialogue || '';
-    const soundValue = card.notes?.sound || (card as any).soundCues || '';
+    // Unified Notes Helpers
+    // These grab values from the modern nested 'notes' object, which keeps the clip interface clean.
+    const actionPromptValue = card.notes?.action || '';
+    const dialogueValue = card.notes?.dialogue || '';
+    const soundValue = card.notes?.sound || '';
 
     const renderImageOptions = (field: 'startImagePath' | 'endImagePath') => {
         const closePopover = () => {
@@ -304,56 +330,11 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
 
             {/* Content Areas */}
             <div className="p-5 space-y-5 flex-1">
-                {/* Clip Action Box */}
-                <div className="space-y-1">
-                    <div className="flex justify-between items-center pr-1">
-                        <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Clip Action</label>
-                        <div className="flex gap-1">
-                            <AppTooltip content={comfyConnected ? "Generate video for this shot." : "ComfyUI not connected."} placement="top" offset={[0, 48]}>
-                                <span>
-                                    <button 
-                                        onClick={() => onGenerateVideo?.(card.id)}
-                                        disabled={!comfyConnected || card.status === 'generating' || card.status === 'queued'}
-                                        className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight transition-all flex items-center gap-1 border ${
-                                            card.status === 'generating' 
-                                                ? 'bg-amber-600/20 text-amber-500 border-amber-500/20 animate-pulse'
-                                                : card.status === 'queued'
-                                                    ? 'bg-indigo-600/20 text-indigo-400 border-indigo-500/20 animate-pulse'
-                                                    : comfyConnected
-                                                        ? 'bg-purple-600/20 hover:bg-purple-600 text-purple-400 hover:text-white border-purple-500/20'
-                                                        : 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
-                                        }`}
-                                    >
-                                        <span>🎬</span> {card.status === 'generating' ? 'Generating...' : card.status === 'queued' ? 'Queued...' : 'Generate'}
-                                    </button>
-                                </span>
-                            </AppTooltip>
-                        </div>
-                    </div>
-                    <textarea 
-                        className="w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden"
-                        style={{ height: `${Math.min(200, Math.max(60, getTextHeight(actionPromptValue, assumedWidth) + 16))}px` }}
-                        title="Right-click to open large editor"
-                        placeholder="Describe the clip action for video generation..."
-                        value={actionPromptValue}
-                        onChange={(e) => onUpdate(card.id, { 
-                            notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), action: e.target.value } 
-                        })}
-                        onContextMenu={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setEditorConfig({
-                                title: "Edit Clip Action",
-                                initialValue: actionPromptValue,
-                                onSave: (val) => onUpdate(card.id, { 
-                                    notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), action: val } 
-                                })
-                            });
-                            setIsEditorOpen(true);
-                        }}
-                    />
-                </div>
-
+                {/* 
+                  IMAGE DESCRIPTION is moved to the top.
+                  WHY: It acts as the "source" material (AI-generated) that informs the 
+                  Clip Action prompt below it. Putting it first matches the workflow.
+                */}
                 {/* Image Description Box */}
                 <div className="space-y-1">
                     <div className="flex justify-between items-center pr-1">
@@ -400,6 +381,129 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         {card.isDescribing && (
                             <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-lg">
                                 <span className="text-[10px] font-bold text-indigo-400 animate-pulse">Describing...</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Clip Action Box */}
+                <div className="space-y-1">
+                    <div className="flex justify-between items-center pr-1">
+                        <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Clip Action</label>
+                        <div className="flex gap-1">
+                            {/* Reword / Magic Button */}
+                            <AppTooltip content={`Expand into a cinematic LTX prompt using ${llmProvider === 'vino' ? '🍷 Intel NPU (Vino)' : '🏢 LM Studio'}.`} placement="top" offset={[0, 48]}>
+                                <span>
+                                    <button 
+                                        onClick={() => onRewordPrompt?.(card.id)}
+                                        disabled={card.isExpanding || card.expandedPromptLocked}
+                                        className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight transition-all flex items-center gap-1 border ${
+                                            card.isExpanding 
+                                                ? 'bg-purple-600/20 text-purple-400 border-purple-500/20 animate-pulse'
+                                                : card.expandedPromptLocked
+                                                    ? 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed opacity-50'
+                                                    : 'bg-indigo-600/20 hover:bg-indigo-600 text-indigo-400 hover:text-white border-indigo-500/20'
+                                        }`}
+                                    >
+                                        <span>✨</span> {card.isExpanding ? 'Expanding...' : 'Reword'}
+                                    </button>
+                                </span>
+                            </AppTooltip>
+
+                            <AppTooltip content={comfyConnected ? "Generate video for this shot." : "ComfyUI not connected."} placement="top" offset={[0, 48]}>
+                                <span>
+                                    <button 
+                                        onClick={() => onGenerateVideo?.(card.id)}
+                                        disabled={!comfyConnected || card.status === 'generating' || card.status === 'queued'}
+                                        className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight transition-all flex items-center gap-1 border ${
+                                            card.status === 'generating' 
+                                                ? 'bg-amber-600/20 text-amber-500 border-amber-500/20 animate-pulse'
+                                                : card.status === 'queued'
+                                                    ? 'bg-indigo-600/20 text-indigo-400 border-indigo-500/20 animate-pulse'
+                                                    : comfyConnected
+                                                        ? 'bg-purple-600/20 hover:bg-purple-600 text-purple-400 hover:text-white border-purple-500/20'
+                                                        : 'bg-gray-800 text-gray-500 border-gray-700 cursor-not-allowed'
+                                        }`}
+                                    >
+                                        <span>🎬</span> {card.status === 'generating' ? 'Generating...' : card.status === 'queued' ? 'Queued...' : 'Generate'}
+                                    </button>
+                                </span>
+                            </AppTooltip>
+                        </div>
+                    </div>
+                    <textarea 
+                        className="w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden"
+                        style={{ height: `${Math.min(200, Math.max(60, getTextHeight(actionPromptValue, assumedWidth) + 16))}px` }}
+                        title="Right-click to open large editor"
+                        placeholder="Describe the clip action for video generation..."
+                        value={actionPromptValue}
+                        onChange={(e) => onUpdate(card.id, { 
+                            notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), action: e.target.value } 
+                        })}
+                        onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setEditorConfig({
+                                title: "Edit Clip Action",
+                                initialValue: actionPromptValue,
+                                onSave: (val) => onUpdate(card.id, { 
+                                    notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), action: val } 
+                                })
+                            });
+                            setIsEditorOpen(true);
+                        }}
+                    />
+                </div>
+
+                {/* AI Expanded Prompt Box (The "Target" for LTX) */}
+                <div className="space-y-1">
+                    <div className="flex justify-between items-center pr-1">
+                        <div className="flex items-center gap-2">
+                            <label className="text-[9px] font-bold text-purple-400/80 uppercase tracking-widest pl-1">AI Expanded Prompt</label>
+                            {/* Lock Toggle */}
+                            <button 
+                                onClick={() => onUpdate(card.id, { expandedPromptLocked: !card.expandedPromptLocked })}
+                                className={`text-[10px] transition-all hover:scale-110 ${card.expandedPromptLocked ? 'text-amber-500' : 'text-gray-600 hover:text-gray-400'}`}
+                                title={card.expandedPromptLocked ? "Locked: Prompt will not be overwritten by AI" : "Unlocked: AI can overwrite this prompt"}
+                            >
+                                {card.expandedPromptLocked ? '🔒' : '🔓'}
+                            </button>
+                        </div>
+                        <div className="flex gap-1">
+                            {card.aiExpandedPrompt && (
+                                <span className="text-[8px] font-bold text-gray-600 uppercase bg-black/40 px-1.5 py-0.5 rounded border border-gray-800/50">
+                                    LTX Target
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                    <div className="relative">
+                        <textarea 
+                            className={`w-full bg-purple-900/5 border border-purple-500/10 rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-purple-500/30 p-2 leading-relaxed overflow-hidden ${card.isExpanding ? 'opacity-50' : ''} ${card.expandedPromptLocked ? 'border-amber-500/20 bg-amber-900/5' : ''}`}
+                            style={{ height: `${Math.min(250, Math.max(80, getTextHeight(card.aiExpandedPrompt || '', assumedWidth) + 16))}px` }}
+                            title="Right-click to open large editor"
+                            placeholder="Rich cinematic expansion will appear here..."
+                            value={card.aiExpandedPrompt || ''}
+                            onChange={(e) => onUpdate(card.id, { aiExpandedPrompt: e.target.value })}
+                            onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setEditorConfig({
+                                    title: "Edit AI Expanded Prompt",
+                                    initialValue: card.aiExpandedPrompt || '',
+                                    onSave: (val) => onUpdate(card.id, { aiExpandedPrompt: val })
+                                });
+                                setIsEditorOpen(true);
+                            }}
+                        />
+                        {card.isExpanding && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-purple-900/10 rounded-lg">
+                                <span className="text-[10px] font-bold text-purple-400 animate-pulse italic">Thinking...</span>
+                            </div>
+                        )}
+                        {card.expandedPromptLocked && !card.isExpanding && !card.aiExpandedPrompt && (
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                <span className="text-[9px] font-bold text-gray-600 uppercase tracking-tighter opacity-30 italic">Locked Empty</span>
                             </div>
                         )}
                     </div>

@@ -8,7 +8,8 @@ A modular production tool for DaVinci Resolve featuring **beat synchronization**
 
 - 🎵 **[Beat Extraction](readme_Beat_Detection.md)** — Detect BPM and actual beat positions using Essentia.js
 - 🎬 **[Video Assembler](readme_Video_Assembler.md)** — Sync video clips to specific stems (drums, bass) with "Snap to Beat"
-- 🎨 **[Storyboard](readme_Storyboard.md)** — Build visual narratives with card-based prompts and AI generation
+- 🎨 **[Storyboard](readme_Storyboard.md)** — Build visual narratives with card-based prompts and AI cinematic expansion.
+- 🤖 **[AI Prompt Expansion](vino/README.md)** — NPU-accelerated (Intel Vino) or LM Studio-driven cinematic prompt engineering.
 - 🎬 **[Video Sync](readme_Video_Sync.md)** — Auto-sync video clips to the beat
 - 📜 **[Script Manager](readme_Script_Manager.md)** — Manage generated Python scripts for Resolve
 - 🎚️ **[Stem Separation](readme_Stem_Separation.md)** — Split tracks via ComfyUI with integrated Beat Analysis
@@ -124,6 +125,7 @@ resolver/
 - [x] **Beat Analysis per Stem**: Analyze and visualize individual rhythmic layers.
 - [x] **Video Assembler**: Specialized UI for multi-stem rhythmic syncing.
 - [x] **Storyboard Module**: Narrative-driven card system with unified AI prompts and versioning.
+- [x] **AI Cinematic Expansion**: Tri-tier prompt engineering (Image → Action → LTX) via local NPU or LM Studio.
 - [x] **Project Bundle Structure**: Refactor projects to be self-contained bundles.
 - [ ] **Tap Tempo**: Manual BPM adjustment for challenging tracks.
 - [ ] **Beat Divisions**: Options for 1/2, 1/4, or double-time beat markers.

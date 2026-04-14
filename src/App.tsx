@@ -1,3 +1,10 @@
+/**
+ * App.tsx
+ * 
+ * The root component and state coordinator for the Resolver application.
+ * It manages the global generation queue, project selection, and coordinates
+ * interactions between the UI modules and the ComfyUI service layer.
+ */
 import { useState, useCallback, useEffect } from 'react';
 import useProjectStorage, { type BeatProject } from './hooks/useProjectStorage';
 import Layout from './components/Layout';
@@ -54,6 +61,7 @@ function App() {
 
   // --- Global Status Logs ---
   const [statusLogs, setStatusLogs] = useState<{ time: Date, msg: string }[]>([]);
+  const [llmProvider, setLlmProvider] = useState<'lmstudio' | 'vino'>('lmstudio');
 
   const addLog = (msg: string) => {
     setStatusLogs(prev => {
@@ -90,33 +98,52 @@ function App() {
       const connected = await checkComfyConnection();
       setComfyConnected(connected);
 
-      // Load config for output dir
-      try {
-        // @ts-ignore
-        const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
-        if (ipcRenderer) {
-          const res = await ipcRenderer.invoke('get-config');
-          if (res.success && res.config.comfyOutputDir) {
-            setComfyOutputDir(res.config.comfyOutputDir);
-          }
-        }
-      } catch (e) {
-        console.warn("Failed to load ComfyUI config in App", e);
-      }
+      // Load config for output dir and LLM provider
+      await refreshGlobalConfig();
     };
     initComfy();
   }, []);
 
-  // --- Project Health Check Effect ---
-  // Resets stuck "generating" or "queued" statuses when a project is loaded
+  const refreshGlobalConfig = async () => {
+    try {
+      // @ts-ignore
+      const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+      if (ipcRenderer) {
+        const res = await ipcRenderer.invoke('get-config');
+        if (res.success && res.config) {
+          if (res.config.comfyOutputDir) setComfyOutputDir(res.config.comfyOutputDir);
+          if (res.config.llmProvider) setLlmProvider(res.config.llmProvider);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load global config", e);
+    }
+  };
+
+  /**
+   * PROJECT HEALTH CHECK:
+   * 
+   * WHY: If the app crashes or is closed during a generation, clips might be left 
+   * with 'generating' or 'queued' statuses.
+   * HOW: On project load, we scan all clips and reset any stuck statuses back to 'pending'.
+   */
   useEffect(() => {
     if (activeProject && activeProject.clips) {
-      const stuckClips = activeProject.clips.filter(c => c.status === 'generating' || c.status === 'queued');
+      const stuckClips = activeProject.clips.filter(c => 
+        c.status === 'generating' || 
+        c.status === 'queued' || 
+        c.isExpanding || 
+        c.isDescribing
+      );
+
       if (stuckClips.length > 0) {
-        addLog(`Auto-cleaning ${stuckClips.length} stuck generation statuses for "${activeProject.name}"`);
-        const cleanedClips = activeProject.clips.map(c => 
-          (c.status === 'generating' || c.status === 'queued') ? { ...c, status: 'pending' as const } : c
-        );
+        addLog(`Auto-healing ${stuckClips.length} stuck AI statuses for "${activeProject.name}"`);
+        const cleanedClips = activeProject.clips.map(c => ({
+          ...c,
+          status: (c.status === 'generating' || c.status === 'queued') ? 'pending' as const : c.status,
+          isExpanding: false,
+          isDescribing: false
+        }));
         handleUpdateProject(activeProject.id, { clips: cleanedClips });
       }
     }
@@ -130,7 +157,14 @@ function App() {
     setActiveProjectId(id);
   };
 
-  // --- Queue Management Handlers ---
+  /**
+   * QUEUE MANAGEMENT (Add):
+   * 
+   * WHY: Video generation is resource-intensive and must be serial. A queue allows 
+   * users to 'batch' their work while the AI processes clips one by one.
+   * HOW: Tasks are identified by type (video vs description). We prevent duplicates 
+   * and update the clip's state in the project to show visual progress immediately.
+   */
   const handleAddToQueue = useCallback((clipId: string, projectId: string, label: string, type: 'video' | 'description' = 'video') => {
     setVideoQueue(prev => {
       if (prev.find(item => item.clipId === clipId && item.type === type && (item.status === 'queued' || item.status === 'processing'))) {
@@ -288,8 +322,11 @@ function App() {
         throw new Error("Start image missing. Aborting generation.");
       }
 
-      // 3. Upload Audio File
-      let finalAudioName = "audio.wav";
+        // STEP 3: Upload Audio File
+        // HOW: We determine if we need a specific stem or the master audio.
+        // We also perform a conversion to WAV (handled in comfyService) if needed
+        // to ensure compatibility with the ComfyUI audio nodes.
+        let finalAudioName = "audio.wav";
       let sourceAudioPath = project.audioPath;
 
       if (clipToUpdate.source === 'stem' && clipToUpdate.stemName) {
@@ -324,21 +361,36 @@ function App() {
         else throw new Error(`Failed to upload audio to ComfyUI.`);
       }
 
-      // 4. Inject Workflow
+      // STEP 4: Inject Workflow Data
+      // HOW: We clone the JSON template and overwrite specific node inputs with 
+      // the clip's text, frame counts, and uploaded file handles.
       const workflow = JSON.parse(JSON.stringify(workflowJsonTemplate));
       const frames = getValidLtxFrameCount(clipToUpdate.duration, frameRate);
 
       if (workflow["98"]?.inputs) workflow["98"].inputs.image = finalImageName;
       if (workflow["92:3"]?.inputs) {
-        const actionText = (clipToUpdate.notes?.action || (clipToUpdate as any).actionNotes || (clipToUpdate as any).promptText || '')?.trim() || '';
-        const descText = clipToUpdate.actionDescription?.trim() || '';
+        /**
+         * PROMPT COMPOSITION:
+         * 1. Priority: AI Expanded Prompt (The high-fidelity cinematic version)
+         * 2. Fallback: Image Description + Clip Action (The original combined prompt)
+         */
+        let combinedText = '';
+
+        if (clipToUpdate.aiExpandedPrompt?.trim()) {
+          combinedText = clipToUpdate.aiExpandedPrompt.trim();
+          console.log("🎥 [Generate Video] Using AI Expanded Prompt:", combinedText);
+        } else {
+          const actionText = (clipToUpdate.notes?.action || (clipToUpdate as any).actionNotes || (clipToUpdate as any).promptText || '')?.trim() || '';
+          const descText = clipToUpdate.actionDescription?.trim() || '';
+          
+          const promptParts = [];
+          if (descText) promptParts.push(descText);
+          if (actionText) promptParts.push(`action: ${actionText}`);
+          
+          combinedText = promptParts.length > 0 ? promptParts.join(", ") : clipToUpdate.label;
+          console.log("🎥 [Generate Video] Using Legacy Combined Prompt:", combinedText);
+        }
         
-        const promptParts = [];
-        if (descText) promptParts.push(descText);
-        if (actionText) promptParts.push(`action: ${actionText}`);
-        
-        const combinedText = promptParts.length > 0 ? promptParts.join(", ") : clipToUpdate.label;
-        console.log("🎥 [Generate Video] Combined Prompt:", combinedText);
         workflow["92:3"].inputs.text = combinedText;
       }
       const rng_seed = Math.floor(Math.random() * 1000000000000000);
@@ -487,9 +539,27 @@ function App() {
 
       // 5. Update project with result
       handleUpdateProject(project.id, (prevProject: BeatProject) => {
-        const updatedClips = (prevProject.clips || []).map(c => 
-          c.id === clipId ? { ...c, actionDescription: description, isDescribing: false } : c
-        );
+        const updatedClips = (prevProject.clips || []).map(c => {
+          if (c.id === clipId) {
+            /**
+             * DATA CLEANUP: 
+             * If the AI description was previously (mis)stored in notes.action, 
+             * we clear that field now that we have a proper actionDescription slot.
+             */
+            const currentNotes = c.notes || { action: '', dialogue: '', sound: '' };
+            const cleanNotes = (currentNotes.action === description) 
+              ? { ...currentNotes, action: '' } 
+              : currentNotes;
+
+            return { 
+              ...c, 
+              actionDescription: description, 
+              notes: cleanNotes,
+              isDescribing: false 
+            };
+          }
+          return c;
+        });
         return { clips: updatedClips };
       });
       addLog(`Successfully generated description for "${clipToUpdate.label}"`);
@@ -508,7 +578,81 @@ function App() {
     }
   }, [projects, comfyConnected, handleUpdateProject]);
 
-  // --- Queue Processor Effect ---
+  /**
+   * handleRewordPrompt:
+   * 
+   * WHY: Transforms simple scene notes into a high-fidelity cinematic prompt.
+   * HOW: Sends the visual context (Image Description) and narrator intent (Clip Action)
+   * to a local LLM (Vino NPU or LM Studio) to generate a rich LTX-ready prompt.
+   */
+  const handleRewordPrompt = useCallback(async (clipId: string) => {
+    const project = activeProject;
+    if (!project) return;
+    const clip = project.clips?.find(c => c.id === clipId);
+    if (!clip) return;
+
+    if (clip.expandedPromptLocked) {
+      addLog(`Expansion skipped: "${clip.label}" prompt is locked.`);
+      return;
+    }
+
+    addLog(`Expanding prompt for "${clip.label}" using AI...`);
+    
+    // 1. Set expanding state
+    handleUpdateProject(project.id, (prev: BeatProject) => {
+      const updated = prev.clips?.map(c => c.id === clipId ? { ...c, isExpanding: true } : c);
+      return { clips: updated };
+    });
+
+    try {
+      // @ts-ignore
+      const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+      if (!ipcRenderer) throw new Error("Electron IPC not available.");
+
+      const systemPrompt = "You are a professional cinematographer. Rewrite the following scene into a 3-sentence visual description. Focus on camera movement, lighting, and textures. Do not use technical codes, use natural English.";
+      
+      const parts = [];
+      if (clip.actionDescription) parts.push(`Context: ${clip.actionDescription}`);
+      if (clip.notes?.action) parts.push(`Action Intent: ${clip.notes.action}`);
+      const userPrompt = parts.join('\n\n');
+
+      const result = await ipcRenderer.invoke('llm-generate', { systemPrompt, userPrompt });
+
+      if (result.success) {
+        const expandedText = String(result.text || '').trim();
+        handleUpdateProject(project.id, (prev: BeatProject) => {
+          const updated = prev.clips?.map(c => c.id === clipId ? { 
+            ...c, 
+            aiExpandedPrompt: expandedText,
+            isExpanding: false 
+          } : c);
+          return { clips: updated };
+        });
+        addLog(`Successfully expanded prompt for "${clip.label}"`);
+      } else {
+        throw new Error(result.error || "Unknown LLM error");
+      }
+
+    } catch (err: any) {
+      console.error('Reword Error:', err);
+      addLog(`Error expanding prompt: ${err.message}`);
+    } finally {
+      // Guaranteed safety: Always clear the expanding state
+      handleUpdateProject(project.id, (prev: BeatProject) => {
+        const updated = prev.clips?.map(c => c.id === clipId ? { ...c, isExpanding: false } : c);
+        return { clips: updated };
+      });
+    }
+  }, [activeProject, handleUpdateProject]);
+
+  /**
+   * QUEUE PROCESSOR:
+   * 
+   * WHY: This is the engine that drives the serial execution of tasks.
+   * HOW: It runs as a side-effect whenever the queue or processing state changes.
+   * It identifies the next 'queued' item, marks it as 'processing', and 
+   * coordinates the hand-off to the generation handlers.
+   */
   useEffect(() => {
     const processNext = async () => {
       if (isProcessing || isQueuePaused) return;
@@ -795,7 +939,7 @@ function App() {
         return <ScriptManagerModule />;
 
       case 'settings':
-        return <SettingsModule onSave={refreshProjects} />;
+        return <SettingsModule onSave={() => { refreshProjects(); refreshGlobalConfig(); }} />;
       case 'workflow-analyzer':
         return <WorkflowAnalyzerModule onStatusChange={addLog} />;
       case 'storyboard':
@@ -808,6 +952,8 @@ function App() {
             onCopyImageFromNext={onCopyImageFromNext}
             onCopyEndFrameFromPrev={onCopyEndFrameFromPrev}
             onGetImageDescription={onGetImageDescription}
+            onRewordPrompt={handleRewordPrompt}
+            llmProvider={llmProvider}
             comfyConnected={comfyConnected}
           />
         );

@@ -1,3 +1,11 @@
+/**
+ * StoryboardModule
+ * 
+ * The main container for the Storyboard interface. It orchestrates the rendering of panels,
+ * manages the timing relationship between clips (the 'rippling' effect), and synchronizes
+ * project data with external assets like generated videos.
+ */
+
 import React, { useState } from 'react';
 import type { VideoClip } from '../types/assembler';
 import { PacingBenchmarks } from '../types/storyboard';
@@ -15,6 +23,8 @@ interface StoryboardModuleProps {
     onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
     onCopyEndFrameFromPrev?: (clipId: string, exactBeat?: boolean) => void;
     onGetImageDescription?: (clipId: string) => Promise<void>;
+    onRewordPrompt?: (clipId: string) => Promise<void>;
+    llmProvider?: 'lmstudio' | 'vino';
     comfyConnected?: boolean;
 }
 
@@ -26,12 +36,53 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
     onCopyImageFromNext,
     onCopyEndFrameFromPrev,
     onGetImageDescription,
+    onRewordPrompt,
+    llmProvider,
     comfyConnected
 }) => {
     const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
 
     const cards = (activeProject?.clips || []) as VideoClip[];
 
+    /**
+     * AUTO-HEAL LEGACY DATA:
+     * 
+     * WHY: Older project versions or interrupted generations might leave AI descriptions 
+     * in the 'notes.action' box while leaving the 'actionDescription' box empty.
+     * HOW: We run a one-time check when the project loads. If we find this specific 
+     * pattern, we migrate the text to the correct field to clean up the UI.
+     */
+    React.useEffect(() => {
+        if (!activeProject || !activeProject.clips) return;
+        
+        let needsHeal = false;
+        const healedClips = activeProject.clips.map(clip => {
+            const hasLegacyAction = clip.notes?.action && clip.notes.action.length > 50; // Description-y length
+            const hasEmptyDesc = !clip.actionDescription;
+
+            // If it looks like a description was misplaced, move it
+            if (hasEmptyDesc && hasLegacyAction) {
+                needsHeal = true;
+                return {
+                    ...clip,
+                    actionDescription: clip.notes.action,
+                    notes: { ...clip.notes, action: '' }
+                };
+            }
+            return clip;
+        });
+
+        if (needsHeal) {
+            console.log(`🎨 [Storyboard] Auto-healing ${activeProject.name}: Migrating legacy descriptions...`);
+            onUpdateProject(activeProject.id, { clips: healedClips });
+        }
+    }, [activeProject?.id]); // Only run when the project itself changes
+
+    /**
+     * Creates a new blank storyboard card in a specific gap in the timeline.
+     * @param startTime The insertion time in seconds.
+     * @param duration How long the new card should last.
+     */
     const handleFillPadding = (startTime: number, duration: number) => {
         if (!activeProject) return;
         const frameRate = activeProject.frameRate || 20;
@@ -59,6 +110,13 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
         onUpdateProject(activeProject.id, { clips: updatedCards });
     };
 
+    /**
+     * Updates a specific storyboard card and manages side-effects like timing ripples
+     * and data cleanup.
+     * 
+     * @param id The ID of the card to update.
+     * @param updates A partial VideoClip object containing the new data.
+     */
     const handleUpdateCard = (id: string, updates: any) => {
         if (!activeProject) return;
         
@@ -82,6 +140,22 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
         } else {
             updatedClip = { ...currentClip, ...updates };
         }
+
+        /**
+         * DATA MIGRATION GUARD:
+         * 
+         * WHY: Historically, if the 'actionDescription' field didn't exist, users or the system 
+         * might have stored AI descriptions in 'notes.action'.
+         * HOW: If we just got a new AI description and it matches exactly what was in the 
+         * action field, we clear the action field to force a clean separation between 
+         * narrative prompt and image description.
+         */
+        if (updates.actionDescription && updatedClip.notes?.action === updates.actionDescription) {
+            updatedClip = {
+                ...updatedClip,
+                notes: { ...(updatedClip.notes || { action: '', dialogue: '', sound: '' }), action: '' }
+            } as VideoClip;
+        }
         
         // Handle duration auto-calc
         const hasDialogueUpdate = updates.notes && 'dialogue' in updates.notes && updates.notes.dialogue !== currentClip.notes?.dialogue;
@@ -102,7 +176,14 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
         updatedClip.endTime = updatedClip.startTime + updatedClip.duration;
         newClips[clipIndex] = updatedClip;
 
-        // Rippling Effect: Sync sequential timing for all subsequent clips
+        /**
+         * RIPPING EFFECT (Sequential Sync):
+         * 
+         * WHY: In a linear storyboard, clips must remain perfectly contiguous. If clip A's 
+         * duration changes, clip B must shift its start time to match clip A's new end time.
+         * HOW: We iterate through all clips following the edited one and push their 
+         * startTime to the previous clip's endTime.
+         */
         for (let i = clipIndex + 1; i < newClips.length; i++) {
             const prev = newClips[i - 1];
             newClips[i] = {
@@ -137,6 +218,13 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
 
     // handleGenerateImage removed as requested
 
+    /**
+     * Scans the project's output/videos folder and synchronizes the project metadata
+     * with the physical files found on disk.
+     * 
+     * HOW: It uses a regular expression to match files like "Shot_1_take2.mp4" and 
+     * automatically associates them with the corresponding storyboard card.
+     */
     const handleSyncGeneratedVideos = async () => {
         if (!activeProject?.outputDir) return;
 
@@ -210,7 +298,14 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
         }
     };
 
-    // Calculate Interleaved Timeline Items (Clips + Gaps/Padding)
+    /**
+     * INTERLEAVED TIMELINE ITEMS:
+     * 
+     * WHY: The UI needs to render both the storyboard cards AND the 'gaps' (padding) 
+     * between them as interactive elements.
+     * HOW: We iterate through sorted clips and insert 'unselected' gap objects whenever 
+     * there is a significant jump in the timeline sequence.
+     */
     const projectDuration = activeProject?.duration || 0;
     const sortedClips = [...cards].sort((a, b) => a.startTime - b.startTime);
     
@@ -324,6 +419,8 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                         onCopyImageFromNext={onCopyImageFromNext}
                                         onCopyEndFrameFromPrev={onCopyEndFrameFromPrev}
                                         onGetImageDescription={onGetImageDescription}
+                                        onRewordPrompt={onRewordPrompt}
+                                        llmProvider={llmProvider}
                                         nextClipStartImage={nextClip?.startImagePath}
                                         prevClipEndImage={prevClip?.endImagePath}
                                         comfyConnected={comfyConnected}
