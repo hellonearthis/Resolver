@@ -1249,12 +1249,15 @@ ipcMain.handle('scan-projects-folder', async (_event, folderPath: string) => {
 // ---------------------------------------------------------------------------
 
 let vinoPipeline: any = null;
+let llmRequestQueue: Promise<any> = Promise.resolve();
 
-ipcMain.handle('llm-generate', async (_event, data: {
+ipcMain.handle('llm-generate', (event, data: {
     systemPrompt: string;
     userPrompt: string;
 }) => {
-    try {
+    // Wrap everything in a serial queue to prevent NPU concurrency crashes
+    llmRequestQueue = llmRequestQueue.then(async () => {
+        try {
         // Load latest config
         let config: any = {};
         if (fs.existsSync(CONFIG_PATH)) {
@@ -1361,8 +1364,10 @@ ipcMain.handle('llm-generate', async (_event, data: {
             return { success: true, text };
         }
 
-    } catch (err: any) {
-        console.error('[LLM] Generation Error:', err);
-        return { success: false, error: String(err) };
-    }
+        } catch (err: any) {
+            console.error('[LLM] Generation Error:', err);
+            return { success: false, error: String(err) };
+        }
+    });
+    return llmRequestQueue;
 });

@@ -44,7 +44,7 @@ export interface QueueItem {
   progress?: number;
   label: string;
   addedAt: number;
-  type?: 'video' | 'description';
+  type?: 'video' | 'description' | 'reword';
 }
 
 function App() {
@@ -57,7 +57,8 @@ function App() {
   // --- Video Generation Queue ---
   const [videoQueue, setVideoQueue] = useState<QueueItem[]>([]);
   const [isQueuePaused, setIsQueuePaused] = useState<boolean>(false);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [isVinoProcessing, setIsVinoProcessing] = useState<boolean>(false);
+  const [isComfyProcessing, setIsComfyProcessing] = useState<boolean>(false);
 
   // --- Global Status Logs ---
   const [statusLogs, setStatusLogs] = useState<{ time: Date, msg: string }[]>([]);
@@ -182,11 +183,14 @@ function App() {
       
       // Update clip status in project
       handleUpdateProject(projectId, (prevProject: BeatProject) => {
-        const updatedClips = prevProject.clips?.map(c => 
-          c.id === clipId 
-            ? (type === 'video' ? { ...c, status: 'queued' as const } : { ...c, isDescribing: true })
-            : c
-        );
+        const updatedClips = prevProject.clips?.map(c => {
+          if (c.id === clipId) {
+            if (type === 'video') return { ...c, status: 'queued' as const };
+            if (type === 'description') return { ...c, isDescribing: true };
+            if (type === 'reword') return { ...c, isExpanding: true };
+          }
+          return c;
+        });
         return { clips: updatedClips };
       });
 
@@ -205,7 +209,9 @@ function App() {
             (c.id === itemToRemove.clipId)
               ? (itemToRemove.type === 'description' 
                    ? { ...c, isDescribing: false } 
-                   : (c.status === 'queued' || c.status === 'generating') ? { ...c, status: 'pending' as const } : c)
+                   : itemToRemove.type === 'reword'
+                     ? { ...c, isExpanding: false }
+                     : (c.status === 'queued' || c.status === 'generating') ? { ...c, status: 'pending' as const } : c)
               : c
           );
           handleUpdateProject(itemToRemove.projectId, { clips: updatedClips });
@@ -229,7 +235,9 @@ function App() {
             (c.id === item.clipId) 
               ? (item.type === 'description' 
                    ? { ...c, isDescribing: false } 
-                   : (c.status === 'queued' ? { ...c, status: 'pending' as const } : c))
+                   : item.type === 'reword'
+                     ? { ...c, isExpanding: false }
+                     : (c.status === 'queued' ? { ...c, status: 'pending' as const } : c))
               : c
           );
           handleUpdateProject(item.projectId, { clips: updatedClips });
@@ -244,7 +252,8 @@ function App() {
     const stuckClips = activeProject.clips?.filter(c => c.status === 'generating' || c.status === 'queued' || c.isDescribing) || [];
     
     // Also reset the internal processing state
-    setIsProcessing(false);
+    setIsVinoProcessing(false);
+    setIsComfyProcessing(false);
     
     if (stuckClips.length > 0) {
       addLog(`Manually resetting ${stuckClips.length} stuck statuses for "${activeProject.name}"`);
@@ -578,31 +587,19 @@ function App() {
     }
   }, [projects, comfyConnected, handleUpdateProject]);
 
-  /**
-   * handleRewordPrompt:
-   * 
-   * WHY: Transforms simple scene notes into a high-fidelity cinematic prompt.
-   * HOW: Sends the visual context (Image Description) and narrator intent (Clip Action)
-   * to a local LLM (Vino NPU or LM Studio) to generate a rich LTX-ready prompt.
-   */
-  const handleRewordPrompt = useCallback(async (clipId: string) => {
-    const project = activeProject;
-    if (!project) return;
+  // --- Queueable AI Expansion Logic ---
+  const handleRewordTask = useCallback(async (queueItem: QueueItem) => {
+    const { clipId, projectId } = queueItem;
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return { success: false, error: 'Project not found' };
+    
     const clip = project.clips?.find(c => c.id === clipId);
-    if (!clip) return;
+    if (!clip) return { success: false, error: 'Clip not found' };
 
     if (clip.expandedPromptLocked) {
       addLog(`Expansion skipped: "${clip.label}" prompt is locked.`);
-      return;
+      return { success: true };
     }
-
-    addLog(`Expanding prompt for "${clip.label}" using AI...`);
-    
-    // 1. Set expanding state
-    handleUpdateProject(project.id, (prev: BeatProject) => {
-      const updated = prev.clips?.map(c => c.id === clipId ? { ...c, isExpanding: true } : c);
-      return { clips: updated };
-    });
 
     try {
       // @ts-ignore
@@ -629,6 +626,7 @@ function App() {
           return { clips: updated };
         });
         addLog(`Successfully expanded prompt for "${clip.label}"`);
+        return { success: true };
       } else {
         throw new Error(result.error || "Unknown LLM error");
       }
@@ -636,14 +634,23 @@ function App() {
     } catch (err: any) {
       console.error('Reword Error:', err);
       addLog(`Error expanding prompt: ${err.message}`);
+      return { success: false, error: err.message };
     } finally {
-      // Guaranteed safety: Always clear the expanding state
       handleUpdateProject(project.id, (prev: BeatProject) => {
         const updated = prev.clips?.map(c => c.id === clipId ? { ...c, isExpanding: false } : c);
         return { clips: updated };
       });
     }
-  }, [activeProject, handleUpdateProject]);
+  }, [projects, handleUpdateProject]);
+
+  const handleRewordPrompt = useCallback(async (clipId: string) => {
+    const project = activeProject;
+    if (!project) return;
+    const clip = project.clips?.find(c => c.id === clipId);
+    if (!clip || !activeProject) return;
+
+    handleAddToQueue(clipId, activeProject.id, clip.label, 'reword');
+  }, [activeProject, handleAddToQueue]);
 
   /**
    * QUEUE PROCESSOR:
@@ -653,41 +660,92 @@ function App() {
    * It identifies the next 'queued' item, marks it as 'processing', and 
    * coordinates the hand-off to the generation handlers.
    */
+  /**
+   * VINO QUEUE PROCESSOR (NPU):
+   * 
+   * WHY: AI expansion uses system RAM/NPU and can run independently of ComfyUI.
+   */
   useEffect(() => {
-    const processNext = async () => {
-      if (isProcessing || isQueuePaused) return;
+    const processNextVino = async () => {
+      if (isVinoProcessing) return;
 
-      const nextItem = videoQueue.find(item => item.status === 'queued');
+      const nextItem = videoQueue.find(item => item.status === 'queued' && item.type === 'reword');
       if (!nextItem) return;
 
-      setIsProcessing(true);
+      setIsVinoProcessing(true);
       
       // Update item to processing
       setVideoQueue(prev => prev.map(item => item.id === nextItem.id ? { ...item, status: 'processing' } : item));
 
-      // Update clip state in project
+      // Update clip state
+      handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
+        const updatedClips = prev.clips?.map((c: any) => 
+          c.id === nextItem.clipId ? { ...c, isExpanding: true } : c
+        );
+        return { clips: updatedClips };
+      });
+
+      const result = await handleRewordTask(nextItem);
+      
+      setVideoQueue(prev => prev.map(item => 
+        item.id === nextItem.id 
+          ? { ...item, status: (result?.success ? 'done' : 'error'), error: result?.error } 
+          : item
+      ));
+      setIsVinoProcessing(false);
+    };
+
+    processNextVino();
+  }, [videoQueue, isVinoProcessing, handleRewordTask]);
+
+  /**
+   * COMFYUI QUEUE PROCESSOR (GPU):
+   * 
+   * WHY: Video generation is GPU-bound and must wait for pending AI expansions.
+   */
+  useEffect(() => {
+    const processNextComfy = async () => {
+      if (isComfyProcessing || isQueuePaused) return;
+
+      // Dependency Check: Find a queued Comfy task that isn't blocked by a pending Reword
+      const nextItem = videoQueue.find((item) => {
+        if (item.status !== 'queued') return false;
+        if (item.type !== 'video' && item.type !== 'description') return false;
+        
+        // If it's a video task, ensure no REWORD is currently happening or queued for this clip
+        const isBlocked = videoQueue.some(q => 
+          q.clipId === item.clipId && 
+          q.type === 'reword' && 
+          (q.status === 'queued' || q.status === 'processing')
+        );
+        return !isBlocked;
+      });
+      
+      if (!nextItem) return;
+
+      setIsComfyProcessing(true);
+      
+      // Update item to processing
+      setVideoQueue(prev => prev.map(item => item.id === nextItem.id ? { ...item, status: 'processing' } : item));
+
+      // Update clip state
       handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
         const updatedClips = prev.clips?.map((c: any) => {
           if (c.id === nextItem.clipId) {
-            if (nextItem.type === 'description') {
-              return { ...c, isDescribing: true };
-            } else {
-              return { ...c, status: 'generating' as const };
-            }
+            return nextItem.type === 'description' ? { ...c, isDescribing: true } : { ...c, status: 'generating' as const };
           }
           return c;
         });
         return { clips: updatedClips };
       });
 
-      // Health check ComfyUI before starting
+      // Health Check
       const isAlive = await checkComfyConnection();
       if (!isAlive) {
         addLog("Queue paused: ComfyUI connection lost.");
         setIsQueuePaused(true);
         setVideoQueue(prev => prev.map(item => item.id === nextItem.id ? { ...item, status: 'queued' } : item));
         
-        // Reset clip status back to 'queued' or clear describing
         handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
           const resetClips = prev.clips?.map(c => 
             c.id === nextItem.clipId 
@@ -697,7 +755,7 @@ function App() {
           return { clips: resetClips };
         });
 
-        setIsProcessing(false);
+        setIsComfyProcessing(false);
         return;
       }
 
@@ -710,11 +768,11 @@ function App() {
           ? { ...item, status: (result?.success ? 'done' : 'error'), error: result?.error } 
           : item
       ));
-      setIsProcessing(false);
+      setIsComfyProcessing(false);
     };
 
-    processNext();
-  }, [videoQueue, isQueuePaused, isProcessing, handleGenerateVideo, handleGenerateDescription]);
+    processNextComfy();
+  }, [videoQueue, isQueuePaused, isComfyProcessing, handleGenerateVideo, handleGenerateDescription]);
 
   const handleCreateBlankProject = async (projectName?: string) => {
     let initialOutputDir = undefined;
