@@ -291,7 +291,6 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                                     className="w-full h-full object-cover"
                                     controls={false}
                                     loop
-                                    muted
                                     onMouseOver={(e) => e.currentTarget.play()}
                                     onMouseOut={(e) => {
                                         e.currentTarget.pause();

@@ -701,6 +701,55 @@ ipcMain.handle('comfy-upload-file', async (_event, api_url, filePath, type, over
     }
 });
 
+// Extract audio from a user-selected video and save to a user-selected location
+ipcMain.handle('extract-audio-from-video', async (_event) => {
+    try {
+        const inResult = await dialog.showOpenDialog({
+            title: 'Select Video File',
+            filters: [{ name: 'Videos', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] }],
+            properties: ['openFile'],
+        });
+        if (inResult.canceled || inResult.filePaths.length === 0) return { success: false, canceled: true };
+        const inputPath = inResult.filePaths[0];
+
+        const outResult = await dialog.showSaveDialog({
+            title: 'Save Extracted Audio As',
+            filters: [
+                { name: 'WAV Audio', extensions: ['wav'] },
+                { name: 'MP3 Audio', extensions: ['mp3'] }
+            ],
+            defaultPath: path.join(path.dirname(inputPath), `${path.basename(inputPath, path.extname(inputPath))}_extracted.wav`),
+        });
+        if (outResult.canceled || !outResult.filePath) return { success: false, canceled: true };
+        const outPath = outResult.filePath;
+
+        return new Promise((resolve) => {
+            const ext = path.extname(outPath).toLowerCase();
+            let args = ['-y', '-i', inputPath, '-vn'];
+            if (ext === '.mp3') {
+                args.push('-q:a', '0');
+            } else {
+                args.push('-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2');
+            }
+            args.push(outPath);
+
+            const ffmpeg = spawn('ffmpeg', args);
+            let stderr = '';
+            ffmpeg.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+            ffmpeg.on('close', (code: number) => {
+                if (code === 0 && fs.existsSync(outPath)) {
+                    resolve({ success: true, path: outPath });
+                } else {
+                    resolve({ success: false, error: `ffmpeg failed (code ${code}): ${stderr.slice(-300)}` });
+                }
+            });
+            ffmpeg.on('error', (err: Error) => resolve({ success: false, error: err.message }));
+        });
+    } catch (err: any) {
+        return { success: false, error: err.message };
+    }
+});
+
 // Convert any audio file to a clean WAV before sending to ComfyUI
 // Uses ffmpeg if available; returns the path of the temp WAV file
 ipcMain.handle('convert-audio-to-wav', async (_event, inputPath: string) => {
@@ -1266,7 +1315,7 @@ ipcMain.handle('llm-generate', (event, data: {
 
         const provider = config.llmProvider || 'lmstudio';
         const params = {
-            max_new_tokens: config.llmMaxTokens || 128,
+            max_new_tokens: config.llmMaxTokens || 500,
             do_sample: true,
             temperature: config.llmTemperature || 0.7,
             top_p: config.llmTopP || 0.9,

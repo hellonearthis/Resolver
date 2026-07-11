@@ -246,6 +246,44 @@ const SettingsModule: React.FC<SettingsModuleProps> = ({ onSave }) => {
                 </div>
             </div>
 
+            <div className="card mt-4">
+                <div className="card-header">
+                    <h3 className="card-title">Media Tools</h3>
+                </div>
+
+                <div className="mb-4 flex flex-col gap-2">
+                    <p className="text-sm text-gray-400">
+                        Extract audio from a video file without re-encoding to prepare it for stem separation or ComfyUI.
+                    </p>
+                    <div>
+                        <button
+                            onClick={async () => {
+                                setStatusMessage('Select a video file...');
+                                try {
+                                    // @ts-ignore
+                                    const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+                                    if (!ipcRenderer) return;
+                                    const res = await ipcRenderer.invoke('extract-audio-from-video');
+                                    if (res.canceled) {
+                                        setStatusMessage('Audio extraction canceled.');
+                                    } else if (res.success) {
+                                        setStatusMessage(`Audio successfully saved to: ${res.path}`);
+                                    } else {
+                                        setStatusMessage(`Extraction failed: ${res.error}`);
+                                    }
+                                } catch (e: any) {
+                                    setStatusMessage(`Error: ${e.message}`);
+                                }
+                                setTimeout(() => setStatusMessage(''), 5000);
+                            }}
+                            className="btn bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded font-bold text-white shadow"
+                        >
+                            Extract Audio from Video
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <div className="mt-6 flex items-center gap-4">
                 <button
                     onClick={handleSave}

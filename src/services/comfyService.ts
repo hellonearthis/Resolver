@@ -68,14 +68,21 @@ export const queuePrompt = async (workflow: ComfyWorkflow): Promise<{ prompt_id:
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to queue prompt: ${response.statusText}`);
+            let errorDetail = "";
+            try {
+                const errorData = await response.json();
+                errorDetail = JSON.stringify(errorData);
+            } catch (e) {
+                errorDetail = response.statusText;
+            }
+            throw new Error(`Failed to queue prompt: ${errorDetail}`);
         }
 
         const data = await response.json();
         return data; // { prompt_id: "...", number: ... }
     } catch (error) {
         console.error('Failed to queue prompt:', error);
-        return null;
+        throw error; // Rethrow to let the UI catch and display it
     }
 };
 

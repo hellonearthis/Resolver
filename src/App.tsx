@@ -24,7 +24,7 @@ import {
 } from './services/comfyService';
 import { getValidLtxFrameCount } from './utils/timelineUtils';
 import type { VideoClip } from './types/assembler';
-import workflowJsonTemplate from '../comfyui_workflows/video_ltx2_i2v.json';
+import workflowJsonTemplate from '../comfyui_workflows/video_ltx2_3_ia2v_api.json';
 import imageDescriptionWorkflow from '../comfyui_workflows/llm_qwen3_image_discription_api.json';
 import { TooltipProvider } from './components/ui/Tooltip';
 
@@ -166,7 +166,7 @@ function App() {
    * HOW: Tasks are identified by type (video vs description). We prevent duplicates 
    * and update the clip's state in the project to show visual progress immediately.
    */
-  const handleAddToQueue = useCallback((clipId: string, projectId: string, label: string, type: 'video' | 'description' = 'video') => {
+  const handleAddToQueue = useCallback((clipId: string, projectId: string, label: string, type: 'video' | 'description' | 'reword' = 'video') => {
     setVideoQueue(prev => {
       if (prev.find(item => item.clipId === clipId && item.type === type && (item.status === 'queued' || item.status === 'processing'))) {
         return prev;
@@ -376,8 +376,8 @@ function App() {
       const workflow = JSON.parse(JSON.stringify(workflowJsonTemplate));
       const frames = getValidLtxFrameCount(clipToUpdate.duration, frameRate);
 
-      if (workflow["98"]?.inputs) workflow["98"].inputs.image = finalImageName;
-      if (workflow["92:3"]?.inputs) {
+      if (workflow["269"]?.inputs) workflow["269"].inputs.image = finalImageName;
+      if (workflow["340:319"]?.inputs) {
         /**
          * PROMPT COMPOSITION:
          * 1. Priority: AI Expanded Prompt (The high-fidelity cinematic version)
@@ -400,26 +400,27 @@ function App() {
           console.log("🎥 [Generate Video] Using Legacy Combined Prompt:", combinedText);
         }
         
-        workflow["92:3"].inputs.text = combinedText;
+        workflow["340:319"].inputs.value = combinedText;
       }
       const rng_seed = Math.floor(Math.random() * 1000000000000000);
-      if (workflow["92:11"]?.inputs) workflow["92:11"].inputs.noise_seed = rng_seed;
-      if (workflow["92:67"]?.inputs) workflow["92:67"].inputs.noise_seed = rng_seed;
-      if (workflow["92:62"]?.inputs) workflow["92:62"].inputs.value = frames;
-      if (workflow["92:97"]?.inputs) workflow["92:97"].inputs.fps = frameRate;
-      if (workflow["92:22"]?.inputs) workflow["92:22"].inputs.frame_rate = frameRate;
-      if (workflow["92:115"]?.inputs) {
-        workflow["92:115"].inputs.start_index = clipToUpdate.startTime;
-        workflow["92:115"].inputs.duration = clipToUpdate.duration;
+      if (workflow["340:285"]?.inputs) workflow["340:285"].inputs.noise_seed = rng_seed;
+      if (workflow["340:286"]?.inputs) workflow["340:286"].inputs.noise_seed = rng_seed;
+      if (workflow["340:331"]?.inputs) workflow["340:331"].inputs.value = clipToUpdate.duration; // Replaces nodes 92:62 and 92:115's duration
+      if (workflow["340:323"]?.inputs) workflow["340:323"].inputs.value = frameRate;
+      if (workflow["340:330"]?.inputs) workflow["340:330"].inputs.value = 960; // Width
+      if (workflow["340:324"]?.inputs) workflow["340:324"].inputs.value = 512; // Height
+      if (workflow["340:332"]?.inputs) {
+        workflow["340:332"].inputs.start_index = clipToUpdate.startTime;
       }
-      if (workflow["92:113"]?.inputs) workflow["92:113"].inputs.audio = finalAudioName;
+      if (workflow["276"]?.inputs) workflow["276"].inputs.audio = finalAudioName;
 
       // 5. Queue and Poll
+      const startTimeMs = Date.now();
       const result = await queuePrompt(workflow);
       if (!result?.prompt_id) throw new Error('Failed to queue prompt');
 
       addLog(`Generating Video (ID: ${result.prompt_id})...`);
-      await waitForPromptWebSocket(result.prompt_id, workflow, (status, progress) => {
+      const historyOutputs = await waitForPromptWebSocket(result.prompt_id, workflow, (status, progress) => {
         if (status) addLog(status);
         if (progress !== undefined) {
           setVideoQueue(prev => prev.map(item => item.id === queueItem.id ? { ...item, progress } : item));
@@ -434,21 +435,45 @@ function App() {
 
       let latestSourcePath = "";
       const videoOutDir = path.join(comfyOutputDir, 'video');
-      
-      const findLatest = (dir: string) => {
-        if (!fs.existsSync(dir)) return "";
-        const files = fs.readdirSync(dir).filter((f: string) => f.includes('LTX_2.0_i2v') && f.endsWith('.mp4'));
-        if (files.length === 0) return "";
-        return files.sort((a: string, b: string) => 
-          fs.statSync(path.join(dir, b)).mtimeMs - fs.statSync(path.join(dir, a)).mtimeMs
-        )[0];
-      };
 
-      const latestVideo = findLatest(videoOutDir);
-      if (latestVideo) latestSourcePath = path.join(videoOutDir, latestVideo);
-      else {
-        const rootVideo = findLatest(comfyOutputDir);
-        if (rootVideo) latestSourcePath = path.join(comfyOutputDir, rootVideo);
+      // Attempt to extract exact filename from history outputs
+      let exactFileName = "";
+      let subfolder = "";
+      const saveNodeOutput = historyOutputs?.["341"];
+      if (saveNodeOutput) {
+        const mediaArr = saveNodeOutput.gifs || saveNodeOutput.images || saveNodeOutput.videos || saveNodeOutput.filenames || [];
+        if (mediaArr.length > 0) {
+          exactFileName = mediaArr[0].filename || mediaArr[0];
+          subfolder = mediaArr[0].subfolder || "";
+        }
+      }
+
+      if (exactFileName && typeof exactFileName === 'string') {
+        latestSourcePath = path.join(comfyOutputDir, subfolder, exactFileName);
+      } else {
+        const findLatest = (dir: string) => {
+          if (!fs.existsSync(dir)) return "";
+          const files = fs.readdirSync(dir).filter((f: string) => f.includes('LTX_2') && f.endsWith('.mp4'));
+          if (files.length === 0) return "";
+          return files.sort((a: string, b: string) => 
+            fs.statSync(path.join(dir, b)).mtimeMs - fs.statSync(path.join(dir, a)).mtimeMs
+          )[0];
+        };
+
+        const latestVideo = findLatest(videoOutDir);
+        let candidatePath = "";
+        if (latestVideo) candidatePath = path.join(videoOutDir, latestVideo);
+        else {
+          const rootVideo = findLatest(comfyOutputDir);
+          if (rootVideo) candidatePath = path.join(comfyOutputDir, rootVideo);
+        }
+
+        // Only accept the file if it was created/modified during or after this generation
+        if (candidatePath && fs.statSync(candidatePath).mtimeMs >= startTimeMs - 5000) {
+          latestSourcePath = candidatePath;
+        } else {
+          throw new Error(`Video generation failed: ComfyUI completed the prompt, but no new video file was found in the output directory. (Last found file was older than this generation).`);
+        }
       }
 
       if (!latestSourcePath) throw new Error("Generated video file not found.");
@@ -606,7 +631,7 @@ function App() {
       const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
       if (!ipcRenderer) throw new Error("Electron IPC not available.");
 
-      const systemPrompt = "You are a professional cinematographer. Rewrite the following scene into a 5-sentence visual description. Focus on camera movement, lighting, and textures. Do not use technical codes, use natural English. IMPORTANT: Output ONLY the 5-sentence visual description. Do not include any introductory remarks, notes, conversational filler, or meta-comments. Start directly with the description.";
+      const systemPrompt = "You are a professional cinematographer. Rewrite the following scene into a 5-sentence visual description. Focus on camera movement, lighting, and textures. Let the mood, meaning, and context of the lyrics or dialogue influence the visual actions and atmosphere of the scene. If the scene involves someone singing, talking, or speaking lyrics, you MUST describe that action explicitly in the very first sentence to ensure the video model prioritizes lip-syncing. CRITICAL: If the input contains specific lyrics or dialogue (especially in quotes), you MUST preserve those exact words verbatim without rewording them. Do not use technical codes, use natural English. IMPORTANT: Output ONLY the 5-sentence visual description. Do not include any introductory remarks, notes, conversational filler, or meta-comments. Start directly with the description.";
       
       const parts = [];
       if (clip.actionDescription) parts.push(`Context: ${clip.actionDescription}`);

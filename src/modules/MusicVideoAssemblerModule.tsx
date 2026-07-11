@@ -2137,6 +2137,88 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         }
     };
 
+    const handleImportSubtitles = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !activeProject) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const text = event.target?.result as string;
+            if (!text) return;
+            
+            const lines = text.split(/\r?\n/);
+            const newClips: VideoClip[] = [];
+            let trackIndex = 1;
+            
+            const timeRegex = /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/;
+            
+            for (let i = 0; i < lines.length; i++) {
+                const match = lines[i].match(timeRegex);
+                if (match) {
+                    let textLines = '';
+                    let j = i + 1;
+                    while (j < lines.length && lines[j].trim() !== '' && !lines[j].match(timeRegex)) {
+                        if (!/^\d+$/.test(lines[j].trim())) {
+                             textLines += lines[j].trim() + ' ';
+                        }
+                        j++;
+                    }
+                    textLines = textLines.trim();
+                    
+                    if (textLines) {
+                        const startH = parseInt(match[1], 10);
+                        const startM = parseInt(match[2], 10);
+                        const startS = parseInt(match[3], 10);
+                        const startMs = parseInt(match[4], 10);
+                        const endH = parseInt(match[5], 10);
+                        const endM = parseInt(match[6], 10);
+                        const endS = parseInt(match[7], 10);
+                        const endMs = parseInt(match[8], 10);
+                        
+                        const startTime = startH * 3600 + startM * 60 + startS + startMs / 1000;
+                        const endTime = endH * 3600 + endM * 60 + endS + endMs / 1000;
+                        let duration = endTime - startTime;
+                        if (duration <= 0) duration = 1;
+                        
+                        const labelText = textLines.substring(0, 30) + (textLines.length > 30 ? '...' : '');
+
+                        const clip: VideoClip = {
+                            id: `subtitle-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                            startTime,
+                            duration,
+                            endTime,
+                            track: trackIndex,
+                            status: 'pending',
+                            source: 'main',
+                            label: labelText || 'Subtitle',
+                            notes: {
+                                action: textLines,
+                                dialogue: '',
+                                sound: ''
+                            }
+                        };
+                        newClips.push(clip);
+                        trackIndex = trackIndex === 1 ? 2 : 1;
+                    }
+                }
+            }
+            
+            if (newClips.length > 0) {
+                onUpdateProject(activeProject.id, (prev) => {
+                    const merged = [...(prev.clips || []), ...newClips];
+                    // Sort by start time just to keep things organized
+                    merged.sort((a, b) => a.startTime - b.startTime);
+                    return { clips: merged };
+                });
+                if (onStatusChange) onStatusChange(`Imported ${newClips.length} subtitle clips.`);
+            } else {
+                if (onStatusChange) onStatusChange(`No valid SRT/VTT subtitles found.`);
+            }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+    };
+
     return (
         <div className="video-assembler-container">
             {/* ... header ... */}
@@ -2714,6 +2796,18 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                             Generate Clip from Selection
                                         </button>
                                     </span>
+                                </AppTooltip>
+
+                                <AppTooltip content="Import an SRT/VTT subtitle file as video clips on the timeline." placement="top" offset={[0, 48]}>
+                                    <label className="btn btn-secondary border border-gray-600 hover:border-indigo-500/50 cursor-pointer flex items-center justify-center text-sm">
+                                        Import Subtitles (.srt, .vtt)
+                                        <input 
+                                            type="file" 
+                                            accept=".srt,.vtt" 
+                                            onChange={handleImportSubtitles} 
+                                            style={{ display: 'none' }} 
+                                        />
+                                    </label>
                                 </AppTooltip>
 
                                 <div className="flex gap-2">

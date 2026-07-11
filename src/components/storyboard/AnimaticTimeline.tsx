@@ -11,7 +11,7 @@ interface AnimaticTimelineProps {
 }
 
 const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({ items, onSelectCard, onAddPadding, compact = false, className = "" }) => {
-    const totalDuration = items.reduce((sum, item) => sum + (item.duration || 0), 0);
+    const totalDuration = Math.sumPrecise(items.map(item => item.duration || 0));
     const scrollContainerRef = React.useRef<HTMLDivElement>(null);
 
     const scrollToItem = (index: number) => {
