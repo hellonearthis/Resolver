@@ -29,7 +29,7 @@ interface ModuleItem {
 
 const modules: ModuleItem[] = [
     { id: 'script-manager', label: 'Script Manager', description: 'Manage and sync DaVinci Resolve scripts.', icon: '📜', enabled: true },
-    { id: 'music-video-assembler', label: 'Video Assembler', description: 'Assemble music videos with beat-sync and LTX support.', icon: '🎸', enabled: true },
+    { id: 'music-video-assembler', label: 'Video Assembler', description: 'Assemble music videos with beat-sync and AI video support.', icon: '🎸', enabled: true },
     { id: 'storyboard', label: 'Story Board', description: 'Visual shot planning and narrative timeline.', icon: '🎨', enabled: true },
     { id: 'workflow-analyzer', label: 'Workflow Analyzer', description: 'Inspect and validate ComfyUI workflow JSON files.', icon: '🔀', enabled: true },
     { id: 'settings', label: 'Settings', description: 'App preferences and platform configuration.', icon: '⚙️', enabled: true },

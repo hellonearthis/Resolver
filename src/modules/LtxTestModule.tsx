@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import workflowJson from '../../comfyui_workflows/video_ltx2_i2v.json';
+import workflowJson from '../../comfyui_workflows/minimax_image_to_video_api.json';
 import DropZone from '../components/DropZone';
-import { getValidLtxFrameCount } from '../utils/timelineUtils';
+import { getValidMinimaxFrameCount } from '../utils/timelineUtils';
 import { uploadFileToComfyUI, waitForPromptWebSocket } from '../services/comfyService';
 import PromptEditorModal from '../components/PromptEditorModal';
 
@@ -21,7 +21,7 @@ export default function LtxTestModule() {
     const [negativePrompt, setNegativePrompt] = useState<string>('blurry, low quality, still frame, frames, watermark, overlay, titles, has blurbox, has subtitles');
     const [fps, setFps] = useState<number>(20);
     const [frameCount, setFrameCount] = useState<number>(81);
-    const [outputPrefix, setOutputPrefix] = useState<string>('video/LTX_2.0_i2v');
+    const [outputPrefix, setOutputPrefix] = useState<string>('video/MiniMax_i2v');
     const [audioFile, setAudioFile] = useState<string>('Bob Marly-Get Up, Stand Up_Vocals.mp3');
     const [audioFilePath, setAudioFilePath] = useState<string | null>(null);
 
@@ -110,7 +110,7 @@ export default function LtxTestModule() {
             // Deep clone the workflow template
             const workflow = JSON.parse(JSON.stringify(workflowJson));
 
-            // Apply specific mappings as per readme_ltx2.md
+            // Apply specific mappings
 
             // 1. Start Image (Node 98)
             if (workflow["98"] && workflow["98"].inputs) {
@@ -196,9 +196,9 @@ export default function LtxTestModule() {
     return (
         <div className="module-container p-6 w-full max-w-4xl mx-auto overflow-y-auto">
             <div className="module-header mb-6">
-                <h2 className="module-title text-2xl font-bold text-white mb-2">🎥 LTX-Video 2.0 Generator</h2>
+                <h2 className="module-title text-2xl font-bold text-white mb-2">🎥 Minimax Generator</h2>
                 <p className="module-description text-gray-400 text-sm">
-                    Image-to-Video Workflow configuration based on readme_ltx2.md
+                    Image-to-Video Workflow configuration
                 </p>
             </div>
 
@@ -356,13 +356,13 @@ export default function LtxTestModule() {
                                         onChange={e => {
                                             const val = Number(e.target.value);
                                             if (val > 0) {
-                                                setFrameCount(getValidLtxFrameCount(val, fps));
+                                                setFrameCount(getValidMinimaxFrameCount(val, fps));
                                             }
                                         }}
                                         className="flex-1 bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors max-w-[200px]"
                                     />
                                     <p className="text-xs text-gray-400">
-                                        Type a chunk duration to auto-select the nearest valid LTX frame count above.
+                                        Type a chunk duration to auto-select the nearest valid frame count above.
                                     </p>
                                 </div>
                             </div>

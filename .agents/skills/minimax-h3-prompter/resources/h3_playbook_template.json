@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MiniMaxH3PlaybookPrompt",
+  "type": "object",
+  "properties": {
+    "reference_job_assignments": {
+      "type": "string",
+      "description": "Explicit role mapping for attached zero-indexed reference assets (e.g. Image 1, Image 2, Video 1)."
+    },
+    "scene_format_mood": {
+      "type": "string",
+      "description": "Environment, format, resolution, lighting mood, genre, and aesthetic tone."
+    },
+    "one_dominant_action": {
+      "type": "string",
+      "description": "Single primary physical action to prevent action collapse and visual morphing."
+    },
+    "camera_path_and_framing": {
+      "type": "string",
+      "description": "Natural cinematographic descriptions of camera path, lens depth, and movement. NO bracketed parameters."
+    },
+    "lighting_and_palette": {
+      "type": "string",
+      "description": "Light sources, exposure behavior, color grading, highlights, and color palette."
+    },
+    "sound_clause": {
+      "type": "string",
+      "description": "Timecoded audio instructions including spoken lip-synced dialogue, environmental SFX, and musical elements."
+    },
+    "final_beat_and_composition": {
+      "type": "string",
+      "description": "The camera resting point and exact final frame composition."
+    },
+    "negative_directions": {
+      "type": "string",
+      "description": "Explicit style exclusions, morphing bans, artifact preventions, and locked continuity elements."
+    }
+  },
+  "required": [
+    "reference_job_assignments",
+    "scene_format_mood",
+    "one_dominant_action",
+    "camera_path_and_framing",
+    "lighting_and_palette",
+    "sound_clause",
+    "final_beat_and_composition",
+    "negative_directions"
+  ]
+}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getLtxAlignedDuration, formatTime } from '../utils/timelineUtils';
+import { getAlignedDuration, formatTime } from '../utils/timelineUtils';
 
 interface DurationEditPopupProps {
     clipId: string;
@@ -35,16 +35,16 @@ const DurationEditPopup: React.FC<DurationEditPopupProps> = ({
     }, [onClose]);
 
     const handleSave = () => {
-        const aligned = getLtxAlignedDuration(duration, frameRate);
+        const aligned = getAlignedDuration(duration, frameRate);
         onSave(clipId, aligned);
         onClose();
     };
 
-    const jumpLTX = (delta: number) => {
+    const jumpFrames = (delta: number) => {
         const current = duration;
-        // 8 frames = 1 LTX unit
-        const step = 8 / frameRate;
-        const next = Math.max(0.1, getLtxAlignedDuration(current + (delta * step) + (delta > 0 ? 0.01 : -0.01), frameRate));
+        // approx jump step based on FPS (e.g. 17 frames for Minimax)
+        const step = 17 / frameRate;
+        const next = Math.max(0.1, getAlignedDuration(current + (delta * step) + (delta > 0 ? 0.01 : -0.01), frameRate));
         setDuration(next);
     };
 
@@ -80,16 +80,16 @@ const DurationEditPopup: React.FC<DurationEditPopupProps> = ({
 
                 <div className="flex gap-2">
                     <button 
-                        onClick={() => jumpLTX(-1)}
+                        onClick={() => jumpFrames(-1)}
                         className="flex-1 px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-[10px] font-bold text-gray-400 border border-gray-700 transition-all"
                     >
-                        -8 Frames
+                        -17 Frames
                     </button>
                     <button 
-                        onClick={() => jumpLTX(1)}
+                        onClick={() => jumpFrames(1)}
                         className="flex-1 px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-[10px] font-bold text-gray-400 border border-gray-700 transition-all"
                     >
-                        +8 Frames
+                        +17 Frames
                     </button>
                 </div>
 
@@ -99,7 +99,7 @@ const DurationEditPopup: React.FC<DurationEditPopupProps> = ({
                         <span className="text-gray-300 font-mono italic">{formatTime(startTime + duration)}</span>
                     </div>
                     <div className="flex justify-between">
-                        <span className="text-gray-500">LTX Frames:</span>
+                        <span className="text-gray-500">Model Frames:</span>
                         <span className="text-amber-500 font-black italic">{Math.round(duration * frameRate)}</span>
                     </div>
                 </div>

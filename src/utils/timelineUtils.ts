@@ -196,31 +196,27 @@ export const buildTimelineRows = (clips: VideoClip[], trackDuration: number): Ti
 
 /**
  * Calculates the number of frames for an audio selection and snaps it
- * to the nearest valid LTX-Video frame count ((n * 8) + 1).
+ * to the nearest valid Minimax frame count (17n + 5).
  *
  * @param durationSeconds The duration of the selected chunk in seconds
  * @param fps The frame rate (e.g., 24, 25, 30, 60)
- * @returns The nearest valid LTX frame count that loosely matches the duration
+ * @returns The nearest valid Minimax frame count that loosely matches the duration
  */
-export const getValidLtxFrameCount = (durationSeconds: number, fps: number): number => {
-    const exactFrames = durationSeconds * fps;
-    let n = Math.round((exactFrames - 1) / 8);
-    if (n < 1) n = 1;
-    return (n * 8) + 1;
+export const getValidMinimaxFrameCount = (durationSeconds: number, fps: number): number => {
+    const exactFrames = Math.max(5, Math.round(durationSeconds * fps));
+    const rem = exactFrames % 17;
+    const add = ((5 - rem) % 17 + 17) % 17;
+    return exactFrames + add;
 };
 
 /**
- * Returns the duration (in seconds) rounded UP to the nearest valid LTX frame boundary.
- * Valid LTX frame counts are (n * 8) + 1 where n >= 1.
+ * Returns the duration (in seconds) rounded UP to the nearest valid Minimax frame boundary.
  *
  * @param durationSeconds The raw duration in seconds
  * @param fps The frame rate (e.g. 20, 24, 25)
  * @returns The snapped duration in seconds (always >= the original)
  */
-export const getLtxAlignedDuration = (durationSeconds: number, fps: number): number => {
-    const exactFrames = durationSeconds * fps;
-    let n = Math.round((exactFrames - 1) / 8);
-    if (n < 1) n = 1;
-    const alignedFrames = (n * 8) + 1;
-    return alignedFrames / fps;
+export const getAlignedDuration = (durationSeconds: number, fps: number): number => {
+    const frames = getValidMinimaxFrameCount(durationSeconds, fps);
+    return frames / fps;
 };

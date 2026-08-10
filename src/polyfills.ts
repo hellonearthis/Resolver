@@ -1,3 +1,8 @@
+declare global {
+    interface Math {
+        sumPrecise(iterable: Iterable<number>): number;
+    }
+}
 
 /**
  * Polyfill for Math.sumPrecise() (ES2026)
@@ -22,3 +27,5 @@ if (typeof Math.sumPrecise !== 'function') {
     };
     console.log('[Polyfill] Math.sumPrecise initialized.');
 }
+
+export {};

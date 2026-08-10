@@ -153,7 +153,7 @@ const SettingsModule: React.FC<SettingsModuleProps> = ({ onSave }) => {
 
             <div className="card mt-4">
                 <div className="card-header flex justify-between items-center">
-                    <h3 className="card-title text-purple-400">🤖 AI Generation (LTX Rewording)</h3>
+                    <h3 className="card-title text-purple-400">🤖 AI Generation (Prompt Expansion)</h3>
                     <div className="flex gap-3">
                         <AppTooltip content={llmProvider === 'vino' ? "Vino (Intel NPU) is currently ACTIVE" : "Click to select Intel OpenVino NPU"} placement="top">
                             <button 

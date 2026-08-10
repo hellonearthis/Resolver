@@ -9,7 +9,7 @@ import React from 'react';
 import { AppTooltip } from '../ui/Tooltip';
 import { AppPopover } from '../ui/Popover';
 import type { VideoClip } from '../../types/assembler';
-import { formatTime, pathToMediaUrl, getLtxAlignedDuration } from '../../utils/timelineUtils';
+import { formatTime, pathToMediaUrl, getAlignedDuration } from '../../utils/timelineUtils';
 import PromptEditorModal from '../PromptEditorModal';
 import { getTextHeight } from '../../utils/pretextUtils';
 
@@ -87,13 +87,13 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
             if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 const currentDur = card.duration || 0;
-                const nextDur = getLtxAlignedDuration(currentDur + (8 / frameRate) + 0.01, frameRate);
+                const nextDur = getAlignedDuration(currentDur + (17 / frameRate) + 0.01, frameRate);
                 onUpdate(card.id, { duration: nextDur, endTime: card.startTime + nextDur });
             } else if (e.key === 'ArrowDown') {
                 e.preventDefault();
                 const currentDur = card.duration || 0;
                 // Subtract 0.01 to ensure we drop into the previous bracket for the round/ceil logic
-                const nextDur = getLtxAlignedDuration(Math.max(0.1, currentDur - (8 / frameRate) - 0.01), frameRate);
+                const nextDur = getAlignedDuration(Math.max(0.1, currentDur - (17 / frameRate) - 0.01), frameRate);
                 onUpdate(card.id, { duration: nextDur, endTime: card.startTime + nextDur });
             }
         };
@@ -391,7 +391,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Clip Action</label>
                         <div className="flex gap-1">
                             {/* Reword / Magic Button */}
-                            <AppTooltip content={`Expand into a cinematic LTX prompt using ${llmProvider === 'vino' ? '🍷 Intel NPU (Vino)' : '🏢 LM Studio'}.`} placement="top" offset={[0, 48]}>
+                            <AppTooltip content={`Expand into a cinematic video prompt using ${llmProvider === 'vino' ? '🍷 Intel NPU (Vino)' : '🏢 LM Studio'}.`} placement="top" offset={[0, 48]}>
                                 <span>
                                     <button 
                                         onClick={() => onRewordPrompt?.(card.id)}
@@ -454,7 +454,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                     />
                 </div>
 
-                {/* AI Expanded Prompt Box (The "Target" for LTX) */}
+                {/* AI Expanded Prompt Box (The "Target" for Video) */}
                 <div className="space-y-1">
                     <div className="flex justify-between items-center pr-1">
                         <div className="flex items-center gap-2">
@@ -471,7 +471,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         <div className="flex gap-1">
                             {card.aiExpandedPrompt && (
                                 <span className="text-[8px] font-bold text-gray-600 uppercase bg-black/40 px-1.5 py-0.5 rounded border border-gray-800/50">
-                                    LTX Target
+                                    Target Prompt
                                 </span>
                             )}
                         </div>
@@ -587,7 +587,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                                     value={(card.duration || 0).toFixed(1)}
                                     onChange={(e) => {
                                         const rawDur = parseFloat(e.target.value) || 0.1;
-                                        const alignedDur = getLtxAlignedDuration(rawDur, frameRate);
+                                        const alignedDur = getAlignedDuration(rawDur, frameRate);
                                         onUpdate(card.id, { duration: alignedDur, endTime: card.startTime + alignedDur });
                                     }}
                                     className="bg-transparent border-b border-transparent hover:border-indigo-500/50 focus:border-indigo-500 text-indigo-400/80 font-bold w-12 text-right outline-none p-0 transition-all text-[10px]"

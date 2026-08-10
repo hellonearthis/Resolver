@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { VideoClip } from '../types/assembler';
-import { formatTime, buildTimelineRows, getLtxAlignedDuration } from '../utils/timelineUtils';
+import { formatTime, buildTimelineRows, getAlignedDuration } from '../utils/timelineUtils';
 import PromptEditorModal from './PromptEditorModal';
 import DurationEditPopup from './DurationEditPopup';
 
@@ -484,7 +484,7 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                     position={{ x: durationPopup.x, y: durationPopup.y }}
                     onClose={() => setDurationPopup(null)}
                     onSave={(id, newDur) => {
-                        const aligned = getLtxAlignedDuration(newDur, 20);
+                        const aligned = getAlignedDuration(newDur, 20);
                         onUpdateClipEndTime(id, durationPopup.startTime + aligned);
                         setDurationPopup(null);
                     }}

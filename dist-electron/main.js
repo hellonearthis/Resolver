@@ -641,6 +641,56 @@ electron_1.ipcMain.handle('comfy-upload-file', async (_event, api_url, filePath,
         return { success: false, error: message };
     }
 });
+// Extract audio from a user-selected video and save to a user-selected location
+electron_1.ipcMain.handle('extract-audio-from-video', async (_event) => {
+    try {
+        const inResult = await electron_1.dialog.showOpenDialog({
+            title: 'Select Video File',
+            filters: [{ name: 'Videos', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] }],
+            properties: ['openFile'],
+        });
+        if (inResult.canceled || inResult.filePaths.length === 0)
+            return { success: false, canceled: true };
+        const inputPath = inResult.filePaths[0];
+        const outResult = await electron_1.dialog.showSaveDialog({
+            title: 'Save Extracted Audio As',
+            filters: [
+                { name: 'WAV Audio', extensions: ['wav'] },
+                { name: 'MP3 Audio', extensions: ['mp3'] }
+            ],
+            defaultPath: path_1.default.join(path_1.default.dirname(inputPath), `${path_1.default.basename(inputPath, path_1.default.extname(inputPath))}_extracted.wav`),
+        });
+        if (outResult.canceled || !outResult.filePath)
+            return { success: false, canceled: true };
+        const outPath = outResult.filePath;
+        return new Promise((resolve) => {
+            const ext = path_1.default.extname(outPath).toLowerCase();
+            let args = ['-y', '-i', inputPath, '-vn'];
+            if (ext === '.mp3') {
+                args.push('-q:a', '0');
+            }
+            else {
+                args.push('-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2');
+            }
+            args.push(outPath);
+            const ffmpeg = (0, child_process_1.spawn)('ffmpeg', args);
+            let stderr = '';
+            ffmpeg.stderr.on('data', (d) => { stderr += d.toString(); });
+            ffmpeg.on('close', (code) => {
+                if (code === 0 && fs_1.default.existsSync(outPath)) {
+                    resolve({ success: true, path: outPath });
+                }
+                else {
+                    resolve({ success: false, error: `ffmpeg failed (code ${code}): ${stderr.slice(-300)}` });
+                }
+            });
+            ffmpeg.on('error', (err) => resolve({ success: false, error: err.message }));
+        });
+    }
+    catch (err) {
+        return { success: false, error: err.message };
+    }
+});
 // Convert any audio file to a clean WAV before sending to ComfyUI
 // Uses ffmpeg if available; returns the path of the temp WAV file
 electron_1.ipcMain.handle('convert-audio-to-wav', async (_event, inputPath) => {

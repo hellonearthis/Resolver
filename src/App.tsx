@@ -22,9 +22,9 @@ import {
   waitForPromptWebSocket,
   convertAudioForComfyUI
 } from './services/comfyService';
-import { getValidLtxFrameCount } from './utils/timelineUtils';
+
 import type { VideoClip } from './types/assembler';
-import workflowJsonTemplate from '../comfyui_workflows/video_ltx2_3_ia2v_api.json';
+import workflowJsonTemplate from '../comfyui_workflows/minimax_image_to_video_api.json';
 import imageDescriptionWorkflow from '../comfyui_workflows/llm_qwen3_image_discription_api.json';
 import { TooltipProvider } from './components/ui/Tooltip';
 
@@ -335,7 +335,7 @@ function App() {
         // HOW: We determine if we need a specific stem or the master audio.
         // We also perform a conversion to WAV (handled in comfyService) if needed
         // to ensure compatibility with the ComfyUI audio nodes.
-        let finalAudioName = "audio.wav";
+        // let finalAudioName = "audio.wav";
       let sourceAudioPath = project.audioPath;
 
       if (clipToUpdate.source === 'stem' && clipToUpdate.stemName) {
@@ -366,23 +366,14 @@ function App() {
         }
 
         const uploadResult = await uploadFileToComfyUI(finalPathToUpload);
-        if (uploadResult?.name) finalAudioName = uploadResult.name;
-        else throw new Error(`Failed to upload audio to ComfyUI.`);
+        if (!uploadResult?.name) throw new Error(`Failed to upload audio to ComfyUI.`);
       }
 
       // STEP 4: Inject Workflow Data
-      // HOW: We clone the JSON template and overwrite specific node inputs with 
-      // the clip's text, frame counts, and uploaded file handles.
       const workflow = JSON.parse(JSON.stringify(workflowJsonTemplate));
-      const frames = getValidLtxFrameCount(clipToUpdate.duration, frameRate);
 
-      if (workflow["269"]?.inputs) workflow["269"].inputs.image = finalImageName;
-      if (workflow["340:319"]?.inputs) {
-        /**
-         * PROMPT COMPOSITION:
-         * 1. Priority: AI Expanded Prompt (The high-fidelity cinematic version)
-         * 2. Fallback: Image Description + Clip Action (The original combined prompt)
-         */
+      if (workflow["114"]?.inputs) workflow["114"].inputs.image = finalImageName;
+      if (workflow["105:104"]?.inputs) {
         let combinedText = '';
 
         if (clipToUpdate.aiExpandedPrompt?.trim()) {
@@ -400,20 +391,16 @@ function App() {
           console.log("🎥 [Generate Video] Using Legacy Combined Prompt:", combinedText);
         }
         
-        workflow["340:319"].inputs.value = combinedText;
+        workflow["105:104"].inputs.prompt = combinedText;
       }
       const rng_seed = Math.floor(Math.random() * 1000000000000000);
-      if (workflow["340:285"]?.inputs) workflow["340:285"].inputs.noise_seed = rng_seed;
-      if (workflow["340:286"]?.inputs) workflow["340:286"].inputs.noise_seed = rng_seed;
-      if (workflow["340:331"]?.inputs) workflow["340:331"].inputs.value = clipToUpdate.duration; // Replaces nodes 92:62 and 92:115's duration
-      if (workflow["340:323"]?.inputs) workflow["340:323"].inputs.value = frameRate;
-      if (workflow["340:330"]?.inputs) workflow["340:330"].inputs.value = 960; // Width
-      if (workflow["340:324"]?.inputs) workflow["340:324"].inputs.value = 512; // Height
-      if (workflow["340:332"]?.inputs) {
-        workflow["340:332"].inputs.start_index = clipToUpdate.startTime;
-      }
-      if (workflow["276"]?.inputs) workflow["276"].inputs.audio = finalAudioName;
+      if (workflow["105:15"]?.inputs) workflow["105:15"].inputs.noise_seed = rng_seed;
+      if (workflow["105:111"]?.inputs) workflow["105:111"].inputs.value = clipToUpdate.duration;
+      if (workflow["105:91"]?.inputs) workflow["105:91"].inputs.fps = frameRate;
 
+      // Note: Minimax model handles audio internally if passed, 
+      // but this API JSON does not have a LoadAudio node.
+      
       // 5. Queue and Poll
       const startTimeMs = Date.now();
       const result = await queuePrompt(workflow);
@@ -439,7 +426,7 @@ function App() {
       // Attempt to extract exact filename from history outputs
       let exactFileName = "";
       let subfolder = "";
-      const saveNodeOutput = historyOutputs?.["341"];
+      const saveNodeOutput = historyOutputs?.["92"];
       if (saveNodeOutput) {
         const mediaArr = saveNodeOutput.gifs || saveNodeOutput.images || saveNodeOutput.videos || saveNodeOutput.filenames || [];
         if (mediaArr.length > 0) {
@@ -453,7 +440,7 @@ function App() {
       } else {
         const findLatest = (dir: string) => {
           if (!fs.existsSync(dir)) return "";
-          const files = fs.readdirSync(dir).filter((f: string) => f.includes('LTX_2') && f.endsWith('.mp4'));
+          const files = fs.readdirSync(dir).filter((f: string) => (f.includes('LTX_2') || f.includes('MiniMax')) && f.endsWith('.mp4'));
           if (files.length === 0) return "";
           return files.sort((a: string, b: string) => 
             fs.statSync(path.join(dir, b)).mtimeMs - fs.statSync(path.join(dir, a)).mtimeMs
@@ -631,11 +618,49 @@ function App() {
       const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
       if (!ipcRenderer) throw new Error("Electron IPC not available.");
 
-      const systemPrompt = "You are a professional cinematographer. Rewrite the following scene into a 5-sentence visual description. Focus on camera movement, lighting, and textures. Let the mood, meaning, and context of the lyrics or dialogue influence the visual actions and atmosphere of the scene. If the scene involves someone singing, talking, or speaking lyrics, you MUST describe that action explicitly in the very first sentence to ensure the video model prioritizes lip-syncing. CRITICAL: If the input contains specific lyrics or dialogue (especially in quotes), you MUST preserve those exact words verbatim without rewording them. Do not use technical codes, use natural English. IMPORTANT: Output ONLY the 5-sentence visual description. Do not include any introductory remarks, notes, conversational filler, or meta-comments. Start directly with the description.";
-      
+      const systemPrompt = `You are a MiniMax H3 Video Prompt Writer. Your ONLY job is to create a written text prompt for the MiniMax H3 video model in I2VA (Image-to-Video-with-Audio) mode.
+
+REQUIRED OUTPUT FORMAT — Every prompt MUST contain exactly these three fields:
+
+integrated_multimodal_description: ...
+overall_soundscape: ...
+non_diegetic_music: ...
+
+I2VA RULES:
+- The input image is the actual first frame. The description MUST begin from the visible image and develop forward.
+- Always begin with the image-alignment instruction on its own line, followed by a blank line.
+- Use this motion structure: First-frame anchor + action onset + continuous development + result or reaction.
+- At the beginning of Shot 1: establish the style shown in Picture 1, identify the subject, preserve the opening composition, clothing, colors, objects, and spatial relationships, then begin the requested action naturally.
+- Focus mainly on what CHANGES after the first frame.
+
+SHOT AND TIMESTAMP RULES:
+- The first shot NEVER receives a timestamp. Later shots begin with strictly increasing cut times in 00:SS.mmm format.
+- Only use timestamps when there are multiple shots AND a duration is provided.
+- Do NOT use timestamps to describe ordinary actions within a continuous shot.
+
+CAMERA MOVEMENT — Write camera movement naturally inside integrated_multimodal_description. Use specific terminology: Zoom In/Out, Push In, Pull Out, Pan Left/Right, Truck Left/Right, Tilt Up/Down, Pedestal Up/Down, Arc Shot, Tracking Shot, Static Shot, Shake Slightly/Strongly, POV, Roll. Include amplitude (small/large) and speed (slow/fast) when meaningful.
+
+MOTION WRITING — Every action must describe something visible or audible. Use: Starting state + action + direction + speed + physical response + result. Describe cause and effect. Do NOT use vague phrases like "realistic physics" or "cinematic animation."
+
+DIALOGUE — If the scene involves singing, talking, or speaking lyrics, describe that action explicitly. Use speaker IDs (S1), (S2) etc. Format dialogue as: The character with a [voice description] (S1) says: <d>[English] exact words here</d>. CRITICAL: Preserve all lyrics or dialogue VERBATIM. Never reword them.
+
+SOUNDSCAPE — overall_soundscape summarizes ambient and physical sounds across the full video. Do NOT repeat dialogue, singing, or music here.
+
+MUSIC — non_diegetic_music describes background music heard only by the audience. Describe actual instruments, tempo, rhythm, intensity. Use "N/A" when there is no background music. Diegetic music (from objects in the scene) goes in integrated_multimodal_description instead.
+
+RESTRICTIONS:
+- Output ONLY the prompt text. No introductions, explanations, notes, or commentary.
+- Do not use JSON.
+- Do not invent or assume a video duration unless one is provided.
+- Use natural English, not technical codes.
+- Prefer positive precise descriptions over negative keyword lists.`;
+
       const parts = [];
-      if (clip.actionDescription) parts.push(`Context: ${clip.actionDescription}`);
+      if (clip.actionDescription) parts.push(`Image Description: ${clip.actionDescription}`);
       if (clip.notes?.action) parts.push(`Action Intent: ${clip.notes.action}`);
+      if (clip.notes?.dialogue) parts.push(`Dialogue/Lyrics: ${clip.notes.dialogue}`);
+      if (clip.notes?.sound) parts.push(`Sound Notes: ${clip.notes.sound}`);
+      if (clip.duration) parts.push(`Duration: ${clip.duration.toFixed(2)} seconds`);
       const userPrompt = parts.join('\n\n');
 
       const result = await ipcRenderer.invoke('llm-generate', { systemPrompt, userPrompt });

@@ -9,7 +9,7 @@
 import React, { useState } from 'react';
 import type { VideoClip } from '../types/assembler';
 import { PacingBenchmarks } from '../types/storyboard';
-import { getLtxAlignedDuration } from '../utils/timelineUtils';
+import { getAlignedDuration } from '../utils/timelineUtils';
 import StoryboardCardComponent from '../components/storyboard/StoryboardCard';
 import AnimaticTimeline from '../components/storyboard/AnimaticTimeline';
 import StoryboardPaddingCard from '../components/storyboard/StoryboardPaddingCard';
@@ -86,7 +86,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
     const handleFillPadding = (startTime: number, duration: number) => {
         if (!activeProject) return;
         const frameRate = activeProject.frameRate || 20;
-        const alignedDuration = getLtxAlignedDuration(duration, frameRate);
+        const alignedDuration = getAlignedDuration(duration, frameRate);
         const nextIndex = cards.length + 1;
 
         const newCard: VideoClip = {
@@ -170,7 +170,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
             if (wordCount > 0 || (wordCount === 0 && currentClip.notes?.dialogue)) {
                 const rawDuration = Math.max(1.5, (wordCount / (updatedClip.paceWpm || PacingBenchmarks.CONVERSATIONAL)) * 60);
                 const frameRate = activeProject.frameRate || 20;
-                updatedClip.duration = getLtxAlignedDuration(rawDuration, frameRate);
+                updatedClip.duration = getAlignedDuration(rawDuration, frameRate);
             }
         }
         updatedClip.endTime = updatedClip.startTime + updatedClip.duration;

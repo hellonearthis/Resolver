@@ -16,8 +16,8 @@ import {
     convertAudioForComfyUI, 
     waitForPromptWebSocket 
 } from '../services/comfyService';
-import workflowJsonTemplate from '../../comfyui_workflows/video_ltx2_i2v.json';
-import { getValidLtxFrameCount, getLtxAlignedDuration } from '../utils/timelineUtils';
+import workflowJsonTemplate from '../../comfyui_workflows/Extract_Stems.json';
+import { getValidMinimaxFrameCount, getAlignedDuration } from '../utils/timelineUtils';
 import type { BeatProject, ProjectMarker } from '../hooks/useProjectStorage';
 import ProjectTimelineTable from '../components/ProjectTimelineTable';
 import CollapsibleCard from '../components/CollapsibleCard';
@@ -1191,10 +1191,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 }
             }
 
-            // Stage 2: Calculate LTX-aligned duration and set END relative to newStart
+            // Stage 2: Calculate Aligned duration and set END relative to newStart
             const fps = activeProject?.frameRate || 24;
             const rawDuration = Math.max(0.1, region.end - newStart);
-            const alignedDuration = getLtxAlignedDuration(rawDuration, fps);
+            const alignedDuration = getAlignedDuration(rawDuration, fps);
             const newEnd = newStart + alignedDuration;
 
             if (newStart !== region.start || Math.abs(newEnd - region.end) > 0.001) {
@@ -1336,10 +1336,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             }
                         }
 
-                        // Stage 2: Calculate LTX-aligned duration and set END relative to newStart
+                        // Stage 2: Calculate Aligned duration and set END relative to newStart
                         const fps = activeProject?.frameRate || 24;
                         const rawDuration = Math.max(0.1, region.end - newStart);
-                        const alignedDuration = getLtxAlignedDuration(rawDuration, fps);
+                        const alignedDuration = getAlignedDuration(rawDuration, fps);
                         const newEnd = newStart + alignedDuration;
 
                         if (newStart !== region.start || Math.abs(newEnd - region.end) > 0.001) {
@@ -1566,10 +1566,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         }
         const { start, end, source, stemIndex } = activeSelection;
 
-        // Snap duration UP to the nearest valid LTX frame boundary
+        // Snap duration UP to the nearest valid aligned frame boundary
         const rawDuration = end - start;
         const fps = activeProject?.frameRate || 20;
-        const alignedDuration = getLtxAlignedDuration(rawDuration, fps);
+        const alignedDuration = getAlignedDuration(rawDuration, fps);
         const alignedEnd = start + alignedDuration;
 
         const track = (clips.length % 2) + 1;
@@ -1593,7 +1593,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         if (wsRegions.current) wsRegions.current.clearRegions();
         stemRegionsRefs.current.forEach(r => r.clearRegions());
 
-        const frames = getValidLtxFrameCount(rawDuration, fps);
+        const frames = getValidMinimaxFrameCount(rawDuration, fps);
         if (onStatusChange) onStatusChange(`Segment added: ${formatTime(start)} – ${formatTime(alignedEnd)} (${frames} frames @ ${fps}fps, ${alignedDuration.toFixed(2)}s)`);
 
         if (activeProject) {
@@ -1735,7 +1735,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             const current = sorted[clipIndex];
             if (newEndTime <= current.startTime) return prev;
             const rawDuration = newEndTime - current.startTime;
-            const alignedDuration = getLtxAlignedDuration(rawDuration, frameRate);
+            const alignedDuration = getAlignedDuration(rawDuration, frameRate);
             sorted[clipIndex] = { ...current, endTime: current.startTime + alignedDuration, duration: alignedDuration };
             for (let i = clipIndex + 1; i < sorted.length; i++) {
                 const prevClip = sorted[i - 1];
@@ -1882,7 +1882,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const { start: startTime, end: endTime, source, stemIndex } = activeSelection;
         const duration = endTime - startTime;
 
-        // Constraint Math matches LTX template requirements
+        // Constraint Math matches Minimax template requirements
         // Frame Count: (n * 8) + 1
         // Dimensions: (n * 32) + 1
         // These are handled by the shared handleGenerateVideo in App.tsx
