@@ -1,119 +1,175 @@
 import React, { useCallback } from 'react';
 
+export interface FileWithPath extends File {
+    path?: string;
+}
+
+interface ElectronWebUtilsGlobal {
+    getPathForFile: (file: File) => string;
+}
+
+interface NodeFsModule {
+    readFileSync: (file_path: string) => Uint8Array;
+}
+
+interface NodePathModule {
+    basename: (file_path: string) => string;
+}
+
+interface ElectronRuntimeBridge {
+    ipcRenderer?: {
+        invoke: (channel_name: string, ...arguments_list: unknown[]) => Promise<string | null>;
+    };
+}
+
+interface ExtendedWindowDropZone {
+    electronWebUtils?: ElectronWebUtilsGlobal;
+    process?: { versions?: { electron?: string } };
+    require?: (module_name: string) => unknown;
+}
+
 interface DropZoneProps {
-    onFilesDropped: (files: File[]) => void;
+    onFilesDropped: (dropped_files: FileWithPath[]) => void;
     accept: string;
     label: string;
     defaultAudioPath?: string;
 }
 
-// Lazy load Electron dependencies to avoid top-level require issues in tests/browser
-const getElectron = () => (window.require ? window.require('electron') : null);
-const getFs = () => (window.require ? window.require('fs') : null);
-const getPath = () => (window.require ? window.require('path') : null);
+// WHAT: Safely retrieves Node/Electron modules at runtime if executing in desktop environment.
+// WHY: Prevents Vite web bundler crashes and SSR import failures while providing native features in Electron.
+const getExtendedWindow = (): ExtendedWindowDropZone => window as unknown as ExtendedWindowDropZone;
 
-const DropZone: React.FC<DropZoneProps> = ({ onFilesDropped, accept, label, defaultAudioPath }) => {
-    // Helper to resolve paths for a list of files
-    const resolvePaths = (files: File[]): File[] => {
-        // use window.electronWebUtils exposed by preload
-        const webUtils = (window as any).electronWebUtils;
+const getElectronModule = (): ElectronRuntimeBridge | null => {
+    const extended_window = getExtendedWindow();
+    return extended_window.require ? (extended_window.require('electron') as ElectronRuntimeBridge) : null;
+};
 
-        console.log("DropZone: Resolving paths. webUtils available:", !!webUtils);
+const getFsModule = (): NodeFsModule | null => {
+    const extended_window = getExtendedWindow();
+    return extended_window.require ? (extended_window.require('fs') as NodeFsModule) : null;
+};
 
-        if (webUtils) {
-            files.forEach(f => {
-                // If path is missing, try to resolve it
-                if (!(f as any).path) {
+const getPathModule = (): NodePathModule | null => {
+    const extended_window = getExtendedWindow();
+    return extended_window.require ? (extended_window.require('path') as NodePathModule) : null;
+};
+
+// WHAT: Drag-and-drop file ingest target with native Electron file path resolution.
+// WHY: In web browsers, HTML5 File objects conceal local disk paths for security; in Electron desktop,
+// webUtils.getPathForFile restores the real filesystem path necessary for FFmpeg and DaVinci Resolve.
+const DropZone: React.FC<DropZoneProps> = ({ 
+    onFilesDropped, 
+    accept, 
+    label, 
+    defaultAudioPath 
+}) => {
+    // WHAT: Inspects incoming File objects and resolves absolute filesystem paths using Electron webUtils.
+    // WHY: Downstream media pipelines (Demucs, Essentia, FFmpeg) require absolute OS paths, not browser Blobs.
+    const resolveFilePaths = (files_to_resolve: FileWithPath[]): FileWithPath[] => {
+        const extended_window = getExtendedWindow();
+        const web_utils_bridge = extended_window.electronWebUtils;
+
+        console.log("DropZone: Resolving paths. webUtils available:", Boolean(web_utils_bridge));
+
+        if (web_utils_bridge) {
+            files_to_resolve.forEach(file_item => {
+                if (!file_item.path) {
                     try {
-                        const p = webUtils.getPathForFile(f);
-                        if (p) {
-                            // Simple assignment as recommended
+                        const resolved_disk_path = web_utils_bridge.getPathForFile(file_item);
+                        if (resolved_disk_path) {
                             try {
-                                (f as any).path = p;
-                            } catch (e) {
-                                console.warn("DropZone: Simple assignment failed, complying...", e);
+                                file_item.path = resolved_disk_path;
+                            } catch (assignment_error) {
+                                console.warn("DropZone: Simple assignment failed, complying...", assignment_error);
                             }
-                            console.log("DropZone: Resolved path:", p);
+                            console.log("DropZone: Resolved path:", resolved_disk_path);
                         }
-                    } catch (err) {
-                        console.warn("DropZone: Failed to resolve path for", f.name, err);
+                    } catch (resolution_error) {
+                        console.warn("DropZone: Failed to resolve path for", file_item.name, resolution_error);
                     }
                 }
             });
         }
-        return files;
+        return files_to_resolve;
     };
 
     const handleDrop = useCallback(
-        (e: React.DragEvent<HTMLDivElement>) => {
-            e.preventDefault();
-            e.stopPropagation();
+        (drag_event: React.DragEvent<HTMLDivElement>) => {
+            drag_event.preventDefault();
+            drag_event.stopPropagation();
 
+            const extended_window = getExtendedWindow();
             console.log("DropZone v2.2: Drop Event");
-            console.log("Electron version:", (window as any).process?.versions?.electron);
-            console.log("webUtils present:", !!(window as any).electronWebUtils);
+            console.log("Electron version:", extended_window.process?.versions?.electron);
+            console.log("webUtils present:", Boolean(extended_window.electronWebUtils));
 
-            let allFiles = Array.from(e.dataTransfer.files);
+            let extracted_files: FileWithPath[] = Array.from(drag_event.dataTransfer.files) as FileWithPath[];
 
-            // Resolve paths
-            allFiles = resolvePaths(allFiles);
+            // Resolve real disk paths via webUtils
+            extracted_files = resolveFilePaths(extracted_files);
 
-            // Filter
-            const acceptType = accept.replace('/*', '/');
-            const filtered = allFiles.filter(f => {
-                const mimeMatch = f.type.startsWith(acceptType) || accept === '*';
-                if (mimeMatch) return true;
-                const ext = f.name.split('.').pop()?.toLowerCase();
-                if (accept.startsWith('audio/')) return ['mp3', 'wav', 'flac', 'ogg', 'aac', 'm4a', 'wma', 'aiff'].includes(ext || '');
-                if (accept.startsWith('video/')) return ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext || '');
+            // Filter files matching MIME or extension criteria
+            const target_mime_category = accept.replace('/*', '/');
+            const accepted_audio_extensions = ['mp3', 'wav', 'flac', 'ogg', 'aac', 'm4a', 'wma', 'aiff'];
+            const accepted_video_extensions = ['mp4', 'mov', 'avi', 'mkv', 'webm'];
+
+            const validated_files = extracted_files.filter(file_candidate => {
+                const is_mime_match = file_candidate.type.startsWith(target_mime_category) || accept === '*';
+                if (is_mime_match) return true;
+
+                const file_extension_suffix = file_candidate.name.split('.').pop()?.toLowerCase();
+                if (accept.startsWith('audio/')) {
+                    return accepted_audio_extensions.includes(file_extension_suffix || '');
+                }
+                if (accept.startsWith('video/')) {
+                    return accepted_video_extensions.includes(file_extension_suffix || '');
+                }
                 return false;
             });
 
-            console.log("DropZone: Accepted files:", filtered.length);
+            console.log("DropZone: Accepted files:", validated_files.length);
 
-            if (filtered.length > 0) {
-                onFilesDropped(filtered);
+            if (validated_files.length > 0) {
+                onFilesDropped(validated_files);
             }
         },
         [onFilesDropped, accept]
     );
 
-    const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
+    const handleDragOver = useCallback((drag_over_event: React.DragEvent<HTMLDivElement>) => {
+        drag_over_event.preventDefault();
+        drag_over_event.stopPropagation();
     }, []);
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files) {
-            let files = Array.from(e.target.files);
-            // Also resolve paths for input selection!
-            files = resolvePaths(files);
-            onFilesDropped(files);
+    const handleChange = (input_change_event: React.ChangeEvent<HTMLInputElement>) => {
+        if (input_change_event.target.files) {
+            let selected_files: FileWithPath[] = Array.from(input_change_event.target.files) as FileWithPath[];
+            selected_files = resolveFilePaths(selected_files);
+            onFilesDropped(selected_files);
         }
     };
 
     const handleClick = useCallback(async () => {
-        const electron = getElectron();
-        const ipcRenderer = electron ? electron.ipcRenderer : null;
-        const fs = getFs();
-        const nodePath = getPath();
+        const electron_module = getElectronModule();
+        const ipc_renderer_instance = electron_module?.ipcRenderer;
+        const node_fs_module = getFsModule();
+        const node_path_module = getPathModule();
 
         // Use Electron native dialog when available and a default path exists
-        if (ipcRenderer && defaultAudioPath) {
+        if (ipc_renderer_instance && defaultAudioPath) {
             try {
-                const filePath: string | null = await ipcRenderer.invoke('open-audio-dialog', defaultAudioPath);
-                if (filePath && fs && nodePath) {
-                    const buffer = fs.readFileSync(filePath);
-                    const fileName = nodePath.basename(filePath);
-                    const blob = new Blob([buffer]);
-                    const file = new File([blob], fileName, { type: 'audio/mpeg' });
-                    // Set path directly
-                    (file as any).path = filePath;
+                const selected_file_path: string | null = await ipc_renderer_instance.invoke('open-audio-dialog', defaultAudioPath);
+                if (selected_file_path && node_fs_module && node_path_module) {
+                    const audio_buffer = node_fs_module.readFileSync(selected_file_path);
+                    const audio_filename = node_path_module.basename(selected_file_path);
+                    const audio_blob = new Blob([audio_buffer.buffer as ArrayBuffer]);
+                    const audio_file: FileWithPath = new File([audio_blob], audio_filename, { type: 'audio/mpeg' });
+                    audio_file.path = selected_file_path;
 
-                    onFilesDropped([file]);
+                    onFilesDropped([audio_file]);
                 }
-            } catch (err) {
-                console.error('Electron dialog failed:', err);
+            } catch (native_dialog_error) {
+                console.error('Electron dialog failed:', native_dialog_error);
                 // Fall back to browser file input
                 document.getElementById(`file-input-${label}`)?.click();
             }
@@ -121,10 +177,6 @@ const DropZone: React.FC<DropZoneProps> = ({ onFilesDropped, accept, label, defa
             document.getElementById(`file-input-${label}`)?.click();
         }
     }, [defaultAudioPath, label, onFilesDropped]);
-
-    // Helper for rendering check
-    const electron = getElectron();
-    const hasIpc = !!(electron?.ipcRenderer);
 
     return (
         <div
@@ -138,16 +190,14 @@ const DropZone: React.FC<DropZoneProps> = ({ onFilesDropped, accept, label, defa
                 id={`file-input-${label}`}
                 multiple
                 accept={accept}
-                style={{ display: 'none' }}
                 onChange={handleChange}
+                style={{ display: 'none' }}
             />
-            <div className="drop-zone-icon">📁</div>
-            <p className="drop-zone-text">{label}</p>
-            {defaultAudioPath && !hasIpc && (
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                    Looking for: {defaultAudioPath.split(/[/\\]/).pop()}
-                </p>
-            )}
+            <div className="drop-zone-content">
+                <span className="drop-icon">📁</span>
+                <p className="drop-label">{label}</p>
+                <p className="drop-hint">Click or drag & drop files here</p>
+            </div>
         </div>
     );
 };

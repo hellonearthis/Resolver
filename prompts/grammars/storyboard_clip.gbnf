@@ -1,0 +1,10 @@
+# GBNF Grammar for Storyboard Clip Structured JSON
+# Enforces valid JSON containing prompt, camera_movement, action_notes, lighting_style, and subject_invariants
+
+root ::= "{" ws "\"prompt\":" ws string "," ws "\"camera_movement\":" ws string "," ws "\"action_notes\":" ws string "," ws "\"lighting_style\":" ws string "," ws "\"subject_invariants\":" ws string ws "}"
+
+string ::= "\"" char* "\""
+
+char ::= [^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
+
+ws ::= [ \t\n\r]*

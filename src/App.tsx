@@ -14,25 +14,85 @@ import MusicVideoAssemblerModule from './modules/MusicVideoAssemblerModule';
 import SettingsModule from './modules/SettingsModule';
 import WorkflowAnalyzerModule from './modules/WorkflowAnalyzerModule';
 import StoryboardModule from './modules/StoryboardModule';
+import McpControlModule from './modules/McpControlModule';
 
 import {
   checkComfyConnection, 
   queuePrompt, 
   uploadFileToComfyUI, 
   waitForPromptWebSocket,
-  convertAudioForComfyUI
+  convertAudioForComfyUI,
+  type ComfyWorkflow
 } from './services/comfyService';
 
-import type { VideoClip } from './types/assembler';
+import type { VideoClip, ImageFunction } from './types/assembler';
 import workflowJsonTemplate from '../comfyui_workflows/minimax_image_to_video_api.json';
+import r2vWorkflowJsonTemplate from '../comfyui_workflows/video_minimax_h3_r2v_api.json';
 import imageDescriptionWorkflow from '../comfyui_workflows/llm_qwen3_image_discription_api.json';
+import { 
+  buildQwenVisionPromptForFunction, 
+  getImageFunctionConfiguration,
+  buildMiniMaxH3SystemPrompt,
+  buildMiniMaxH3UserPrompt,
+  buildMiniMaxH3DirectBrief
+} from './services/qwenPromptService';
 import { TooltipProvider } from './components/ui/Tooltip';
 
-// Define types for Electron IPC
-declare global {
-  interface Window {
-    require: any;
+import type { FileWithPath } from './components/DropZone';
+
+interface NodeFsModule {
+  existsSync: (file_path: string) => boolean;
+  readFileSync: (file_path: string, encoding: string) => string;
+  writeFileSync: (file_path: string, content: string) => void;
+  copyFileSync: (source_path: string, destination_path: string) => void;
+  mkdirSync: (directory_path: string, options?: { recursive?: boolean }) => void;
+  readdirSync: (directory_path: string) => string[];
+  statSync: (file_path: string) => { mtimeMs: number };
+}
+
+interface NodePathModule {
+  join: (...path_segments: string[]) => string;
+  resolve: (...path_segments: string[]) => string;
+  basename: (file_path: string, file_extension?: string) => string;
+  dirname: (file_path: string) => string;
+  extname: (file_path: string) => string;
+  isAbsolute: (file_path: string) => boolean;
+}
+
+interface ElectronIpcRenderer {
+  invoke: (channel_name: string, ...arguments_list: unknown[]) => Promise<{ success: boolean; config?: { comfyOutputDir?: string; llmProvider?: 'llama-server' | 'vino'; projectOutputDir?: string }; error?: string; [key: string]: unknown }>;
+  send: (channel_name: string, ...arguments_list: unknown[]) => void;
+  on: (channel_name: string, callback_listener: (...arguments_list: unknown[]) => void) => void;
+}
+
+interface WindowWithElectronRequire {
+  require?: (module_name: string) => unknown;
+  ipcRenderer?: ElectronIpcRenderer;
+}
+
+const getElectronIpc = (): ElectronIpcRenderer | null => {
+  const electron_window = window as unknown as WindowWithElectronRequire;
+  if (electron_window.ipcRenderer) return electron_window.ipcRenderer;
+  if (electron_window.require) {
+    const electron_module = electron_window.require('electron') as { ipcRenderer?: ElectronIpcRenderer } | null;
+    return electron_module?.ipcRenderer ?? null;
   }
+  return null;
+};
+
+const getNodeFs = (): NodeFsModule | null => {
+  const electron_window = window as unknown as WindowWithElectronRequire;
+  return electron_window.require ? (electron_window.require('fs') as NodeFsModule) : null;
+};
+
+const getNodePath = (): NodePathModule | null => {
+  const electron_window = window as unknown as WindowWithElectronRequire;
+  return electron_window.require ? (electron_window.require('path') as NodePathModule) : null;
+};
+
+interface LegacyClipFields {
+  actionNotes?: string;
+  promptText?: string;
 }
 
 export interface QueueItem {
@@ -45,6 +105,7 @@ export interface QueueItem {
   label: string;
   addedAt: number;
   type?: 'video' | 'description' | 'reword';
+  imageSlot?: 'startImagePath' | 'endImagePath';
 }
 
 function App() {
@@ -62,7 +123,7 @@ function App() {
 
   // --- Global Status Logs ---
   const [statusLogs, setStatusLogs] = useState<{ time: Date, msg: string }[]>([]);
-  const [llmProvider, setLlmProvider] = useState<'lmstudio' | 'vino'>('lmstudio');
+  const [llmProvider, setLlmProvider] = useState<'llama-server' | 'vino'>('llama-server');
 
   const addLog = (msg: string) => {
     setStatusLogs(prev => {
@@ -107,13 +168,16 @@ function App() {
 
   const refreshGlobalConfig = async () => {
     try {
-      // @ts-ignore
-      const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+      const ipcRenderer = getElectronIpc();
       if (ipcRenderer) {
         const res = await ipcRenderer.invoke('get-config');
         if (res.success && res.config) {
           if (res.config.comfyOutputDir) setComfyOutputDir(res.config.comfyOutputDir);
-          if (res.config.llmProvider) setLlmProvider(res.config.llmProvider);
+          if (res.config.llmProvider === 'llama-server' || res.config.llmProvider === 'vino') {
+            setLlmProvider(res.config.llmProvider);
+          } else if ((res.config.llmProvider as unknown as string) === 'lmstudio') {
+            setLlmProvider('llama-server');
+          }
         }
       }
     } catch (e) {
@@ -148,11 +212,12 @@ function App() {
         handleUpdateProject(activeProject.id, { clips: cleanedClips });
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjectId]); // Only run when changing project IDs
 
-  const handleUpdateProject = (id: string, updates: Partial<BeatProject> | ((prev: BeatProject) => Partial<BeatProject>)) => {
+  const handleUpdateProject = useCallback((id: string, updates: Partial<BeatProject> | ((prev: BeatProject) => Partial<BeatProject>)) => {
     updateProject(id, updates);
-  };
+  }, [updateProject]);
 
   const handleSelectProject = (id: string) => {
     setActiveProjectId(id);
@@ -166,9 +231,15 @@ function App() {
    * HOW: Tasks are identified by type (video vs description). We prevent duplicates 
    * and update the clip's state in the project to show visual progress immediately.
    */
-  const handleAddToQueue = useCallback((clipId: string, projectId: string, label: string, type: 'video' | 'description' | 'reword' = 'video') => {
+  const handleAddToQueue = useCallback((
+    clipId: string, 
+    projectId: string, 
+    label: string, 
+    type: 'video' | 'description' | 'reword' = 'video',
+    imageSlot?: 'startImagePath' | 'endImagePath'
+  ) => {
     setVideoQueue(prev => {
-      if (prev.find(item => item.clipId === clipId && item.type === type && (item.status === 'queued' || item.status === 'processing'))) {
+      if (prev.find(item => item.clipId === clipId && item.type === type && item.imageSlot === imageSlot && (item.status === 'queued' || item.status === 'processing'))) {
         return prev;
       }
       const newItem: QueueItem = {
@@ -176,9 +247,10 @@ function App() {
         clipId,
         projectId,
         status: 'queued',
-        label: type === 'description' ? `Description: ${label}` : label,
+        label: type === 'description' ? `Description (${imageSlot === 'endImagePath' ? 'Img 2' : 'Img 1'}): ${label}` : label,
         addedAt: Date.now(),
-        type
+        type,
+        imageSlot: type === 'description' ? (imageSlot || 'startImagePath') : undefined
       };
       
       // Update clip status in project
@@ -186,7 +258,7 @@ function App() {
         const updatedClips = prevProject.clips?.map(c => {
           if (c.id === clipId) {
             if (type === 'video') return { ...c, status: 'queued' as const };
-            if (type === 'description') return { ...c, isDescribing: true };
+            if (type === 'description') return { ...c, isDescribing: true, isDescribingSlot: imageSlot || 'startImagePath' };
             if (type === 'reword') return { ...c, isExpanding: true };
           }
           return c;
@@ -197,7 +269,7 @@ function App() {
       return [...prev, newItem];
     });
     addLog(`Added ${type === 'description' ? 'description task' : 'clip'} "${label}" to generation queue.`);
-  }, [projects, handleUpdateProject]);
+  }, [handleUpdateProject]);
 
   const handleRemoveFromQueue = useCallback((id: string) => {
     setVideoQueue(prev => {
@@ -208,7 +280,7 @@ function App() {
           const updatedClips = project.clips?.map(c => 
             (c.id === itemToRemove.clipId)
               ? (itemToRemove.type === 'description' 
-                   ? { ...c, isDescribing: false } 
+                   ? { ...c, isDescribing: false, isDescribingSlot: null } 
                    : itemToRemove.type === 'reword'
                      ? { ...c, isExpanding: false }
                      : (c.status === 'queued' || c.status === 'generating') ? { ...c, status: 'pending' as const } : c)
@@ -234,7 +306,7 @@ function App() {
           const updatedClips = project.clips?.map(c => 
             (c.id === item.clipId) 
               ? (item.type === 'description' 
-                   ? { ...c, isDescribing: false } 
+                   ? { ...c, isDescribing: false, isDescribingSlot: null } 
                    : item.type === 'reword'
                      ? { ...c, isExpanding: false }
                      : (c.status === 'queued' ? { ...c, status: 'pending' as const } : c))
@@ -258,7 +330,7 @@ function App() {
     if (stuckClips.length > 0) {
       addLog(`Manually resetting ${stuckClips.length} stuck statuses for "${activeProject.name}"`);
       const cleanedClips = activeProject.clips?.map(c => {
-        let updated = { ...c };
+        const updated = { ...c };
         if (c.status === 'generating' || c.status === 'queued') updated.status = 'pending' as const;
         if (c.isDescribing) updated.isDescribing = false;
         return updated;
@@ -302,20 +374,31 @@ function App() {
         return { clips: generatingClips };
       });
 
+      // WHAT: Stop llama-server to release all GPU VRAM before ComfyUI video generation starts.
+      // WHY: Large video models (MiniMax H3, LTX, Wan) require maximum VRAM to avoid CUDA out-of-memory errors.
+      if (llmProvider === 'llama-server') {
+        const ipcRenderer = getElectronIpc();
+        if (ipcRenderer) {
+          addLog('[VRAM Management] Unloading llama-server to free 100% GPU VRAM for ComfyUI video rendering...');
+          try {
+            await ipcRenderer.invoke('llm-stop-server');
+          } catch (stop_err) {
+            console.warn('[VRAM Management] Non-critical error stopping llama-server:', stop_err);
+          }
+        }
+      }
+
       const frameRate = project.frameRate || 20;
       addLog(`[Queue] Processing "${clipToUpdate.label}"...`);
 
-      // 2. Upload Start Image
-      let finalImageName = "";
-      if (clipToUpdate.startImagePath) {
-        let absoluteImagePath = clipToUpdate.startImagePath;
-        absoluteImagePath = absoluteImagePath.replace(/^file:\/\/\/?/i, '').replace(/%20/g, ' ');
+      // Helper to resolve and upload an image file to ComfyUI
+      const resolveAndUploadImage = async (imagePathString: string): Promise<string> => {
+        let absoluteImagePath = imagePathString.replace(/^file:\/\/\/?/i, '').replace(/%20/g, ' ');
         absoluteImagePath = decodeURI(absoluteImagePath);
 
-        // @ts-ignore
-        const path = window.require('path');
-        // @ts-ignore
-        const fs = window.require('fs');
+        const path = getNodePath();
+        const fs = getNodeFs();
+        if (!path || !fs) throw new Error('Filesystem module unavailable');
 
         if (!path.isAbsolute(absoluteImagePath)) {
           const possiblePathImages = path.resolve(project.outputDir || '', 'images', absoluteImagePath);
@@ -325,21 +408,30 @@ function App() {
         }
 
         const uploadResult = await uploadFileToComfyUI(absoluteImagePath);
-        if (uploadResult?.name) finalImageName = uploadResult.name;
-        else throw new Error(`Failed to upload start image to ComfyUI.`);
-      } else {
-        throw new Error("Start image missing. Aborting generation.");
+        if (uploadResult?.name) return uploadResult.name;
+        throw new Error(`Failed to upload reference image to ComfyUI.`);
+      };
+
+      // 2. Upload Reference Images
+      const hasBothReferenceImages = Boolean(clipToUpdate.startImagePath && clipToUpdate.endImagePath);
+      let finalStartImageName = "";
+      let finalEndImageName = "";
+
+      const primaryImagePath = clipToUpdate.startImagePath || clipToUpdate.endImagePath;
+      if (!primaryImagePath) {
+        throw new Error("At least one reference image is required to generate video.");
       }
 
-        // STEP 3: Upload Audio File
-        // HOW: We determine if we need a specific stem or the master audio.
-        // We also perform a conversion to WAV (handled in comfyService) if needed
-        // to ensure compatibility with the ComfyUI audio nodes.
-        // let finalAudioName = "audio.wav";
-      let sourceAudioPath = project.audioPath;
+      finalStartImageName = await resolveAndUploadImage(primaryImagePath);
 
+      if (hasBothReferenceImages && clipToUpdate.endImagePath) {
+        finalEndImageName = await resolveAndUploadImage(clipToUpdate.endImagePath);
+      }
+
+      // STEP 3: Upload Audio File
+      let sourceAudioPath = project.audioPath;
       if (clipToUpdate.source === 'stem' && clipToUpdate.stemName) {
-        const targetStem = project.stems?.find(s => s.type === clipToUpdate.stemName);
+        const targetStem = project.stems?.find(candidateStem => candidateStem.type === clipToUpdate.stemName);
         if (targetStem) sourceAudioPath = targetStem.path;
       }
 
@@ -347,19 +439,17 @@ function App() {
         let absoluteAudioPath = sourceAudioPath.replace(/^file:\/\/\/?/i, '').replace(/%20/g, ' ');
         absoluteAudioPath = decodeURI(absoluteAudioPath);
 
-        // @ts-ignore
-        const path = window.require('path');
-        // @ts-ignore
-        const fs = window.require('fs');
+        const path = getNodePath();
 
-        if (!path.isAbsolute(absoluteAudioPath)) {
+        if (path && !path.isAbsolute(absoluteAudioPath)) {
           absoluteAudioPath = path.resolve(project.outputDir || '', absoluteAudioPath);
         }
 
-        // --- NEW: Convert to WAV if it's an MP3 or other format to avoid header errors ---
         let finalPathToUpload = absoluteAudioPath;
-        const ext = path.extname(absoluteAudioPath).toLowerCase();
-        if (ext === '.mp3' || ext === '.m4a' || ext === '.aac' || ext === '.ogg') {
+        const audio_file_extension = path 
+            ? path.extname(absoluteAudioPath).toLowerCase() 
+            : ('.' + absoluteAudioPath.split('.').pop()?.toLowerCase());
+        if (audio_file_extension === '.mp3' || audio_file_extension === '.m4a' || audio_file_extension === '.aac' || audio_file_extension === '.ogg') {
             const wavPath = await convertAudioForComfyUI(absoluteAudioPath);
             if (wavPath) finalPathToUpload = wavPath;
             else console.warn(`Failed to convert ${absoluteAudioPath} to WAV, trying raw upload.`);
@@ -370,37 +460,62 @@ function App() {
       }
 
       // STEP 4: Inject Workflow Data
-      const workflow = JSON.parse(JSON.stringify(workflowJsonTemplate));
+      const rng_seed = Math.floor(Math.random() * 1000000000000000);
+      let workflow: ComfyWorkflow;
 
-      if (workflow["114"]?.inputs) workflow["114"].inputs.image = finalImageName;
-      if (workflow["105:104"]?.inputs) {
+      if (hasBothReferenceImages) {
+        // WHAT: Executing the MiniMax H3 Reference-to-Video (R2V) dual-reference workflow.
+        // WHY: The user provided two reference images with defined functions.
+        workflow = JSON.parse(JSON.stringify(r2vWorkflowJsonTemplate)) as ComfyWorkflow;
+
+        if (workflow["137"]?.inputs) workflow["137"].inputs.image = finalStartImageName;
+        if (workflow["139"]?.inputs) workflow["139"].inputs.image = finalEndImageName;
+
         let combinedText = '';
-
         if (clipToUpdate.aiExpandedPrompt?.trim()) {
           combinedText = clipToUpdate.aiExpandedPrompt.trim();
-          console.log("🎥 [Generate Video] Using AI Expanded Prompt:", combinedText);
+          console.log("🎥 [Generate Video R2V] Using AI Expanded Prompt:", combinedText);
         } else {
-          const actionText = (clipToUpdate.notes?.action || (clipToUpdate as any).actionNotes || (clipToUpdate as any).promptText || '')?.trim() || '';
-          const descText = clipToUpdate.actionDescription?.trim() || '';
-          
-          const promptParts = [];
-          if (descText) promptParts.push(descText);
-          if (actionText) promptParts.push(`action: ${actionText}`);
-          
-          combinedText = promptParts.length > 0 ? promptParts.join(", ") : clipToUpdate.label;
-          console.log("🎥 [Generate Video] Using Legacy Combined Prompt:", combinedText);
+          combinedText = buildMiniMaxH3DirectBrief(clipToUpdate, frameRate);
+          console.log("🎥 [Generate Video R2V] Using MiniMax H3 Direct Brief Prompt:", combinedText);
         }
-        
-        workflow["105:104"].inputs.prompt = combinedText;
-      }
-      const rng_seed = Math.floor(Math.random() * 1000000000000000);
-      if (workflow["105:15"]?.inputs) workflow["105:15"].inputs.noise_seed = rng_seed;
-      if (workflow["105:111"]?.inputs) workflow["105:111"].inputs.value = clipToUpdate.duration;
-      if (workflow["105:91"]?.inputs) workflow["105:91"].inputs.fps = frameRate;
 
-      // Note: Minimax model handles audio internally if passed, 
-      // but this API JSON does not have a LoadAudio node.
-      
+        if (workflow["138"]?.inputs) workflow["138"].inputs.value = combinedText;
+        if (workflow["132"]?.inputs) workflow["132"].inputs.value = clipToUpdate.duration;
+        if (workflow["129"]?.inputs) workflow["129"].inputs.noise_seed = rng_seed;
+        if (workflow["130"]?.inputs) workflow["130"].inputs.fps = frameRate;
+      } else {
+        // WHAT: Executing the standard single-image Image-to-Video workflow.
+        // WHY: Only Image 1 is provided, maintaining full backward compatibility.
+        workflow = JSON.parse(JSON.stringify(workflowJsonTemplate)) as ComfyWorkflow;
+
+        if (workflow["114"]?.inputs) workflow["114"].inputs.image = finalStartImageName;
+        if (workflow["105:104"]?.inputs) {
+          let combinedText = '';
+
+          if (clipToUpdate.aiExpandedPrompt?.trim()) {
+            combinedText = clipToUpdate.aiExpandedPrompt.trim();
+            console.log("🎥 [Generate Video] Using AI Expanded Prompt:", combinedText);
+          } else {
+            const actionText = (clipToUpdate.notes?.action || (clipToUpdate as LegacyClipFields).actionNotes || (clipToUpdate as LegacyClipFields).promptText || '')?.trim() || '';
+            const descText = clipToUpdate.actionDescription || clipToUpdate.startImageDescription || '';
+            
+            const promptParts = [];
+            if (descText) promptParts.push(descText);
+            if (actionText) promptParts.push(`action: ${actionText}`);
+            
+            combinedText = promptParts.length > 0 ? promptParts.join(", ") : clipToUpdate.label;
+            console.log("🎥 [Generate Video] Using Combined Prompt:", combinedText);
+          }
+          
+          workflow["105:104"].inputs.prompt = combinedText;
+        }
+
+        if (workflow["105:15"]?.inputs) workflow["105:15"].inputs.noise_seed = rng_seed;
+        if (workflow["105:111"]?.inputs) workflow["105:111"].inputs.value = clipToUpdate.duration;
+        if (workflow["105:91"]?.inputs) workflow["105:91"].inputs.fps = frameRate;
+      }
+
       // 5. Queue and Poll
       const startTimeMs = Date.now();
       const result = await queuePrompt(workflow);
@@ -415,10 +530,9 @@ function App() {
       });
 
       // 6. Move output
-      // @ts-ignore
-      const fs = window.require('fs');
-      // @ts-ignore
-      const path = window.require('path');
+      const fs = getNodeFs();
+      const path = getNodePath();
+      if (!fs || !path) throw new Error('Filesystem access unavailable in web environment.');
 
       let latestSourcePath = "";
       const videoOutDir = path.join(comfyOutputDir, 'video');
@@ -430,8 +544,13 @@ function App() {
       if (saveNodeOutput) {
         const mediaArr = saveNodeOutput.gifs || saveNodeOutput.images || saveNodeOutput.videos || saveNodeOutput.filenames || [];
         if (mediaArr.length > 0) {
-          exactFileName = mediaArr[0].filename || mediaArr[0];
-          subfolder = mediaArr[0].subfolder || "";
+          const firstMediaItem = mediaArr[0];
+          if (typeof firstMediaItem === 'string') {
+            exactFileName = firstMediaItem;
+          } else if (firstMediaItem && typeof firstMediaItem === 'object') {
+            exactFileName = firstMediaItem.filename || "";
+            subfolder = firstMediaItem.subfolder || "";
+          }
         }
       }
 
@@ -476,7 +595,7 @@ function App() {
       
       // 7. Success Update
       handleUpdateProject(project.id, (prev: BeatProject) => {
-        const finalClips = prev.clips?.map((c: any) => {
+        const finalClips = prev.clips?.map((c: VideoClip) => {
           if (c.id === clipId) {
             return {
               ...c,
@@ -492,110 +611,166 @@ function App() {
       addLog(`Successfully generated video for "${clipToUpdate.label}"`);
       return { success: true };
 
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error_message = err instanceof Error ? err.message : String(err);
       console.error('Generation Error:', err);
-      addLog(`Error generating clip: ${err.message}`);
+      addLog(`Error generating clip: ${error_message}`);
       handleUpdateProject(project.id, (prev: BeatProject) => {
-        const errorClips = prev.clips?.map((c: any) => 
+        const errorClips = prev.clips?.map((c: VideoClip) => 
           c.id === clipId ? { ...c, status: 'error' as const } : c
         );
         return { clips: errorClips };
       });
-      return { success: false, error: err.message };
+      return { success: false, error: error_message };
     }
   }, [projects, comfyConnected, comfyOutputDir, handleUpdateProject]);
 
-  // --- Shared Image Description Logic ---
+  // --- Shared Image Description Logic (Function-Aware Qwen-VL) ---
   const handleGenerateDescription = useCallback(async (queueItem: QueueItem) => {
-    const { clipId, projectId } = queueItem;
+    const { clipId, projectId, imageSlot = 'startImagePath' } = queueItem;
     const project = projects.find(p => p.id === projectId);
     if (!project) return;
     
     const clipToUpdate = project.clips?.find((c: VideoClip) => c.id === clipId);
-    if (!clipToUpdate || !clipToUpdate.startImagePath) {
-      addLog(`Error: Clip ${clipId} missing or has no start image.`);
-      return { success: false, error: "Missing start image" };
+    const targetImagePath = imageSlot === 'endImagePath' ? clipToUpdate?.endImagePath : clipToUpdate?.startImagePath;
+
+    if (!clipToUpdate || !targetImagePath) {
+      addLog(`Error: Clip ${clipId} missing image in ${imageSlot === 'endImagePath' ? 'Image 2' : 'Image 1'}.`);
+      return { success: false, error: "Missing image" };
     }
 
-    if (!comfyConnected) {
-      addLog('Cannot generate: ComfyUI is not connected.');
-      return { success: false, error: "ComfyUI not connected" };
-    }
+    const assignedFunction: ImageFunction = imageSlot === 'endImagePath' 
+      ? (clipToUpdate.endImageFunction || 'end_frame')
+      : (clipToUpdate.startImageFunction || 'start_frame');
+
+    const roleConfig = getImageFunctionConfiguration(assignedFunction);
+
+    const specializedPrompt = buildQwenVisionPromptForFunction(assignedFunction, {
+      shotLabel: clipToUpdate.label,
+      actionIntent: clipToUpdate.notes?.action,
+      dialogueOrLyrics: clipToUpdate.notes?.dialogue,
+      targetDurationSeconds: clipToUpdate.duration,
+    });
 
     try {
-      addLog(`[Queue] Describing "${clipToUpdate.label}"...`);
+      const providerLabel = llmProvider === 'llama-server' ? 'llama-server (Qwen 3.5 9B)' : 'ComfyUI (Qwen-VL)';
+      addLog(`[Queue] Describing "${clipToUpdate.label}" (${roleConfig.displayName}) via ${providerLabel}...`);
 
-      // 1. Upload image to ComfyUI
-      const uploadResult = await uploadFileToComfyUI(clipToUpdate.startImagePath);
-      if (!uploadResult) {
-        throw new Error("Failed to upload image to AI service.");
-      }
-
-      // 2. Prepare workflow
-      const workflow = JSON.parse(JSON.stringify(imageDescriptionWorkflow));
-      workflow["13"].inputs.image = uploadResult.name;
-
-      // 3. Queue and wait
-      const queueResult = await queuePrompt(workflow);
-      if (!queueResult) throw new Error("Failed to queue description task.");
-
-      const historyOutputs = await waitForPromptWebSocket(queueResult.prompt_id, workflow, (status, progress) => {
-        if (status) addLog(status);
-        if (progress !== undefined) {
-          setVideoQueue(prev => prev.map(item => item.id === queueItem.id ? { ...item, progress } : item));
-        }
-      });
-      
-      // 4. Extract description from Node 14
-      const outputNode = historyOutputs["14"];
       let description = "";
-      
-      if (outputNode?.text && Array.isArray(outputNode.text) && outputNode.text.length > 0) {
-        description = outputNode.text[0];
-      } else if (typeof outputNode?.text === 'string') {
-        description = outputNode.text;
+
+      // WHAT: Route image analysis directly to llama-server when it is the active LLM provider.
+      // WHY: Utilizes the local 9B Qwen 3.5 multimodal model for superior cinematic comprehension without ComfyUI overhead.
+      if (llmProvider === 'llama-server') {
+        if (isComfyProcessing) {
+          addLog('[VRAM Management] Postponing vision description: ComfyUI is actively rendering video.');
+          return { success: false, error: 'ComfyUI video rendering is currently active. Vision description delayed to prevent GPU out-of-memory.' };
+        }
+
+        const ipcRenderer = getElectronIpc();
+        if (!ipcRenderer) {
+          throw new Error("Electron IPC is not accessible for local vision model execution.");
+        }
+
+        const visionResult = (await ipcRenderer.invoke('llm-describe-image', {
+          imagePath: targetImagePath,
+          prompt: specializedPrompt,
+          maxTokens: 1024
+        })) as { success: boolean; text?: string; error?: string };
+
+        if (!visionResult.success || !visionResult.text) {
+          throw new Error(visionResult.error || "llama-server returned an empty vision description.");
+        }
+
+        description = visionResult.text;
+      } else {
+        if (!comfyConnected) {
+          addLog('Cannot generate: ComfyUI is not connected.');
+          return { success: false, error: "ComfyUI not connected" };
+        }
+
+        // 1. Upload image to ComfyUI
+        const uploadResult = await uploadFileToComfyUI(targetImagePath);
+        if (!uploadResult) {
+          throw new Error("Failed to upload image to AI service.");
+        }
+
+        // 2. Prepare workflow and inject tailored Qwen prompt
+        const workflow = JSON.parse(JSON.stringify(imageDescriptionWorkflow));
+        workflow["13"].inputs.image = uploadResult.name;
+
+        if (workflow["12"]?.inputs) {
+          workflow["12"].inputs.custom_prompt = specializedPrompt;
+          workflow["12"].inputs.preset_prompt = "Custom";
+        }
+
+        // 3. Queue and wait
+        const queueResult = await queuePrompt(workflow);
+        if (!queueResult) throw new Error("Failed to queue description task.");
+
+        const historyOutputs = await waitForPromptWebSocket(queueResult.prompt_id, workflow, (status, progress) => {
+          if (status) addLog(status);
+          if (progress !== undefined) {
+            setVideoQueue(prev => prev.map(item => item.id === queueItem.id ? { ...item, progress } : item));
+          }
+        });
+        
+        // 4. Extract description from Node 14
+        const outputNode = historyOutputs["14"];
+        
+        if (outputNode?.text && Array.isArray(outputNode.text) && outputNode.text.length > 0) {
+          description = outputNode.text[0];
+        } else if (typeof outputNode?.text === 'string') {
+          description = outputNode.text;
+        }
       }
 
       if (!description) throw new Error("AI returned an empty description.");
 
-      // 5. Update project with result
+      // 5. Update project with result for the specific slot
       handleUpdateProject(project.id, (prevProject: BeatProject) => {
         const updatedClips = (prevProject.clips || []).map(c => {
           if (c.id === clipId) {
-            /**
-             * DATA CLEANUP: 
-             * If the AI description was previously (mis)stored in notes.action, 
-             * we clear that field now that we have a proper actionDescription slot.
-             */
-            const currentNotes = c.notes || { action: '', dialogue: '', sound: '' };
-            const cleanNotes = (currentNotes.action === description) 
-              ? { ...currentNotes, action: '' } 
-              : currentNotes;
+            if (imageSlot === 'endImagePath') {
+              return {
+                ...c,
+                endImageDescription: description,
+                isDescribing: false,
+                isDescribingSlot: null,
+              };
+            } else {
+              const currentNotes = c.notes || { action: '', dialogue: '', sound: '' };
+              const cleanNotes = (currentNotes.action === description) 
+                ? { ...currentNotes, action: '' } 
+                : currentNotes;
 
-            return { 
-              ...c, 
-              actionDescription: description, 
-              notes: cleanNotes,
-              isDescribing: false 
-            };
+              return { 
+                ...c, 
+                actionDescription: description,
+                startImageDescription: description,
+                notes: cleanNotes,
+                isDescribing: false,
+                isDescribingSlot: null,
+              };
+            }
           }
           return c;
         });
         return { clips: updatedClips };
       });
-      addLog(`Successfully generated description for "${clipToUpdate.label}"`);
+      addLog(`Successfully generated ${roleConfig.displayName} description for "${clipToUpdate.label}"`);
       return { success: true };
 
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error_message = err instanceof Error ? err.message : String(err);
       console.error('Description Error:', err);
-      addLog(`Error generating description: ${err.message}`);
+      addLog(`Error generating description: ${error_message}`);
       handleUpdateProject(project.id, (prev: BeatProject) => {
-        const errorClips = prev.clips?.map((c: any) => 
-          c.id === clipId ? { ...c, isDescribing: false } : c
+        const errorClips = prev.clips?.map((c: VideoClip) => 
+          c.id === clipId ? { ...c, isDescribing: false, isDescribingSlot: null } : c
         );
         return { clips: errorClips };
       });
-      return { success: false, error: err.message };
+      return { success: false, error: error_message };
     }
   }, [projects, comfyConnected, handleUpdateProject]);
 
@@ -614,65 +789,28 @@ function App() {
     }
 
     try {
-      // @ts-ignore
-      const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+      const ipcRenderer = getElectronIpc();
       if (!ipcRenderer) throw new Error("Electron IPC not available.");
 
-      const systemPrompt = `You are a MiniMax H3 Video Prompt Writer. Your ONLY job is to create a written text prompt for the MiniMax H3 video model in I2VA (Image-to-Video-with-Audio) mode.
+      const isDualReference = Boolean(clip.startImagePath && clip.endImagePath);
+      const systemPrompt = buildMiniMaxH3SystemPrompt({
+        isDualReference,
+        startRole: clip.startImageFunction,
+        endRole: clip.endImageFunction,
+      });
 
-REQUIRED OUTPUT FORMAT — Every prompt MUST contain exactly these three fields:
-
-integrated_multimodal_description: ...
-overall_soundscape: ...
-non_diegetic_music: ...
-
-I2VA RULES:
-- The input image is the actual first frame. The description MUST begin from the visible image and develop forward.
-- Always begin with the image-alignment instruction on its own line, followed by a blank line.
-- Use this motion structure: First-frame anchor + action onset + continuous development + result or reaction.
-- At the beginning of Shot 1: establish the style shown in Picture 1, identify the subject, preserve the opening composition, clothing, colors, objects, and spatial relationships, then begin the requested action naturally.
-- Focus mainly on what CHANGES after the first frame.
-
-SHOT AND TIMESTAMP RULES:
-- The first shot NEVER receives a timestamp. Later shots begin with strictly increasing cut times in 00:SS.mmm format.
-- Only use timestamps when there are multiple shots AND a duration is provided.
-- Do NOT use timestamps to describe ordinary actions within a continuous shot.
-
-CAMERA MOVEMENT — Write camera movement naturally inside integrated_multimodal_description. Use specific terminology: Zoom In/Out, Push In, Pull Out, Pan Left/Right, Truck Left/Right, Tilt Up/Down, Pedestal Up/Down, Arc Shot, Tracking Shot, Static Shot, Shake Slightly/Strongly, POV, Roll. Include amplitude (small/large) and speed (slow/fast) when meaningful.
-
-MOTION WRITING — Every action must describe something visible or audible. Use: Starting state + action + direction + speed + physical response + result. Describe cause and effect. Do NOT use vague phrases like "realistic physics" or "cinematic animation."
-
-DIALOGUE — If the scene involves singing, talking, or speaking lyrics, describe that action explicitly. Use speaker IDs (S1), (S2) etc. Format dialogue as: The character with a [voice description] (S1) says: <d>[English] exact words here</d>. CRITICAL: Preserve all lyrics or dialogue VERBATIM. Never reword them.
-
-SOUNDSCAPE — overall_soundscape summarizes ambient and physical sounds across the full video. Do NOT repeat dialogue, singing, or music here.
-
-MUSIC — non_diegetic_music describes background music heard only by the audience. Describe actual instruments, tempo, rhythm, intensity. Use "N/A" when there is no background music. Diegetic music (from objects in the scene) goes in integrated_multimodal_description instead.
-
-RESTRICTIONS:
-- Output ONLY the prompt text. No introductions, explanations, notes, or commentary.
-- Do not use JSON.
-- Do not invent or assume a video duration unless one is provided.
-- Use natural English, not technical codes.
-- Prefer positive precise descriptions over negative keyword lists.`;
-
-      const parts = [];
-      if (clip.actionDescription) parts.push(`Image Description: ${clip.actionDescription}`);
-      if (clip.notes?.action) parts.push(`Action Intent: ${clip.notes.action}`);
-      if (clip.notes?.dialogue) parts.push(`Dialogue/Lyrics: ${clip.notes.dialogue}`);
-      if (clip.notes?.sound) parts.push(`Sound Notes: ${clip.notes.sound}`);
-      if (clip.duration) parts.push(`Duration: ${clip.duration.toFixed(2)} seconds`);
-      const userPrompt = parts.join('\n\n');
+      const userPrompt = buildMiniMaxH3UserPrompt(clip, project.frameRate || 24);
 
       const result = await ipcRenderer.invoke('llm-generate', { systemPrompt, userPrompt });
 
       if (result.success) {
         const expandedText = String(result.text || '').trim();
         handleUpdateProject(project.id, (prev: BeatProject) => {
-          const updated = prev.clips?.map(c => c.id === clipId ? { 
-            ...c, 
+          const updated = prev.clips?.map(candidateClip => candidateClip.id === clipId ? { 
+            ...candidateClip, 
             aiExpandedPrompt: expandedText,
             isExpanding: false 
-          } : c);
+          } : candidateClip);
           return { clips: updated };
         });
         addLog(`Successfully expanded prompt for "${clip.label}"`);
@@ -681,10 +819,11 @@ RESTRICTIONS:
         throw new Error(result.error || "Unknown LLM error");
       }
 
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const error_message = err instanceof Error ? err.message : String(err);
       console.error('Reword Error:', err);
-      addLog(`Error expanding prompt: ${err.message}`);
-      return { success: false, error: err.message };
+      addLog(`Error expanding prompt: ${error_message}`);
+      return { success: false, error: error_message };
     } finally {
       handleUpdateProject(project.id, (prev: BeatProject) => {
         const updated = prev.clips?.map(c => c.id === clipId ? { ...c, isExpanding: false } : c);
@@ -717,7 +856,12 @@ RESTRICTIONS:
    */
   useEffect(() => {
     const processNextVino = async () => {
-      if (isVinoProcessing) return;
+      if (isVinoProcessing || isComfyProcessing) return;
+
+      // WHAT: Check if any ComfyUI video tasks are currently queued or actively rendering.
+      // WHY: If ComfyUI video jobs are in the queue, keep the LLM unloaded to conserve 100% GPU VRAM.
+      const isComfyVideoActive = videoQueue.some(item => item.type === 'video' && (item.status === 'processing' || item.status === 'queued'));
+      if (isComfyVideoActive) return;
 
       const nextItem = videoQueue.find(item => item.status === 'queued' && item.type === 'reword');
       if (!nextItem) return;
@@ -729,7 +873,7 @@ RESTRICTIONS:
 
       // Update clip state
       handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
-        const updatedClips = prev.clips?.map((c: any) => 
+        const updatedClips = prev.clips?.map((c: VideoClip) => 
           c.id === nextItem.clipId ? { ...c, isExpanding: true } : c
         );
         return { clips: updatedClips };
@@ -746,7 +890,7 @@ RESTRICTIONS:
     };
 
     processNextVino();
-  }, [videoQueue, isVinoProcessing, handleRewordTask]);
+  }, [videoQueue, isVinoProcessing, handleRewordTask, handleUpdateProject]);
 
   /**
    * COMFYUI QUEUE PROCESSOR (GPU):
@@ -780,33 +924,38 @@ RESTRICTIONS:
 
       // Update clip state
       handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
-        const updatedClips = prev.clips?.map((c: any) => {
+        const updatedClips = prev.clips?.map((c: VideoClip) => {
           if (c.id === nextItem.clipId) {
-            return nextItem.type === 'description' ? { ...c, isDescribing: true } : { ...c, status: 'generating' as const };
+            return nextItem.type === 'description' 
+              ? { ...c, isDescribing: true, isDescribingSlot: nextItem.imageSlot || 'startImagePath' } 
+              : { ...c, status: 'generating' as const };
           }
           return c;
         });
         return { clips: updatedClips };
       });
 
-      // Health Check
-      const isAlive = await checkComfyConnection();
-      if (!isAlive) {
-        addLog("Queue paused: ComfyUI connection lost.");
-        setIsQueuePaused(true);
-        setVideoQueue(prev => prev.map(item => item.id === nextItem.id ? { ...item, status: 'queued' } : item));
-        
-        handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
-          const resetClips = prev.clips?.map(c => 
-            c.id === nextItem.clipId 
-              ? (nextItem.type === 'description' ? { ...c, isDescribing: false } : { ...c, status: 'queued' as const })
-              : c
-          );
-          return { clips: resetClips };
-        });
+      // Health Check: only enforce ComfyUI connection for video generation or ComfyUI vision tasks
+      const requiresComfyConnection = nextItem.type !== 'description' || llmProvider !== 'llama-server';
+      if (requiresComfyConnection) {
+        const isAlive = await checkComfyConnection();
+        if (!isAlive) {
+          addLog("Queue paused: ComfyUI connection lost.");
+          setIsQueuePaused(true);
+          setVideoQueue(prev => prev.map(item => item.id === nextItem.id ? { ...item, status: 'queued' } : item));
+          
+          handleUpdateProject(nextItem.projectId, (prev: BeatProject) => {
+            const resetClips = prev.clips?.map(c => 
+              c.id === nextItem.clipId 
+                ? (nextItem.type === 'description' ? { ...c, isDescribing: false, isDescribingSlot: null } : { ...c, status: 'queued' as const })
+                : c
+            );
+            return { clips: resetClips };
+          });
 
-        setIsComfyProcessing(false);
-        return;
+          setIsComfyProcessing(false);
+          return;
+        }
       }
 
       const result = nextItem.type === 'description' 
@@ -822,16 +971,15 @@ RESTRICTIONS:
     };
 
     processNextComfy();
-  }, [videoQueue, isQueuePaused, isComfyProcessing, handleGenerateVideo, handleGenerateDescription]);
+  }, [videoQueue, isComfyProcessing, isQueuePaused, handleGenerateVideo, handleGenerateDescription, handleUpdateProject]);
 
   const handleCreateBlankProject = async (projectName?: string) => {
     let initialOutputDir = undefined;
     try {
-      // @ts-ignore
-      const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+      const ipcRenderer = getElectronIpc();
       if (ipcRenderer) {
         const configRes = await ipcRenderer.invoke('get-config');
-        if (configRes.success && configRes.config.projectOutputDir) {
+        if (configRes.success && configRes.config?.projectOutputDir) {
           initialOutputDir = configRes.config.projectOutputDir;
         }
       }
@@ -841,10 +989,11 @@ RESTRICTIONS:
 
     if (!initialOutputDir) {
       try {
-        // @ts-ignore
-        const path = window.require('path');
-        initialOutputDir = path.resolve('./output');
-      } catch (e) { }
+        const path = getNodePath();
+        if (path) initialOutputDir = path.resolve('./output');
+      } catch {
+        /* ignore fallback error */
+      }
     }
 
     const finalName = projectName || `Blank Project ${new Date().toLocaleDateString().replace(/\//g, '-')}`;
@@ -860,15 +1009,14 @@ RESTRICTIONS:
     return newProject;
   };
 
-  const handleCreateProject = (file: File, preferredOutputDir?: string) => {
+  const handleCreateProject = (file: FileWithPath, preferredOutputDir?: string) => {
     // Try to calculate an initial outputDir if possible (useful for Electron)
     let initialOutputDir = preferredOutputDir;
     if (!initialOutputDir) {
       try {
-        // @ts-ignore
-        const path = window.require ? window.require('path') : null;
-        if (path && (file as any).path) {
-          initialOutputDir = path.dirname((file as any).path);
+        const path = getNodePath();
+        if (path && file.path) {
+          initialOutputDir = path.dirname(file.path);
         }
       } catch (e) {
         console.warn("Could not determine default output dir during project creation", e);
@@ -877,7 +1025,7 @@ RESTRICTIONS:
 
     const newProject = saveProject({
       name: file.name.replace(/\.[^/.]+$/, ""), // Remove extension
-      audioPath: (file as any).path, // Temporary absolute path
+      audioPath: file.path, // Temporary absolute path
       audioFileName: file.name,
       frameRate: 20, // Default to 20 fps for cleaner math in LTX
       stemType: 'master', // Default
@@ -886,26 +1034,26 @@ RESTRICTIONS:
     });
 
     // Post-process project bundle
-    if (newProject.outputDir && (file as any).path) {
+    if (newProject.outputDir && file.path) {
       try {
-        // @ts-ignore
-        const fs = window.require('fs');
-        // @ts-ignore
-        const path = window.require('path');
-        const sourceDir = path.join(newProject.outputDir, 'source');
-        if (!fs.existsSync(sourceDir)) {
-          fs.mkdirSync(sourceDir, { recursive: true });
+        const fs = getNodeFs();
+        const path = getNodePath();
+        if (fs && path) {
+          const sourceDir = path.join(newProject.outputDir, 'source');
+          if (!fs.existsSync(sourceDir)) {
+            fs.mkdirSync(sourceDir, { recursive: true });
+          }
+
+          const safe_audio_filename = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const destination_audio_path = path.join(sourceDir, safe_audio_filename);
+          fs.copyFileSync(file.path, destination_audio_path);
+
+          const relative_audio_path = `./source/${safe_audio_filename}`;
+          handleUpdateProject(newProject.id, { audioPath: relative_audio_path });
+          newProject.audioPath = relative_audio_path;
         }
-
-        const safeAudioName = file.name.replace(/[^a-zA-Z0-9-_\.]/g, '_');
-        const destPath = path.join(sourceDir, safeAudioName);
-        fs.copyFileSync((file as any).path, destPath);
-
-        const relativePath = `./source/${safeAudioName}`;
-        handleUpdateProject(newProject.id, { audioPath: relativePath });
-        newProject.audioPath = relativePath;
-      } catch (e) {
-        console.error("Failed to copy source audio into the project bundle:", e);
+      } catch (audio_copy_error) {
+        console.error("Failed to copy source audio into the project bundle:", audio_copy_error);
       }
     }
 
@@ -921,36 +1069,40 @@ RESTRICTIONS:
       }
 
       try {
-        const { ipcRenderer } = window.require('electron');
-        const path = window.require('path');
-        const imagesDir = path.join(activeProject.outputDir, 'images');
+        const ipcRenderer = getElectronIpc();
+        const path_module = getNodePath();
+        if (!ipcRenderer || !path_module) {
+          addLog('Electron runtime unavailable for picking images.');
+          return;
+        }
+        const imagesDir = path_module.join(activeProject.outputDir, 'images');
 
-        const filePath = await ipcRenderer.invoke('open-image-dialog', imagesDir);
+        const filePath = (await ipcRenderer.invoke('open-image-dialog', imagesDir)) as unknown as string | null;
 
         if (filePath) {
           handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
-            const updatedClips = prevProject.clips?.map(c => c.id === clipId ? { ...c, [field]: filePath } : c);
+            const updatedClips = prevProject.clips?.map(clip_item => clip_item.id === clipId ? { ...clip_item, [field]: filePath } : clip_item);
             return { clips: updatedClips };
           });
           addLog(`Updated ${field === 'startImagePath' ? 'Start' : 'End'} Image for clip.`);
         }
-      } catch (err) {
-        console.error("Failed to pick image:", err);
+      } catch (caught_error) {
+        console.error("Failed to pick image:", caught_error);
         addLog("Error opening image dialog.");
       }
     };
 
     const onCopyImageFromNext = async (clipId: string, field: 'startImagePath' | 'endImagePath') => {
       if (!activeProject?.clips) return;
-      const currentClip = activeProject.clips.find(c => c.id === clipId);
+      const currentClip = activeProject.clips.find(clip_item => clip_item.id === clipId);
       if (!currentClip) return;
       const nextClip = activeProject.clips
-        .filter(c => c.startTime > currentClip.startTime)
-        .sort((a, b) => a.startTime - b.startTime)[0];
+        .filter(clip_item => clip_item.startTime > currentClip.startTime)
+        .sort((earlier_clip, later_clip) => earlier_clip.startTime - later_clip.startTime)[0];
       if (nextClip?.startImagePath) {
         handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
-          const updatedClips = (prevProject.clips || []).map(c => 
-            c.id === clipId ? { ...c, [field]: nextClip.startImagePath } : c
+          const updatedClips = (prevProject.clips || []).map(clip_item => 
+            clip_item.id === clipId ? { ...clip_item, [field]: nextClip.startImagePath } : clip_item
           );
           return { ...prevProject, clips: updatedClips };
         });
@@ -963,12 +1115,12 @@ RESTRICTIONS:
     const onCopyEndFrameFromPrev = async (clipId: string, exactBeat: boolean = false): Promise<void> => {
       if (!activeProject?.clips || !activeProject.outputDir) return;
 
-      const currentClip = activeProject.clips.find(c => c.id === clipId);
+      const currentClip = activeProject.clips.find(clip_item => clip_item.id === clipId);
       if (!currentClip) return;
       
       const prevClip = activeProject.clips
-        .filter(c => c.startTime < currentClip.startTime)
-        .sort((a, b) => b.startTime - a.startTime)[0];
+        .filter(clip_item => clip_item.startTime < currentClip.startTime)
+        .sort((earlier_clip, later_clip) => later_clip.startTime - earlier_clip.startTime)[0];
 
       if (!prevClip || !prevClip.videoPath) {
         addLog("No generated video found in the preceding clip.");
@@ -978,8 +1130,12 @@ RESTRICTIONS:
       addLog(`Extracting end frame from previous clip's video (${exactBeat ? 'exact beat' : 'video end'})...`);
 
       try {
-        const { ipcRenderer } = window.require('electron');
-        const infoResult = await ipcRenderer.invoke('get-video-info', prevClip.videoPath);
+        const ipcRenderer = getElectronIpc();
+        if (!ipcRenderer) {
+          addLog('Electron runtime unavailable.');
+          return;
+        }
+        const infoResult = (await ipcRenderer.invoke('get-video-info', prevClip.videoPath)) as { success: boolean; info?: { duration?: number } };
         
         let targetTime = prevClip.duration;
         
@@ -999,17 +1155,17 @@ RESTRICTIONS:
             }
         }
 
-        const result = await ipcRenderer.invoke('save-video-frame', {
+        const result = (await ipcRenderer.invoke('save-video-frame', {
             filePath: prevClip.videoPath,
             time: targetTime,
             outputDir: activeProject.outputDir,
             filename: `endframe_${prevClip.id}_${Date.now()}.png`
-        });
+        })) as { success: boolean; framePath?: string; error?: string };
 
         if (result.success && result.framePath) {
             handleUpdateProject(activeProject.id, (prevProject: BeatProject) => {
-                const updatedClips = (prevProject.clips || []).map(c => 
-                    c.id === clipId ? { ...c, startImagePath: result.framePath } : c
+                const updatedClips = (prevProject.clips || []).map(clip_item => 
+                    clip_item.id === clipId ? { ...clip_item, startImagePath: result.framePath } : clip_item
                 );
                 return { ...prevProject, clips: updatedClips };
             });
@@ -1017,27 +1173,29 @@ RESTRICTIONS:
         } else {
             addLog(`Failed to extract end frame: ${result.error}`);
         }
-      } catch (err: any) {
-          console.error("Error extracting end frame:", err);
+      } catch (caught_error: unknown) {
+          console.error("Error extracting end frame:", caught_error);
           addLog("Error extracting end frame.");
       }
     };
 
-    const onGetImageDescription = async (clipId: string): Promise<void> => {
-      if (!activeProject?.clips || !comfyConnected) return;
+    const onGetImageDescription = async (clipId: string, slot: 'startImagePath' | 'endImagePath' = 'startImagePath'): Promise<void> => {
+      const isVisionCapable = (llmProvider === 'llama-server') || comfyConnected;
+      if (!activeProject?.clips || !isVisionCapable) return;
       
-      const clip = activeProject.clips.find(c => c.id === clipId);
-      if (!clip || !clip.startImagePath) {
-        addLog("No start image to describe.");
+      const clip = activeProject.clips.find(clip_item => clip_item.id === clipId);
+      const targetImagePath = slot === 'endImagePath' ? clip?.endImagePath : clip?.startImagePath;
+      if (!clip || !targetImagePath) {
+        addLog(`No image found in ${slot === 'endImagePath' ? 'Image 2' : 'Image 1'} to describe.`);
         return;
       }
 
-      handleAddToQueue(clip.id, activeProject.id, clip.label, 'description');
+      handleAddToQueue(clip.id, activeProject.id, clip.label, 'description', slot);
     };
 
     const onGenerateVideo = async (clipId: string): Promise<void> => {
       if (activeProject) {
-        const clip = activeProject.clips?.find(c => c.id === clipId);
+        const clip = activeProject.clips?.find(clip_item => clip_item.id === clipId);
         handleAddToQueue(clipId, activeProject.id, clip?.label || 'Untitled Clip');
       }
     };
@@ -1050,10 +1208,15 @@ RESTRICTIONS:
         return <SettingsModule onSave={() => { refreshProjects(); refreshGlobalConfig(); }} />;
       case 'workflow-analyzer':
         return <WorkflowAnalyzerModule onStatusChange={addLog} />;
+      case 'mcp-control':
+        return <McpControlModule onStatusChange={addLog} />;
       case 'storyboard':
         return (
           <StoryboardModule
             activeProject={activeProject}
+            projects={projects}
+            onSelectProject={handleSelectProject}
+            onCreateBlankProject={handleCreateBlankProject}
             onUpdateProject={handleUpdateProject}
             onGenerateVideo={onGenerateVideo}
             onPickImage={onPickImage}

@@ -37,31 +37,29 @@ const StoryboardPaddingCard: React.FC<StoryboardPaddingCardProps> = ({ startTime
                         </div>
                         <p className="text-[9px] font-bold text-gray-700 uppercase tracking-widest group-hover:text-indigo-500 transition-colors">Empty Slot</p>
                         
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all" onClick={(e) => e.stopPropagation()}>
+                        {/* WHAT: Optional duration input enabling directors to specify the exact length of the new shot. */}
+                        {/* WHY: Allows customizing the card duration while defaulting to 6.0 seconds. Pressing Enter also submits. */}
+                        <div 
+                            className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all" 
+                            onClick={(click_event) => click_event.stopPropagation()}
+                        >
                             <input 
                                 type="number" 
                                 value={inputDuration} 
-                                onChange={(e) => setInputDuration(e.target.value)}
+                                onChange={(change_event) => setInputDuration(change_event.target.value)}
+                                onKeyDown={(keyboard_event) => {
+                                    if (keyboard_event.key === 'Enter') {
+                                        keyboard_event.stopPropagation();
+                                        handleAddClick();
+                                    }
+                                }}
                                 className="w-12 bg-black/60 border border-gray-700 rounded px-1 py-0.5 text-[10px] text-center focus:outline-none focus:border-indigo-500 text-indigo-300 font-mono"
                                 step="0.1"
                                 min="0.1"
+                                title="Target duration in seconds"
                             />
                             <span className="text-[9px] text-gray-500 font-bold uppercase">sec</span>
                         </div>
-
-                        <AppTooltip content="Create a new shot to fill this temporal gap." placement="top" offset={[0, 48]}>
-                            <span>
-                                <button 
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleAddClick();
-                                    }}
-                                    className="mt-1 bg-gray-800/50 hover:bg-indigo-600 text-gray-500 hover:text-white px-4 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-all"
-                                >
-                                    Add Card
-                                </button>
-                            </span>
-                        </AppTooltip>
                     </div>
                 </div>
             </span>

@@ -2,27 +2,62 @@ import React, { useState, useEffect } from 'react';
 import DropZone from '../components/DropZone';
 import CollapsibleCard from '../components/CollapsibleCard';
 
+// WHAT: Callback props for the WorkflowAnalyzerModule.
+// WHY: Allows the parent container to display status banners or toast notifications when
+// workflows are parsed or encountered an error.
 interface WorkflowAnalyzerModuleProps {
-    onStatusChange?: (msg: string) => void;
+    onStatusChange?: (status_message: string) => void;
 }
 
+// WHAT: Structured representation of a parsed ComfyUI workflow node.
+// WHY: Standardizes both ComfyUI web format and ComfyUI API prompt graph nodes into a uniform view.
 interface ParsedNode {
     id: string;
     type: string;
     title: string;
-    inputs: Record<string, any>;
+    inputs: Record<string, unknown>;
     isInput: boolean;
     isOutput: boolean;
 }
 
+// WHAT: Description of a discovered local JSON workflow file on disk.
+// WHY: Displayed in the sidebar to enable quick loading of templates or test workflows.
 interface SavedWorkflow {
     name: string;
     path: string;
 }
 
-// Access Node.js APIs via Electron's nodeIntegration
-const fs = (window as any).require ? (window as any).require('fs') : null;
-const nodePath = (window as any).require ? (window as any).require('path') : null;
+// WHAT: Minimal duck-typed interface for Node.js fs and path in Electron environment.
+// WHY: Avoids strict Node import errors in client Vite build while allowing native filesystem access in desktop runtime.
+interface NodeFsModule {
+    existsSync: (file_path: string) => boolean;
+    readdirSync: (directory_path: string) => string[];
+    readFileSync: (file_path: string, encoding: string) => string;
+}
+
+interface NodePathModule {
+    resolve: (relative_path: string) => string;
+    join: (...path_segments: string[]) => string;
+}
+
+interface ElectronWindowExtended {
+    require?: (module_name: string) => unknown;
+}
+
+const electron_window = window as unknown as ElectronWindowExtended;
+const node_fs_module: NodeFsModule | null = electron_window.require ? (electron_window.require('fs') as NodeFsModule) : null;
+const node_path_module: NodePathModule | null = electron_window.require ? (electron_window.require('path') as NodePathModule) : null;
+
+// WHAT: Raw node definition inside ComfyUI API prompt graphs or web export JSON files.
+// WHY: Provides type-safe access to class_type, _meta titles, and inputs.
+interface ComfyWorkflowRawNode {
+    id?: string;
+    class_type?: string;
+    _meta?: {
+        title?: string;
+    };
+    inputs?: Record<string, unknown>;
+}
 
 const WorkflowAnalyzerModule: React.FC<WorkflowAnalyzerModuleProps> = ({ onStatusChange }) => {
     const [fileName, setFileName] = useState<string | null>(null);
@@ -31,91 +66,119 @@ const WorkflowAnalyzerModule: React.FC<WorkflowAnalyzerModuleProps> = ({ onStatu
     const [outputNodes, setOutputNodes] = useState<ParsedNode[]>([]);
     const [savedWorkflows, setSavedWorkflows] = useState<SavedWorkflow[]>([]);
 
+    // WHAT: Scan local filesystem for pre-existing ComfyUI workflows on mount.
+    // WHY: Enables users to quickly pick existing templates without manually dragging them in each time.
     useEffect(() => {
-        if (!fs || !nodePath) return;
+        if (!node_fs_module || !node_path_module) return;
         try {
             // Try ./workflows first, fall back to ./comfyui_workflows
-            let dir = nodePath.resolve('./workflows');
-            if (!fs.existsSync(dir)) {
-                dir = nodePath.resolve('./comfyui_workflows');
+            let target_workflow_directory_path = node_path_module.resolve('./workflows');
+            if (!node_fs_module.existsSync(target_workflow_directory_path)) {
+                target_workflow_directory_path = node_path_module.resolve('./comfyui_workflows');
             }
-            if (fs.existsSync(dir)) {
-                const files: string[] = fs.readdirSync(dir);
-                const jsonFiles = files
-                    .filter((f) => f.endsWith('.json'))
-                    .map((f) => ({ name: f.replace('.json', ''), path: nodePath.join(dir, f) }));
-                setSavedWorkflows(jsonFiles);
+            if (node_fs_module.existsSync(target_workflow_directory_path)) {
+                const workflow_file_names: string[] = node_fs_module.readdirSync(target_workflow_directory_path);
+                const saved_workflow_entries: SavedWorkflow[] = workflow_file_names
+                    .filter((file_name) => file_name.endsWith('.json'))
+                    .map((file_name) => ({
+                        name: file_name.replace('.json', ''),
+                        path: node_path_module!.join(target_workflow_directory_path, file_name),
+                    }));
+
+                Promise.resolve().then(() => {
+                    setSavedWorkflows(saved_workflow_entries);
+                });
             }
-        } catch (err) {
-            console.warn('Failed to read workflows directory:', err);
+        } catch (error_instance) {
+            console.warn('Failed to read workflows directory:', error_instance);
         }
     }, []);
 
-    const parseJsonContent = (text: string, sourceName: string) => {
-        let data: any;
+    // WHAT: Parses ComfyUI workflow JSON strings into categorized input, output, and processing nodes.
+    // WHY: ComfyUI exports have two distinct shapes: Web GUI format (has a .nodes array) and API prompt format
+    // (keyed dictionary of node objects). This normalizer unifies both formats and tags inputs/outputs.
+    const parseJsonContent = (workflow_file_text_content: string, source_name: string) => {
+        let parsed_workflow_json_data: unknown;
         try {
-            data = JSON.parse(text);
+            parsed_workflow_json_data = JSON.parse(workflow_file_text_content);
         } catch {
             if (onStatusChange) onStatusChange('Error parsing JSON. Is it a valid ComfyUI API export?');
             return;
         }
 
-        let nodesObj = data;
-        if (data.nodes && Array.isArray(data.nodes)) {
-            if (onStatusChange) onStatusChange('Warning: This looks like a ComfyUI Web format (not API export). Results may be incomplete.');
-            nodesObj = {};
-            data.nodes.forEach((n: any) => { nodesObj[n.id ?? Object.keys(nodesObj).length] = n; });
+        if (typeof parsed_workflow_json_data !== 'object' || parsed_workflow_json_data === null) {
+            if (onStatusChange) onStatusChange('Invalid JSON content: Root must be an object.');
+            return;
         }
 
-        const parsedNodes: ParsedNode[] = [];
-        const inputs: ParsedNode[] = [];
-        const outputs: ParsedNode[] = [];
+        let workflow_nodes_record: Record<string, ComfyWorkflowRawNode> = parsed_workflow_json_data as Record<string, ComfyWorkflowRawNode>;
 
-        for (const [key, node] of Object.entries(nodesObj)) {
-            const type = (node as any).class_type || 'Unknown';
-            const metaTitle: string = (node as any)._meta?.title || type;
-            const titleLower = metaTitle.toLowerCase();
-            const isInput = titleLower.includes('[input]');
-            const isOutput = titleLower.includes('[output]');
+        // Handle ComfyUI Web format (which stores nodes in a .nodes array instead of top-level keys)
+        const possible_web_format = parsed_workflow_json_data as { nodes?: ComfyWorkflowRawNode[] };
+        if (Array.isArray(possible_web_format.nodes)) {
+            if (onStatusChange) onStatusChange('Warning: This looks like a ComfyUI Web format (not API export). Results may be incomplete.');
+            workflow_nodes_record = {};
+            possible_web_format.nodes.forEach((workflow_node_item, fallback_index) => {
+                const node_key = workflow_node_item.id ?? String(fallback_index);
+                workflow_nodes_record[node_key] = workflow_node_item;
+            });
+        }
 
-            const pNode: ParsedNode = {
-                id: key,
-                type,
-                title: metaTitle,
-                inputs: (node as any).inputs || {},
-                isInput,
-                isOutput,
+        const parsed_nodes_list: ParsedNode[] = [];
+        const detected_inputs_list: ParsedNode[] = [];
+        const detected_outputs_list: ParsedNode[] = [];
+
+        for (const [node_identifier, node_definition] of Object.entries(workflow_nodes_record)) {
+            const class_type_identifier = node_definition.class_type || 'Unknown';
+            const metadata_title_string: string = node_definition._meta?.title || class_type_identifier;
+            const lower_cased_title = metadata_title_string.toLowerCase();
+            const is_input_node = lower_cased_title.includes('[input]');
+            const is_output_node = lower_cased_title.includes('[output]');
+
+            const parsed_workflow_node: ParsedNode = {
+                id: node_identifier,
+                type: class_type_identifier,
+                title: metadata_title_string,
+                inputs: node_definition.inputs || {},
+                isInput: is_input_node,
+                isOutput: is_output_node,
             };
 
-            parsedNodes.push(pNode);
-            if (isInput) inputs.push(pNode);
-            if (isOutput) outputs.push(pNode);
+            parsed_nodes_list.push(parsed_workflow_node);
+            if (is_input_node) detected_inputs_list.push(parsed_workflow_node);
+            if (is_output_node) detected_outputs_list.push(parsed_workflow_node);
         }
 
-        setRawNodes(parsedNodes);
-        setInputNodes(inputs);
-        setOutputNodes(outputs);
-        setFileName(sourceName);
+        setRawNodes(parsed_nodes_list);
+        setInputNodes(detected_inputs_list);
+        setOutputNodes(detected_outputs_list);
+        setFileName(source_name);
 
-        if (onStatusChange) onStatusChange(`Parsed "${sourceName}" — ${inputs.length} inputs, ${outputs.length} outputs, ${parsedNodes.length} total nodes.`);
-    };
-
-    const handleFileDrop = async (file: File) => {
-        try {
-            const text = await file.text();
-            parseJsonContent(text, file.name);
-        } catch (err) {
-            if (onStatusChange) onStatusChange(`Failed to read dropped file: ${err}`);
+        if (onStatusChange) {
+            onStatusChange(`Parsed "${source_name}" — ${detected_inputs_list.length} inputs, ${detected_outputs_list.length} outputs, ${parsed_nodes_list.length} total nodes.`);
         }
     };
 
-    const handleLoadSavedWorkflow = (wf: SavedWorkflow) => {
-        if (!fs) return;
+    // WHAT: Handles drag-and-drop workflow file ingestion.
+    // WHY: Provides frictionless workflow loading without file pickers.
+    const handleFileDrop = async (dropped_workflow_file: File) => {
         try {
-            const text: string = fs.readFileSync(wf.path, 'utf8');
-            parseJsonContent(text, wf.name + '.json');
-        } catch (err) {
-            if (onStatusChange) onStatusChange(`Failed to read ${wf.name}: ${err}`);
+            const workflow_text = await dropped_workflow_file.text();
+            parseJsonContent(workflow_text, dropped_workflow_file.name);
+        } catch (error_instance) {
+            if (onStatusChange) onStatusChange(`Failed to read dropped file: ${error_instance}`);
+        }
+    };
+
+    // WHAT: Reads a saved workflow JSON file from local disk.
+    // WHY: Enables clicking sidebar workflow items to inspect their node structure.
+    const handleLoadSavedWorkflow = (saved_workflow: SavedWorkflow) => {
+        if (!node_fs_module) return;
+        try {
+            const workflow_text: string = node_fs_module.readFileSync(saved_workflow.path, 'utf8');
+            parseJsonContent(workflow_text, saved_workflow.name + '.json');
+        } catch (error_instance) {
+            if (onStatusChange) onStatusChange(`Failed to read ${saved_workflow.name}: ${error_instance}`);
         }
     };
 
@@ -133,7 +196,7 @@ const WorkflowAnalyzerModule: React.FC<WorkflowAnalyzerModuleProps> = ({ onStatu
                 <div className="lg:col-span-3">
                     <CollapsibleCard title="Load Workflow" defaultOpen={true}>
                         <DropZone
-                            onFilesDropped={(files: File[]) => handleFileDrop(files[0])}
+                            onFilesDropped={(dropped_files_list: File[]) => handleFileDrop(dropped_files_list[0])}
                             accept=".json,application/json"
                             label={fileName ? `✅ Loaded: ${fileName}` : 'Drop ComfyUI API JSON File Here'}
                         />
@@ -145,17 +208,17 @@ const WorkflowAnalyzerModule: React.FC<WorkflowAnalyzerModuleProps> = ({ onStatu
                         <h3 className="text-sm font-bold text-gray-300 mb-1 border-b border-gray-700 pb-2">📂 Local Workflows</h3>
                         {savedWorkflows.length > 0 ? (
                             <div className="flex flex-col gap-1 overflow-y-auto max-h-56 scrollbar">
-                                {savedWorkflows.map(wf => (
+                                {savedWorkflows.map(saved_workflow => (
                                     <button
-                                        key={wf.path}
-                                        onClick={() => handleLoadSavedWorkflow(wf)}
-                                        title={wf.path}
-                                        className={`text-left px-3 py-2 text-xs rounded transition-colors ${fileName === wf.name + '.json'
+                                        key={saved_workflow.path}
+                                        onClick={() => handleLoadSavedWorkflow(saved_workflow)}
+                                        title={saved_workflow.path}
+                                        className={`text-left px-3 py-2 text-xs rounded transition-colors ${fileName === saved_workflow.name + '.json'
                                                 ? 'bg-indigo-600/30 text-indigo-200 border border-indigo-500/40'
                                                 : 'bg-gray-800 hover:bg-gray-700 text-gray-300 border border-transparent'
                                             }`}
                                     >
-                                        📄 {wf.name}
+                                        📄 {saved_workflow.name}
                                     </button>
                                 ))}
                             </div>
@@ -179,19 +242,19 @@ const WorkflowAnalyzerModule: React.FC<WorkflowAnalyzerModuleProps> = ({ onStatu
                                 <p className="text-gray-500 text-sm italic">No nodes tagged <code>[input]</code>.</p>
                             ) : (
                                 <div className="flex flex-col gap-3">
-                                    {inputNodes.map(node => (
-                                        <div key={node.id} className="bg-indigo-900/20 border border-indigo-700/30 p-3 rounded-lg">
+                                    {inputNodes.map(parsed_input_node => (
+                                        <div key={parsed_input_node.id} className="bg-indigo-900/20 border border-indigo-700/30 p-3 rounded-lg">
                                             <div className="flex justify-between items-start mb-1">
-                                                <h4 className="font-bold text-indigo-300 text-sm">{node.title}</h4>
-                                                <span className="text-[10px] bg-indigo-950 px-1.5 py-0.5 rounded text-indigo-400 font-mono ml-2 shrink-0">#{node.id}</span>
+                                                <h4 className="font-bold text-indigo-300 text-sm">{parsed_input_node.title}</h4>
+                                                <span className="text-[10px] bg-indigo-950 px-1.5 py-0.5 rounded text-indigo-400 font-mono ml-2 shrink-0">#{parsed_input_node.id}</span>
                                             </div>
-                                            <p className="text-xs text-indigo-200/60 font-mono mb-2">{node.type}</p>
-                                            {Object.keys(node.inputs).length > 0 && (
+                                            <p className="text-xs text-indigo-200/60 font-mono mb-2">{parsed_input_node.type}</p>
+                                            {Object.keys(parsed_input_node.inputs).length > 0 && (
                                                 <ul className="text-xs text-indigo-100/70 list-disc list-inside space-y-0.5 ml-1">
-                                                    {Object.entries(node.inputs).map(([k, v]) => (
-                                                        <li key={k} title={String(v)}>
-                                                            <span className="font-medium">{k}</span>:{' '}
-                                                            {typeof v === 'object' ? '[linked]' : String(v).substring(0, 50)}
+                                                    {Object.entries(parsed_input_node.inputs).map(([input_property_name, input_property_value]) => (
+                                                        <li key={input_property_name} title={String(input_property_value)}>
+                                                            <span className="font-medium">{input_property_name}</span>:{' '}
+                                                            {typeof input_property_value === 'object' ? '[linked]' : String(input_property_value).substring(0, 50)}
                                                         </li>
                                                     ))}
                                                 </ul>
@@ -208,13 +271,13 @@ const WorkflowAnalyzerModule: React.FC<WorkflowAnalyzerModuleProps> = ({ onStatu
                                 <p className="text-gray-500 text-sm italic">No nodes tagged <code>[output]</code>.</p>
                             ) : (
                                 <div className="flex flex-col gap-3">
-                                    {outputNodes.map(node => (
-                                        <div key={node.id} className="bg-green-900/20 border border-green-700/30 p-3 rounded-lg">
+                                    {outputNodes.map(parsed_output_node => (
+                                        <div key={parsed_output_node.id} className="bg-green-900/20 border border-green-700/30 p-3 rounded-lg">
                                             <div className="flex justify-between items-start mb-1">
-                                                <h4 className="font-bold text-green-300 text-sm">{node.title}</h4>
-                                                <span className="text-[10px] bg-green-950 px-1.5 py-0.5 rounded text-green-400 font-mono ml-2 shrink-0">#{node.id}</span>
+                                                <h4 className="font-bold text-green-300 text-sm">{parsed_output_node.title}</h4>
+                                                <span className="text-[10px] bg-green-950 px-1.5 py-0.5 rounded text-green-400 font-mono ml-2 shrink-0">#{parsed_output_node.id}</span>
                                             </div>
-                                            <p className="text-xs text-green-200/60 font-mono">{node.type}</p>
+                                            <p className="text-xs text-green-200/60 font-mono">{parsed_output_node.type}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -235,15 +298,15 @@ const WorkflowAnalyzerModule: React.FC<WorkflowAnalyzerModuleProps> = ({ onStatu
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {rawNodes.map(node => (
-                                        <tr key={node.id} className="border-b border-gray-800/60 hover:bg-white/5 transition-colors">
-                                            <td className="p-2 font-mono text-gray-500 text-xs">{node.id}</td>
-                                            <td className="p-2 text-gray-200">{node.title}</td>
-                                            <td className="p-2 text-gray-400 text-xs font-mono">{node.type}</td>
+                                    {rawNodes.map(table_row_node => (
+                                        <tr key={table_row_node.id} className="border-b border-gray-800/60 hover:bg-white/5 transition-colors">
+                                            <td className="p-2 font-mono text-gray-500 text-xs">{table_row_node.id}</td>
+                                            <td className="p-2 text-gray-200">{table_row_node.title}</td>
+                                            <td className="p-2 text-gray-400 text-xs font-mono">{table_row_node.type}</td>
                                             <td className="p-2 text-right">
                                                 <div className="flex justify-end gap-1">
-                                                    {node.isInput && <span className="bg-indigo-900 text-indigo-200 text-[10px] px-1.5 py-0.5 rounded">INPUT</span>}
-                                                    {node.isOutput && <span className="bg-green-900 text-green-200 text-[10px] px-1.5 py-0.5 rounded">OUTPUT</span>}
+                                                    {table_row_node.isInput && <span className="bg-indigo-900 text-indigo-200 text-[10px] px-1.5 py-0.5 rounded">INPUT</span>}
+                                                    {table_row_node.isOutput && <span className="bg-green-900 text-green-200 text-[10px] px-1.5 py-0.5 rounded">OUTPUT</span>}
                                                 </div>
                                             </td>
                                         </tr>
@@ -260,3 +323,4 @@ const WorkflowAnalyzerModule: React.FC<WorkflowAnalyzerModuleProps> = ({ onStatu
 };
 
 export default WorkflowAnalyzerModule;
+

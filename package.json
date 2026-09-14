@@ -15,10 +15,14 @@
     "electron:compile": "tsc -p tsconfig.electron.json && node -e \"require('fs').writeFileSync('dist-electron/package.json','{\\\"type\\\":\\\"commonjs\\\"}\\n')\"",
     "electron:dev": "npm run electron:compile && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 concurrently -k \"wait-on http://localhost:5173 && electron .\" \"vite\"",
     "electron:build": "npm run build && npm run electron:compile && electron-builder",
+    "mcp": "node scripts/resolver-mcp-server.mjs",
+    "test:mcp": "node scripts/test-mcp-server.mjs",
+    "test:gbnf": "npx tsx scripts/test-gbnf-skills.mjs",
     "start": "npm run electron:dev"
   },
   "dependencies": {
     "@chenglou/pretext": "^0.0.5",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/postcss": "^4.1.18",
@@ -31,7 +35,8 @@
     "react-dom": "^19.2.0",
     "react-virtuoso": "^4.18.3",
     "tailwind-merge": "^3.5.0",
-    "wavesurfer.js": "^7.12.1"
+    "wavesurfer.js": "^7.12.1",
+    "zod": "^4.6.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

@@ -41,13 +41,21 @@ const VideoTimelineBar: React.FC<VideoTimelineBarProps> = ({
     // Convert file path to media:// protocol URL for Electron
     const videoSrc = `media://${videoPath.replace(/\\/g, '/')}`;
 
-    // Auto-fit zoom on initial load
+    // WHAT: Auto-fit timeline zoom level to container width when video duration is available.
+    // WHY: Using requestAnimationFrame ensures the DOM layout has settled before measuring clientWidth,
+    // preventing synchronous render cascades.
     useEffect(() => {
-        if (filmstripRef.current && duration > 0) {
-            const containerWidth = filmstripRef.current.parentElement?.clientWidth || 800;
-            const fitZoom = (containerWidth - 32) / duration; // 32 is padding
-            setZoom(Math.max(1, fitZoom));
-        }
+        if (!filmstripRef.current || duration <= 0) return;
+
+        const animation_frame_id = requestAnimationFrame(() => {
+            if (filmstripRef.current) {
+                const container_width_pixels = filmstripRef.current.parentElement?.clientWidth || 800;
+                const fitted_zoom_level = (container_width_pixels - 32) / duration;
+                setZoom(Math.max(1, fitted_zoom_level));
+            }
+        });
+
+        return () => cancelAnimationFrame(animation_frame_id);
     }, [duration]);
 
     // Sync volume with video element

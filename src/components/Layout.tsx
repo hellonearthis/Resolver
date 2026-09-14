@@ -3,22 +3,35 @@ import Sidebar from './Sidebar';
 import QueueManager from './QueueManager';
 import type { QueueItem } from '../App';
 
+export interface PanelVisibilityState {
+    showMainTrack: boolean;
+    showStems: boolean;
+    showVideo: boolean;
+    showVideoSource: boolean;
+    showAudioSource: boolean;
+    showProjectSelection: boolean;
+    showAudioAnalysis: boolean;
+    showQueue: boolean;
+}
+
 interface LayoutProps {
     activeModule: string;
-    onModuleChange: (module: string) => void;
-    statusLogs?: { time: Date, msg: string }[];
+    onModuleChange: (module_identifier: string) => void;
+    statusLogs?: { time: Date; msg: string }[];
     activeProjectName?: string;
     children: React.ReactNode;
-    panelVisibility: any;
-    onToggleVisibility: (key: any) => void;
+    panelVisibility: PanelVisibilityState;
+    onToggleVisibility: (panel_key: string) => void;
     videoQueue: QueueItem[];
     isQueuePaused: boolean;
     onTogglePauseQueue: () => void;
-    onRemoveFromQueue: (id: string) => void;
+    onRemoveFromQueue: (queue_item_identifier: string) => void;
     onClearQueue: () => void;
     onResetStuck: () => void;
 }
 
+// WHAT: Main layout wrapper encapsulating navigation sidebar, main content body, and sticky queue drawer.
+// WHY: Ensures consistent layout framing across all audio, storyboard, assembler, and settings modules.
 const Layout: React.FC<LayoutProps> = ({ 
     activeModule, 
     onModuleChange, 

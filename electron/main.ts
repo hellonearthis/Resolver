@@ -1,10 +1,31 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol, shell, session } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
+import {
+    ResolveBridgeClient,
+    installBridgeScript,
+    MarkerPayloadItem,
+    TimelineClipItem
+} from './resolveBridge';
+import {
+    getMcpServerStatus,
+    REGISTERED_MCP_TOOLS_DEFINITIONS,
+    generateMcpClientConfigurations,
+    executeMcpToolDirectly
+} from './mcpBridge';
+import { 
+    LlamaServerClient, 
+    scanLocalGgufModels, 
+    findLlamaServerBinaryPath,
+    DiscoveredGgufModel 
+} from './llamaServerClient';
+
+// @ts-expect-error No type declarations available for electron-squirrel-startup
+import electronSquirrelStartup from 'electron-squirrel-startup';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
-if (require('electron-squirrel-startup')) {
+if (electronSquirrelStartup) {
     app.quit();
 }
 
@@ -13,11 +34,14 @@ protocol.registerSchemesAsPrivileged([
     { scheme: 'media', privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true, stream: true } }
 ]);
 
+// WHAT: Discovers DaVinci Resolve's active script directory on Windows.
+// WHY: Blackmagic Design puts scripts in either ProgramData (shared across users) or AppData (current user).
+// We check ProgramData first because Resolve prioritizes system-wide scripts.
 const getResolveScriptsDir = () => {
     // 1. Check ProgramData (All Users) - Resolve often prioritizes this
-    const programData = process.env.PROGRAMDATA || 'C:\\ProgramData';
-    const commonPath = path.join(
-        programData,
+    const program_data_directory = process.env.PROGRAMDATA || 'C:\\ProgramData';
+    const system_shared_scripts_path = path.join(
+        program_data_directory,
         'Blackmagic Design',
         'DaVinci Resolve',
         'Fusion',
@@ -26,9 +50,9 @@ const getResolveScriptsDir = () => {
     );
 
     // 2. Check AppData (Current User)
-    const appData = process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming');
-    const userPath = path.join(
-        appData,
+    const user_roaming_appdata = process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming');
+    const user_specific_scripts_path = path.join(
+        user_roaming_appdata,
         'Blackmagic Design',
         'DaVinci Resolve',
         'Support',
@@ -38,105 +62,97 @@ const getResolveScriptsDir = () => {
     );
 
     // Prefer ProgramData if it exists and has Resolve folders, otherwise fallback to AppData
-    if (fs.existsSync(path.dirname(commonPath))) {
-        return commonPath;
+    if (fs.existsSync(path.dirname(system_shared_scripts_path))) {
+        return system_shared_scripts_path;
     }
-    return userPath;
+    return user_specific_scripts_path;
 };
 
+// WHAT: Creates and displays the main Electron browser window with full desktop integration.
+// WHY: Hosts the React application and provides nodeIntegration for direct filesystem operations.
 const createWindow = () => {
-    // Create the browser window.
-    const mainWindow = new BrowserWindow({
+    const main_application_window = new BrowserWindow({
         width: 800,
         height: 600,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
-            nodeIntegration: true, // For simplicity in this local app
-            contextIsolation: false, // For simplicity in this local app - strictly local use
+            nodeIntegration: true, // For simplicity in this local desktop creative suite
+            contextIsolation: false, // Strictly local desktop application
         },
     });
 
-    // and load the index.html of the app.
     if (process.env.VITE_DEV_SERVER_URL) {
-        mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+        main_application_window.loadURL(process.env.VITE_DEV_SERVER_URL);
     } else {
-        mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+        main_application_window.loadFile(path.join(__dirname, '../dist/index.html'));
     }
 
-    mainWindow.maximize();
-
-    // Open the DevTools.
-    mainWindow.webContents.openDevTools();
+    main_application_window.maximize();
+    main_application_window.webContents.openDevTools();
 };
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
-// Custom Protocol for Local Media
 app.whenReady().then(() => {
-    // Custom Protocol for Local Media
-    protocol.registerFileProtocol('media', (request: any, callback: any) => {
-        // Remove media:// protocol and strip any query parameters (like ?t=...)
-        let url = request.url.replace('media://', '').split('?')[0];
+    // WHAT: Custom file protocol handler for local media assets (`media://`).
+    // WHY: Bypasses standard browser web-security restrictions on accessing raw disk files from file:/// URLs
+    // while maintaining fast streaming, range requests, and audio/video decoding.
+    protocol.registerFileProtocol('media', (incoming_protocol_request, protocol_response_callback) => {
+        let media_file_relative_url = incoming_protocol_request.url.replace('media://', '').split('?')[0];
         // URL parsing strips the colon from Windows drive letters (e.g. "C:/path" becomes "c/path").
-        // Detect a single-letter prefix followed by "/" and restore the colon.
-        if (/^[a-zA-Z]\//.test(url)) {
-            url = url[0] + ':' + url.substring(1);
+        if (/^[a-zA-Z]\//.test(media_file_relative_url)) {
+            media_file_relative_url = media_file_relative_url[0] + ':' + media_file_relative_url.substring(1);
         }
         try {
-            return callback(decodeURIComponent(url));
-        } catch (error) {
-            console.error(error);
-            return callback('404');
+            return protocol_response_callback(decodeURIComponent(media_file_relative_url));
+        } catch (error_instance) {
+            console.error('Failed to decode media URL:', error_instance);
+            return protocol_response_callback('404');
         }
     });
 
     createWindow();
 
-    // Fix ComfyUI WebSocket 403 Forbidden error by spoofing the Origin header
-    // This is required because ComfyUI checks the Origin for security and rejects browser origins
+    // WHAT: Modifies outgoing HTTP and WebSocket request headers destined for local ComfyUI.
+    // WHY: ComfyUI enforces origin checking and returns 403 Forbidden to foreign browser origins. Spoofing
+    // the Origin header satisfies ComfyUI's internal security gate when connecting via desktop Electron.
     session.defaultSession.webRequest.onBeforeSendHeaders(
         { urls: ['http://127.0.0.1:8188/*', 'ws://127.0.0.1:8188/*'] },
-        (details, callback) => {
-            details.requestHeaders['Origin'] = 'http://127.0.0.1:8188';
-            callback({ requestHeaders: details.requestHeaders });
+        (request_details, response_callback) => {
+            request_details.requestHeaders['Origin'] = 'http://127.0.0.1:8188';
+            response_callback({ requestHeaders: request_details.requestHeaders });
         }
     );
 });
 
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and import them here.
-
-ipcMain.on('sync-to-resolve', (event, data) => {
-    console.log('Received sync request:', data);
-    const { audioPath, videoPaths, beats } = data;
+// WHAT: Asynchronously synchronizes project data with DaVinci Resolve via an external Python bridge child process.
+// WHY: Provides backward compatibility for setups where Python runs as an out-of-process CLI runner.
+ipcMain.on('sync-to-resolve', (event_emitter, sync_payload_data) => {
+    console.log('Received sync request:', sync_payload_data);
 
     // Serialize data to pass to Python via temp file
-    const tempPath = path.join(app.getPath('userData'), 'sync_data.json');
-    fs.writeFileSync(tempPath, JSON.stringify(data));
-    console.log('Data written to:', tempPath);
+    const temporary_sync_data_file_path = path.join(app.getPath('userData'), 'sync_data.json');
+    fs.writeFileSync(temporary_sync_data_file_path, JSON.stringify(sync_payload_data));
+    console.log('Data written to:', temporary_sync_data_file_path);
 
     // Spawn Python script
-    const pythonScript = path.resolve(__dirname, '../scripts/resolve_sync.py');
+    const python_script_file_path = path.resolve(__dirname, '../scripts/resolve_sync.py');
+    console.log('Spawning python script at:', python_script_file_path);
 
-    console.log('Spawning python script at:', pythonScript);
+    const python_child_process = spawn('python', [python_script_file_path, temporary_sync_data_file_path]);
 
-    const pythonProcess = spawn('python', [pythonScript, tempPath]);
-
-    pythonProcess.stdout.on('data', (data) => {
-        console.log(`Python Output: ${data}`);
+    python_child_process.stdout.on('data', (standard_output_buffer) => {
+        console.log(`Python Output: ${standard_output_buffer}`);
     });
 
-    pythonProcess.stderr.on('data', (data) => {
-        console.error(`Python Error: ${data}`);
+    python_child_process.stderr.on('data', (standard_error_buffer) => {
+        console.error(`Python Error: ${standard_error_buffer}`);
     });
 
-    pythonProcess.on('close', (code) => {
-        console.log(`Python process exited with code ${code}`);
-        if (code === 0) {
-            event.reply('sync-complete', 'Sync completed successfully!');
+    python_child_process.on('close', (process_exit_code) => {
+        console.log(`Python process exited with code ${process_exit_code}`);
+        if (process_exit_code === 0) {
+            event_emitter.reply('sync-complete', 'Sync completed successfully!');
         } else {
-            event.reply('sync-error', `Python script failed with code ${code}`);
+            event_emitter.reply('sync-error', `Python script failed with code ${process_exit_code}`);
         }
     });
 });
@@ -149,7 +165,7 @@ ipcMain.on('sync-to-resolve', (event, data) => {
  * ---------------------------------------------------------------------------
  */
 ipcMain.handle('open-audio-dialog', async (_event, defaultPath?: string) => {
-    let dialogOptions: Electron.OpenDialogOptions = {
+    const dialogOptions: Electron.OpenDialogOptions = {
         title: 'Select Audio File',
         filters: [
             { name: 'Audio', extensions: ['mp3', 'wav', 'flac', 'ogg', 'aac', 'm4a'] },
@@ -181,7 +197,7 @@ ipcMain.handle('open-audio-dialog', async (_event, defaultPath?: string) => {
  * ---------------------------------------------------------------------------
  */
 ipcMain.handle('open-image-dialog', async (_event, defaultPath?: string) => {
-    let dialogOptions: Electron.OpenDialogOptions = {
+    const dialogOptions: Electron.OpenDialogOptions = {
         title: 'Select Image File',
         filters: [
             { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] },
@@ -207,41 +223,37 @@ ipcMain.handle('open-image-dialog', async (_event, defaultPath?: string) => {
  * Opens the system file explorer to the specified path.
  * ---------------------------------------------------------------------------
  */
-ipcMain.handle('open-folder', async (_event, folderPath: string) => {
-    if (fs.existsSync(folderPath)) {
-        require('electron').shell.showItemInFolder(folderPath);
+// WHAT: Opens the host OS file explorer (Windows Explorer) highlighting the target file or folder.
+// WHY: Allows the user to jump directly to project bundles, exported audio, or generated video files.
+ipcMain.handle('open-folder', async (_event, target_folder_path: string) => {
+    if (fs.existsSync(target_folder_path)) {
+        shell.showItemInFolder(target_folder_path);
         return true;
     }
     return false;
 });
 
-
-
-/**
- * ---------------------------------------------------------------------------
- * IPC: stage-video-sync
- * Generates a Python script that can be executed inside DaVinci Resolve (Free)
- * to automatically import an audio track and a set of video clips onto a timeline.
- * ---------------------------------------------------------------------------
- */
-ipcMain.handle('stage-video-sync', async (_event, data: {
+// WHAT: Generates an automated Python script for DaVinci Resolve (Free/Studio) to import audio and video to the Media Pool.
+// WHY: Fallback workflow for users who prefer executing file imports via Resolve's Workspace > Scripts menu.
+ipcMain.handle('stage-video-sync', async (_event, incoming_sync_data: {
     projectName: string;
     audioPath: string;
     videoPaths: string[];
-    beats: number[];
+    beats?: number[];
 }) => {
     try {
-        const resolveScriptsDir = getResolveScriptsDir();
+        const resolve_scripts_directory = getResolveScriptsDir();
 
-        if (!fs.existsSync(resolveScriptsDir)) {
-            fs.mkdirSync(resolveScriptsDir, { recursive: true });
+        if (!fs.existsSync(resolve_scripts_directory)) {
+            fs.mkdirSync(resolve_scripts_directory, { recursive: true });
         }
 
-        const escapedAudio = (data.audioPath || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        const escapedVideos = data.videoPaths.map(v => `'${v.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`).join(',\n    ');
-        const beatList = data.beats.join(', ');
+        const escaped_audio_file_path = (incoming_sync_data.audioPath || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const escaped_video_file_paths = incoming_sync_data.videoPaths
+            .map(video_path => `'${video_path.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`)
+            .join(',\n    ');
 
-        const script = `#!/usr/bin/env python
+        const script_content = `#!/usr/bin/env python
 # Auto-generated by Resolve Tools Dashboard - Load Media
 # Run from DaVinci Resolve: Workspace > Scripts > 01_Load_Media_Script
 
@@ -249,9 +261,9 @@ import sys
 import os
 
 # --- EMBEDDED MEDIA DATA ---
-AUDIO_PATH = '${escapedAudio}'
+AUDIO_PATH = '${escaped_audio_file_path}'
 VIDEO_PATHS = [
-    ${escapedVideos}
+    ${escaped_video_file_paths}
 ]
 
 def main():
@@ -309,18 +321,18 @@ if __name__ == '__main__':
     main()
 `;
 
-        const baseName = data.projectName || (data.audioPath ? path.basename(data.audioPath, path.extname(data.audioPath)) : 'Untitled');
-        const sanitized = baseName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
-        const fileName = `01_Load_Media_Script_${sanitized}.py`;
-        const fullPath = path.join(resolveScriptsDir, fileName);
+        const project_base_name = incoming_sync_data.projectName || (incoming_sync_data.audioPath ? path.basename(incoming_sync_data.audioPath, path.extname(incoming_sync_data.audioPath)) : 'Untitled');
+        const sanitized_script_name = project_base_name.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
+        const script_file_name = `01_Load_Media_Script_${sanitized_script_name}.py`;
+        const script_target_path = path.join(resolve_scripts_directory, script_file_name);
 
-        fs.writeFileSync(fullPath, script, 'utf8');
+        fs.writeFileSync(script_target_path, script_content, 'utf8');
 
-        return { success: true, scriptPath: fullPath };
+        return { success: true, scriptPath: script_target_path };
 
-    } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { success: false, error: message };
+    } catch (error_instance: unknown) {
+        const error_message = error_instance instanceof Error ? error_instance.message : String(error_instance);
+        return { success: false, error: error_message };
     }
 });
 
@@ -544,7 +556,7 @@ ipcMain.handle('list-resolve-scripts', async () => {
         const appData = process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming');
         const userDir = path.join(appData, 'Blackmagic Design', 'DaVinci Resolve', 'Support', 'Fusion', 'Scripts', 'Comp');
 
-        const scriptFiles: any[] = [];
+        const scriptFiles: { name: string; path: string; size: number; mtime: Date }[] = [];
         const seenNames = new Set<string>();
 
         const scanDir = (dir: string) => {
@@ -589,6 +601,88 @@ ipcMain.handle('delete-resolve-script', async (_event, scriptPath: string) => {
         const message = err instanceof Error ? err.message : String(err);
         return { success: false, error: message };
     }
+});
+
+// ---------------------------------------------------------------------------
+// DaVinci Resolve HTTP Loopback Bridge (Free + Studio)
+// ---------------------------------------------------------------------------
+
+// WHAT: Checks whether the bridge is online, what project is open, and if script is installed.
+// WHY: Gives the UI real-time connection telemetry (e.g. "Resolve Connected • Project: MyTrack").
+ipcMain.handle('resolve-bridge-status', async () => {
+    const resolve_bridge_client = new ResolveBridgeClient();
+    return await resolve_bridge_client.checkConnectionStatus();
+});
+
+// WHAT: Copies scripts/resolve_bridge.py into Resolve's Utility scripts folder.
+// WHY: One-click installation so users don't have to manually browse to ProgramData/Fusion.
+ipcMain.handle('resolve-bridge-install', async () => {
+    return installBridgeScript();
+});
+
+// WHAT: Pushes beat, onset, and loudness markers directly to Resolve's active timeline over HTTP.
+// WHY: Instant live synchronization without generating or manually executing Python scripts.
+ipcMain.handle('resolve-bridge-push-markers', async (_event, incoming_payload: { markers: MarkerPayloadItem[] }) => {
+    const resolve_bridge_client = new ResolveBridgeClient();
+    return await resolve_bridge_client.pushMarkersToActiveTimeline(incoming_payload.markers || []);
+});
+
+// WHAT: Directly imports audio and video files into DaVinci Resolve's active Media Pool.
+// WHY: Eliminates manual file import steps and executes in sub-100ms.
+ipcMain.handle('resolve-bridge-import-media', async (_event, incoming_payload: { audioPath: string; videoPaths: string[] }) => {
+    const resolve_bridge_client = new ResolveBridgeClient();
+    return await resolve_bridge_client.importMediaIntoMediaPool(
+        incoming_payload.audioPath || '',
+        incoming_payload.videoPaths || []
+    );
+});
+
+// WHAT: Reconstructs the video assembler timeline in DaVinci Resolve with clips positioned at exact timestamps.
+// WHY: One-click direct assembly on the active or generated Resolve timeline.
+ipcMain.handle('resolve-bridge-reconstruct-timeline', async (_event, incoming_payload: {
+    projectName: string;
+    audioPath: string;
+    frameRate: number;
+    clips: TimelineClipItem[];
+}) => {
+    const resolve_bridge_client = new ResolveBridgeClient();
+    return await resolve_bridge_client.reconstructTimeline(
+        incoming_payload.projectName || '',
+        incoming_payload.audioPath || '',
+        incoming_payload.frameRate || 24,
+        incoming_payload.clips || []
+    );
+});
+
+// ---------------------------------------------------------------------------
+// Model Context Protocol (MCP) Bridge & Telemetry
+// ---------------------------------------------------------------------------
+
+// WHAT: Retrieves MCP server operational status, script location, and tools count.
+// WHY: Informs the MCP Control UI module of live server health and bridge readiness.
+ipcMain.handle('mcp-get-status', async () => {
+    return await getMcpServerStatus();
+});
+
+// WHAT: Returns the complete list of registered MCP tools and their JSON schemas.
+// WHY: Powers the interactive tool explorer and inspection views in the frontend.
+ipcMain.handle('mcp-get-tools', async () => {
+    return REGISTERED_MCP_TOOLS_DEFINITIONS;
+});
+
+// WHAT: Generates copyable MCP config snippets for Claude Desktop, Antigravity, and Cursor.
+// WHY: Gives users instantaneous 1-click configuration without manual JSON editing.
+ipcMain.handle('mcp-get-client-config', async () => {
+    return generateMcpClientConfigurations();
+});
+
+// WHAT: Directly executes an MCP tool within the Electron process and broadcasts activity.
+// WHY: Allows manual interactive testing from the Resolver UI with live execution logging.
+ipcMain.handle('mcp-execute-tool', async (_event, incoming_payload: { tool_name: string; tool_arguments: Record<string, unknown> }) => {
+    return await executeMcpToolDirectly(
+        incoming_payload.tool_name,
+        incoming_payload.tool_arguments || {}
+    );
 });
 
 // ---------------------------------------------------------------------------
@@ -702,7 +796,7 @@ ipcMain.handle('comfy-upload-file', async (_event, api_url, filePath, type, over
 });
 
 // Extract audio from a user-selected video and save to a user-selected location
-ipcMain.handle('extract-audio-from-video', async (_event) => {
+ipcMain.handle('extract-audio-from-video', async () => {
     try {
         const inResult = await dialog.showOpenDialog({
             title: 'Select Video File',
@@ -725,7 +819,7 @@ ipcMain.handle('extract-audio-from-video', async (_event) => {
 
         return new Promise((resolve) => {
             const ext = path.extname(outPath).toLowerCase();
-            let args = ['-y', '-i', inputPath, '-vn'];
+            const args = ['-y', '-i', inputPath, '-vn'];
             if (ext === '.mp3') {
                 args.push('-q:a', '0');
             } else {
@@ -745,8 +839,8 @@ ipcMain.handle('extract-audio-from-video', async (_event) => {
             });
             ffmpeg.on('error', (err: Error) => resolve({ success: false, error: err.message }));
         });
-    } catch (err: any) {
-        return { success: false, error: err.message };
+    } catch (err: unknown) {
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
 });
 
@@ -799,7 +893,7 @@ ipcMain.handle('convert-audio-to-wav', async (_event, inputPath: string) => {
  * Uses ffprobe to extract video metadata (duration, fps, resolution, codec, bitrate).
  */
 ipcMain.handle('get-video-info', async (_event, filePath: string) => {
-    return new Promise<{ success: boolean; info?: any; error?: string }>((resolve) => {
+    return new Promise<{ success: boolean; info?: unknown; error?: string }>((resolve) => {
         const args = [
             '-v', 'quiet',
             '-print_format', 'json',
@@ -818,7 +912,7 @@ ipcMain.handle('get-video-info', async (_event, filePath: string) => {
             if (code === 0) {
                 try {
                     const data = JSON.parse(output);
-                    const videoStream = data.streams?.find((s: any) => s.codec_type === 'video');
+                    const videoStream = data.streams?.find((stream_candidate: { codec_type?: string }) => stream_candidate.codec_type === 'video');
 
                     if (!videoStream) {
                         resolve({ success: false, error: 'No video stream found' });
@@ -981,8 +1075,8 @@ ipcMain.handle('get-config', async () => {
         const defaultConfig = {
             comfyOutputDir: '',
             projectOutputDir: '',
-            llmProvider: 'lmstudio',
-            lmStudioUrl: 'http://localhost:1234',
+            llmProvider: 'llama-server',
+            llamaServerUrl: 'http://localhost:8080',
             llmMaxTokens: 128,
             llmTemperature: 0.7,
             llmTopP: 0.9,
@@ -993,12 +1087,54 @@ ipcMain.handle('get-config', async () => {
         if (fs.existsSync(CONFIG_PATH)) {
             const data = fs.readFileSync(CONFIG_PATH, 'utf8');
             const userConfig = JSON.parse(data);
+            // WHAT: Safely migrate legacy LM Studio provider settings to llama-server.
+            // WHY: Ensures existing user installations seamlessly adopt llama-server on port 8080
+            // without requiring manual config deletion or UI re-selection.
+            if (userConfig.llmProvider === 'lmstudio') {
+                userConfig.llmProvider = 'llama-server';
+            }
+            if (userConfig.lmStudioUrl && !userConfig.llamaServerUrl) {
+                userConfig.llamaServerUrl = 'http://localhost:8080';
+            }
             return { success: true, config: { ...defaultConfig, ...userConfig } };
         }
         return { success: true, config: defaultConfig };
     } catch (err) {
         console.error('Error reading config:', err);
         return { success: false, error: String(err) };
+    }
+});
+
+// WHAT: IPC handler to test connection and discover active model metadata on llama-server.
+// WHY: Gives the Settings UI real-time diagnostic reporting (status pill, active model, vision support).
+ipcMain.handle('llm-test-connection', async (_event, custom_llama_server_endpoint_url?: string) => {
+    try {
+        let active_target_url = typeof custom_llama_server_endpoint_url === 'string' && custom_llama_server_endpoint_url.trim().length > 0
+            ? custom_llama_server_endpoint_url.trim()
+            : undefined;
+
+        if (!active_target_url && fs.existsSync(CONFIG_PATH)) {
+            const persisted_configuration_record = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+            if (typeof persisted_configuration_record.llamaServerUrl === 'string') {
+                active_target_url = persisted_configuration_record.llamaServerUrl;
+            }
+        }
+
+        const llama_server_client_instance = new LlamaServerClient(active_target_url);
+        const diagnostic_test_result = await llama_server_client_instance.testLlamaServerConnection();
+        return { success: true, diagnostic: diagnostic_test_result };
+    } catch (connection_testing_error: unknown) {
+        const error_message_text = connection_testing_error instanceof Error ? connection_testing_error.message : String(connection_testing_error);
+        return {
+            success: false,
+            diagnostic: {
+                connection_status: 'offline',
+                resolved_endpoint_url: null,
+                discovered_model_metadata: null,
+                multimodal_vision_supported: false,
+                diagnostic_message: `Connection test failed: ${error_message_text}`
+            }
+        };
     }
 });
 
@@ -1028,7 +1164,7 @@ ipcMain.handle('stage-timeline-to-resolve', async (_event, data: {
     projectName: string;
     audioPath: string;
     frameRate: number;
-    clips: any[];
+    clips: TimelineClipItem[];
 }) => {
     try {
         const resolveScriptsDir = getResolveScriptsDir();
@@ -1222,7 +1358,7 @@ if __name__ == '__main__':
 // ---------------------------------------------------------------------------
 // Music Video Assembler - Save Manifest
 // ---------------------------------------------------------------------------
-ipcMain.handle('save-manifest', async (_event, manifest: any) => {
+ipcMain.handle('save-manifest', async (_event, manifest: unknown) => {
     try {
         const { filePath } = await dialog.showSaveDialog({
             title: 'Save Music Video Manifest',
@@ -1254,26 +1390,23 @@ ipcMain.handle('scan-projects-folder', async (_event, folderPath: string) => {
             return { success: false, error: 'Folder does not exist' };
         }
 
-        const projects: any[] = [];
+        const projects: { updatedAt?: string; [key: string]: unknown }[] = [];
         // Only scan top-level items in the output folder for PRJ_ directories
         const items = fs.readdirSync(folderPath);
 
         for (const item of items) {
             const itemPath = path.join(folderPath, item);
-            const stat = fs.statSync(itemPath);
-
-            if (stat.isDirectory() && item.startsWith('PRJ_')) {
-                // Look for the project.json file inside the project folder
+            if (fs.statSync(itemPath).isDirectory() && item.startsWith('PRJ_')) {
+                const projectJsonPath = path.join(itemPath, 'project.json');
                 try {
-                    const dataPath = path.join(itemPath, 'project.json');
-                    if (fs.existsSync(dataPath)) {
-                        const content = fs.readFileSync(dataPath, 'utf8');
-                        const project = JSON.parse(content);
-                        if (project.id && project.name) {
+                    if (fs.existsSync(projectJsonPath)) {
+                        const content = fs.readFileSync(projectJsonPath, 'utf8');
+                        const data = JSON.parse(content);
+                        if (data.id && data.name) {
                             // Enforce dynamic outputDir based on the actual folder path
                             // This guarantees project bundles stay portable if moved to another drive/PC
-                            project.outputDir = itemPath;
-                            projects.push(project);
+                            data.outputDir = itemPath;
+                            projects.push(data);
                         }
                     }
                 } catch (e) {
@@ -1283,8 +1416,8 @@ ipcMain.handle('scan-projects-folder', async (_event, folderPath: string) => {
         }
 
         // Sort by updatedAt descending
-        projects.sort((a, b) => {
-            return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+        projects.sort((earlier_project, later_project) => {
+            return new Date(later_project.updatedAt || 0).getTime() - new Date(earlier_project.updatedAt || 0).getTime();
         });
 
         return { success: true, projects };
@@ -1297,44 +1430,149 @@ ipcMain.handle('scan-projects-folder', async (_event, folderPath: string) => {
 // LLM Prompt Expansion (Vino & LM Studio)
 // ---------------------------------------------------------------------------
 
-let vinoPipeline: any = null;
-let llmRequestQueue: Promise<any> = Promise.resolve();
+interface OpenVinoPipelineInstance {
+    generate: (prompt: string, images: unknown[], params: unknown) => Promise<unknown>;
+}
 
-ipcMain.handle('llm-generate', (event, data: {
+let vinoPipeline: OpenVinoPipelineInstance | null = null;
+// WHAT: Auto-launches or ensures llama-server.exe is running on port 8080 with the configured model.
+// WHY: Enables on-demand LLM booting when an expansion or vision task is requested after being unloaded for ComfyUI.
+async function ensureLlamaServerRunning(port = 8080): Promise<{ success: boolean; error?: string }> {
+    const llama_client = new LlamaServerClient(`http://127.0.0.1:${port}`);
+    const is_already_online = await llama_client.discoverActiveLlamaServerModel();
+    if (is_already_online) {
+        return { success: true };
+    }
+
+    let loaded_config: Record<string, unknown> = {};
+    if (fs.existsSync(CONFIG_PATH)) {
+        try { loaded_config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { /* ignore */ }
+    }
+
+    let model_path = typeof loaded_config.selectedLlamaModelPath === 'string'
+        ? loaded_config.selectedLlamaModelPath
+        : '';
+
+    if (!model_path || !fs.existsSync(model_path)) {
+        const models_dir = typeof loaded_config.llamaModelsDir === 'string'
+            ? loaded_config.llamaModelsDir
+            : path.join(process.env.USERPROFILE || '', '.cache', 'lm-studio', 'models');
+        const discovered = scanLocalGgufModels(models_dir);
+        const qwen_match = discovered.find(m => m.model_name.toLowerCase().includes('qwen3.5-9b')) || discovered[0];
+        if (qwen_match) {
+            model_path = qwen_match.file_path;
+        } else {
+            return { success: false, error: 'No GGUF model found on disk to auto-launch.' };
+        }
+    }
+
+    let mmproj_path = typeof loaded_config.selectedLlamaMmprojPath === 'string'
+        ? loaded_config.selectedLlamaMmprojPath
+        : null;
+
+    if (!mmproj_path || !fs.existsSync(mmproj_path)) {
+        const model_folder = path.dirname(model_path);
+        try {
+            const files_in_dir = fs.readdirSync(model_folder);
+            const mmproj_file = files_in_dir.find(f => f.toLowerCase().startsWith('mmproj-') && f.toLowerCase().endsWith('.gguf'));
+            if (mmproj_file) {
+                mmproj_path = path.join(model_folder, mmproj_file);
+            }
+        } catch { /* ignore */ }
+    }
+
+    const llama_binary_path = findLlamaServerBinaryPath() || 'llama-server.exe';
+
+    // Terminate any stale zombie processes
+    try {
+        execSync('taskkill /IM llama-server.exe /F', { stdio: 'ignore' });
+    } catch { /* ignore */ }
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const context_size = typeof loaded_config.llamaContextSize === 'number'
+        ? loaded_config.llamaContextSize
+        : 8192;
+    const gpu_layers = typeof loaded_config.llamaGpuLayers === 'number'
+        ? loaded_config.llamaGpuLayers
+        : 99;
+
+    const launch_arguments: string[] = [
+        '-m', model_path,
+        '--host', '127.0.0.1',
+        '--port', String(port),
+        '-c', String(context_size),
+        '-ngl', String(gpu_layers),
+        '--flash-attn', 'on',
+        '--alias', 'default'
+    ];
+    if (mmproj_path && fs.existsSync(mmproj_path)) {
+        launch_arguments.push('--mmproj', mmproj_path);
+    }
+
+    console.log('[LLM] On-demand auto-launching llama-server:', launch_arguments);
+    const spawned_process = spawn(llama_binary_path, launch_arguments, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false
+    });
+    spawned_process.unref();
+
+    for (let poll_attempt = 0; poll_attempt < 30; poll_attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const ready = await llama_client.discoverActiveLlamaServerModel();
+        if (ready) return { success: true };
+    }
+
+    return { success: false, error: 'llama-server auto-launch timed out after 15 seconds.' };
+}
+
+ipcMain.handle('llm-ensure-server', async () => ensureLlamaServerRunning());
+
+let llmRequestQueue: Promise<unknown> = Promise.resolve();
+
+ipcMain.handle('llm-generate', (_event, data: {
     systemPrompt: string;
     userPrompt: string;
+    grammar?: string;
+    response_format?: unknown;
 }) => {
     // Wrap everything in a serial queue to prevent NPU concurrency crashes
     llmRequestQueue = llmRequestQueue.then(async () => {
         try {
         // Load latest config
-        let config: any = {};
+        let config: Record<string, unknown> = {};
         if (fs.existsSync(CONFIG_PATH)) {
             config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
         }
 
-        const provider = config.llmProvider || 'lmstudio';
+        const provider = String(config.llmProvider || 'llama-server');
         const params = {
-            max_new_tokens: config.llmMaxTokens || 500,
+            max_new_tokens: Number(config.llmMaxTokens) || 500,
             do_sample: true,
-            temperature: config.llmTemperature || 0.7,
-            top_p: config.llmTopP || 0.9,
-            top_k: config.llmTopK || 50,
-            repetition_penalty: config.llmRepetitionPenalty || 1.5,
+            temperature: Number(config.llmTemperature) || 0.7,
+            top_p: Number(config.llmTopP) || 0.9,
+            top_k: Number(config.llmTopK) || 50,
+            repetition_penalty: Number(config.llmRepetitionPenalty) || 1.5,
         };
 
         if (provider === 'vino') {
             console.log('[LLM] Using Intel OpenVINO Backend');
             
             // Lazy load OpenVINO native module to prevent startup crashes if not installed
-            let VLMPipeline: any;
+            let VLMPipeline: ((model_path: string, device: string, options?: unknown) => Promise<OpenVinoPipelineInstance>) | undefined;
             try {
-                // @ts-ignore
-                const mod = await import('openvino-genai-node') as any;
+                const openvino_module = (await import('openvino-genai-node')) as { 
+                    VLMPipeline?: (model_path: string, device: string, options?: unknown) => Promise<OpenVinoPipelineInstance>; 
+                    LLMPipeline?: (model_path: string, device: string, options?: unknown) => Promise<OpenVinoPipelineInstance>; 
+                };
                 // VLM for Gemma 3, LLM fallback if types are weird
-                VLMPipeline = mod.VLMPipeline || mod.LLMPipeline;
-            } catch (e) {
+                VLMPipeline = openvino_module.VLMPipeline || openvino_module.LLMPipeline;
+            } catch {
                 return { success: false, error: "OpenVino library not found. Have you run 'npm install'?" };
+            }
+
+            if (!VLMPipeline) {
+                return { success: false, error: "OpenVINO pipeline constructor unavailable" };
             }
 
             // Initialize singleton pipeline
@@ -1361,13 +1599,15 @@ ipcMain.handle('llm-generate', (event, data: {
                 try {
                     console.log(`[LLM] Targeting NPU accelerated hardware...`);
                     vinoPipeline = await VLMPipeline(modelPath, "NPU", pipeOptions);
-                } catch (npuError: any) {
-                    console.warn(`[LLM] NPU Initialization Failed: ${npuError.message}. Falling back to CPU...`);
+                } catch (npu_error: unknown) {
+                    const npu_message = npu_error instanceof Error ? npu_error.message : String(npu_error);
+                    console.warn(`[LLM] NPU Initialization Failed: ${npu_message}. Falling back to CPU...`);
                     try {
                         // Fallback to CPU if NPU driver/compilation fails
                         vinoPipeline = await VLMPipeline(modelPath, "CPU", { CACHE_DIR: cacheDir });
-                    } catch (cpuError: any) {
-                        return { success: false, error: `Critical: AI Load failed on both NPU and CPU: ${cpuError.message}` };
+                    } catch (cpu_error: unknown) {
+                        const cpu_message = cpu_error instanceof Error ? cpu_error.message : String(cpu_error);
+                        return { success: false, error: `Critical: AI Load failed on both NPU and CPU: ${cpu_message}` };
                     }
                 }
                 console.log(`[LLM] AI Pipeline Ready on ${vinoPipeline ? 'Hardware' : 'Error State'}.`);
@@ -1385,38 +1625,357 @@ ipcMain.handle('llm-generate', (event, data: {
             return { success: true, text: String(result) };
 
         } else {
-            console.log('[LLM] Using LM Studio Backend');
-            const endpoint = `${config.lmStudioUrl || 'http://localhost:1234'}/v1/chat/completions`;
-            
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    messages: [
-                        { role: 'system', content: data.systemPrompt },
-                        { role: 'user', content: data.userPrompt }
-                    ],
-                    temperature: params.temperature,
-                    top_p: params.top_p,
-                    max_tokens: params.max_new_tokens,
-                    frequency_penalty: params.repetition_penalty - 1.0 // Map repetition to frequency slightly
-                })
-            });
+            // WHAT: Dynamic model discovery and OpenAI-compatible completions for pure llama-server.
+            // WHY: Automatically discovers the running model and ports, sending requests without hardcoding.
+            console.log('[LLM] Using llama-server Backend');
+            const custom_configured_llama_server_url = typeof config.llamaServerUrl === 'string' 
+                ? config.llamaServerUrl 
+                : undefined;
+            const llama_server_client_instance = new LlamaServerClient(custom_configured_llama_server_url);
 
-            if (!response.ok) {
-                const errText = await response.text();
-                return { success: false, error: `LM Studio Error: ${response.status} - ${errText}` };
+            let server_discovery_success = await llama_server_client_instance.discoverActiveLlamaServerModel();
+            if (!server_discovery_success) {
+                console.log('[LLM] llama-server is offline. Auto-launching on demand...');
+                const ensure_result = await ensureLlamaServerRunning();
+                if (ensure_result.success) {
+                    server_discovery_success = await llama_server_client_instance.discoverActiveLlamaServerModel();
+                }
             }
 
-            const json = await response.json();
-            const text = json.choices?.[0]?.message?.content || '';
-            return { success: true, text };
+            if (!server_discovery_success) {
+                return {
+                    success: false,
+                    error: 'llama-server is offline and could not be auto-started. Please check model path in Settings.'
+                };
+            }
+
+            const chat_completions_endpoint_url = llama_server_client_instance.getChatCompletionsUrl();
+            if (!chat_completions_endpoint_url) {
+                return {
+                    success: false,
+                    error: 'Unable to resolve llama-server chat completions endpoint.'
+                };
+            }
+
+            const active_model_identifier_string = llama_server_client_instance.getActiveModelIdentifier();
+
+            const request_body_payload: Record<string, unknown> = {
+                model: active_model_identifier_string,
+                messages: [
+                    { role: 'system', content: data.systemPrompt },
+                    { role: 'user', content: data.userPrompt }
+                ],
+                temperature: params.temperature,
+                top_p: params.top_p,
+                max_tokens: params.max_new_tokens,
+                frequency_penalty: params.repetition_penalty - 1.0
+            };
+
+            if (typeof data.grammar === 'string' && data.grammar.trim().length > 0) {
+                request_body_payload.grammar = data.grammar.trim();
+            }
+            if (data.response_format) {
+                request_body_payload.response_format = data.response_format;
+            }
+
+            const completion_http_response = await fetch(chat_completions_endpoint_url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(request_body_payload)
+            });
+
+            if (!completion_http_response.ok) {
+                const response_error_text_content = await completion_http_response.text();
+                return {
+                    success: false,
+                    error: `llama-server HTTP Error: ${completion_http_response.status} - ${response_error_text_content}`
+                };
+            }
+
+            const completion_response_json = (await completion_http_response.json()) as { 
+                choices?: Array<{ message?: { content?: string } }> 
+            };
+            const generated_output_text = completion_response_json.choices?.[0]?.message?.content || '';
+            return { success: true, text: generated_output_text };
         }
 
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('[LLM] Generation Error:', err);
             return { success: false, error: String(err) };
         }
     });
     return llmRequestQueue;
+});
+
+// WHAT: Multimodal image description handler using local llama-server (e.g. Qwen 3.5 9B with mmproj).
+// WHY: Enables fast, high-fidelity scene analysis directly without relying on ComfyUI or loading VLM nodes there.
+ipcMain.handle('llm-describe-image', async (_event, payload: { imagePath: string; prompt: string; maxTokens?: number }) => {
+    try {
+        const { imagePath, prompt, maxTokens = 1024 } = payload;
+        if (!imagePath || !fs.existsSync(imagePath)) {
+            return { success: false, error: `Image file does not exist at path: ${imagePath}` };
+        }
+
+        // Determine MIME type based on file extension
+        const lower_case_extension = path.extname(imagePath).toLowerCase();
+        let image_mime_type_string = 'image/jpeg';
+        if (lower_case_extension === '.png') image_mime_type_string = 'image/png';
+        else if (lower_case_extension === '.webp') image_mime_type_string = 'image/webp';
+        else if (lower_case_extension === '.gif') image_mime_type_string = 'image/gif';
+
+        const image_file_buffer = fs.readFileSync(imagePath);
+        const image_base64_content_string = image_file_buffer.toString('base64');
+        const formatted_image_data_uri_string = `data:${image_mime_type_string};base64,${image_base64_content_string}`;
+
+        let loaded_application_configuration: Record<string, unknown> = {};
+        if (fs.existsSync(CONFIG_PATH)) {
+            loaded_application_configuration = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+        }
+        const custom_configured_llama_server_url = typeof loaded_application_configuration.llamaServerUrl === 'string'
+            ? loaded_application_configuration.llamaServerUrl
+            : undefined;
+
+        const llama_server_client_instance = new LlamaServerClient(custom_configured_llama_server_url);
+        let server_discovery_success = await llama_server_client_instance.discoverActiveLlamaServerModel();
+        if (!server_discovery_success) {
+            console.log('[LLM] llama-server is offline for vision. Auto-launching on demand...');
+            const ensure_result = await ensureLlamaServerRunning();
+            if (ensure_result.success) {
+                server_discovery_success = await llama_server_client_instance.discoverActiveLlamaServerModel();
+            }
+        }
+
+        if (!server_discovery_success) {
+            return {
+                success: false,
+                error: 'llama-server is offline and could not be auto-started. Please check model path in Settings.'
+            };
+        }
+
+        return await llama_server_client_instance.generateMultimodalVisionDescription(
+            formatted_image_data_uri_string,
+            prompt,
+            maxTokens
+        );
+    } catch (unexpected_processing_error: unknown) {
+        console.error('[LLM] Multimodal vision analysis error:', unexpected_processing_error);
+        const formatted_error_message = unexpected_processing_error instanceof Error 
+            ? unexpected_processing_error.message 
+            : String(unexpected_processing_error);
+        return { success: false, error: formatted_error_message };
+    }
+});
+
+// WHAT: IPC handler to scan disk for available .gguf models.
+// WHY: Feeds the Settings module with a list of downloadable/installed models.
+ipcMain.handle('llm-scan-models', async (_event, custom_scan_path?: string) => {
+    try {
+        let target_scan_path = custom_scan_path && custom_scan_path.trim().length > 0
+            ? custom_scan_path.trim()
+            : null;
+
+        if (!target_scan_path) {
+            let loaded_config: Record<string, unknown> = {};
+            if (fs.existsSync(CONFIG_PATH)) {
+                try { loaded_config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { /* ignore */ }
+            }
+            if (typeof loaded_config.llamaModelsDir === 'string' && loaded_config.llamaModelsDir.trim().length > 0) {
+                target_scan_path = loaded_config.llamaModelsDir.trim();
+            }
+        }
+
+        if (!target_scan_path) {
+            target_scan_path = path.join(process.env.USERPROFILE || '', '.cache', 'lm-studio', 'models');
+        }
+
+        const discovered_models_list: DiscoveredGgufModel[] = scanLocalGgufModels(target_scan_path);
+        return {
+            success: true,
+            models: discovered_models_list,
+            scanPath: target_scan_path
+        };
+    } catch (scan_error: unknown) {
+        console.error('[LLM] Failed to scan models:', scan_error);
+        return {
+            success: false,
+            error: scan_error instanceof Error ? scan_error.message : String(scan_error),
+            models: []
+        };
+    }
+});
+
+// WHAT: IPC handler to terminate running llama-server and launch a new model instance.
+// WHY: Gives user 1-click model switching from Settings without leaving Resolver.
+ipcMain.handle('llm-switch-model', async (_event, payload: {
+    modelPath: string;
+    mmprojPath?: string;
+    port?: number;
+    contextSize?: number;
+    gpuLayers?: number;
+}) => {
+    try {
+        const { modelPath, mmprojPath, port = 8080, contextSize = 8192, gpuLayers = 99 } = payload;
+        if (!modelPath || !fs.existsSync(modelPath)) {
+            return { success: false, error: `Model file not found at path: ${modelPath}` };
+        }
+
+        const llama_binary_path = findLlamaServerBinaryPath() || 'llama-server.exe';
+
+        // 1. Terminate any currently running llama-server process
+        try {
+            execSync('taskkill /IM llama-server.exe /F', { stdio: 'ignore' });
+            console.log('[LLM] Terminated existing llama-server.exe processes.');
+        } catch {
+            // Process was not running, safe to continue
+        }
+
+        // Brief delay to release socket
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // 2. Assemble launch arguments
+        const launch_arguments: string[] = [
+            '-m', modelPath,
+            '--host', '127.0.0.1',
+            '--port', String(port),
+            '-c', String(contextSize),
+            '-ngl', String(gpuLayers),
+            '--flash-attn', 'on',
+            '--alias', 'default'
+        ];
+
+        if (mmprojPath && fs.existsSync(mmprojPath)) {
+            launch_arguments.push('--mmproj', mmprojPath);
+        }
+
+        console.log(`[LLM] Spawning: ${llama_binary_path} with args:`, launch_arguments);
+        const spawned_server_process = spawn(llama_binary_path, launch_arguments, {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false
+        });
+        spawned_server_process.unref();
+
+        // 3. Persist chosen model path, context size, and GPU layers in config
+        let loaded_config: Record<string, unknown> = {};
+        if (fs.existsSync(CONFIG_PATH)) {
+            try { loaded_config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { /* ignore */ }
+        }
+        loaded_config.selectedLlamaModelPath = modelPath;
+        if (mmprojPath) loaded_config.selectedLlamaMmprojPath = mmprojPath;
+        loaded_config.llamaContextSize = contextSize;
+        loaded_config.llamaGpuLayers = gpuLayers;
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(loaded_config, null, 2));
+
+        // 4. Poll /v1/models until responsive (up to 15 seconds)
+        const llama_client = new LlamaServerClient(`http://127.0.0.1:${port}`);
+        let is_server_ready = false;
+        for (let poll_attempt = 0; poll_attempt < 30; poll_attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            is_server_ready = await llama_client.discoverActiveLlamaServerModel();
+            if (is_server_ready) break;
+        }
+
+        if (!is_server_ready) {
+            return {
+                success: false,
+                error: `llama-server process spawned, but endpoint http://127.0.0.1:${port}/v1/models did not become responsive within 15 seconds.`
+            };
+        }
+
+        const diagnostic_report = await llama_client.testLlamaServerConnection();
+        return {
+            success: true,
+            diagnostic: diagnostic_report
+        };
+
+    } catch (switch_error: unknown) {
+        console.error('[LLM] Failed to switch model:', switch_error);
+        return {
+            success: false,
+            error: switch_error instanceof Error ? switch_error.message : String(switch_error)
+        };
+    }
+});
+
+// WHAT: IPC handler to terminate running llama-server.exe.
+// WHY: Allows stopping local AI inference to free GPU memory when needed.
+ipcMain.handle('llm-stop-server', async () => {
+    try {
+        execSync('taskkill /IM llama-server.exe /F', { stdio: 'ignore' });
+        return { success: true, message: 'llama-server stopped successfully.' };
+    } catch {
+        return { success: true, message: 'No llama-server process was running.' };
+    }
+});
+
+// WHAT: Standardized prompt expansion benchmark on the active llama-server model.
+// WHY: Allows the user to directly compare speed, token rate, and quality between models (e.g. Qwen 3.5 9B vs Qwen 3.8 27B).
+ipcMain.handle('llm-benchmark', async () => {
+    try {
+        let loaded_config: Record<string, unknown> = {};
+        if (fs.existsSync(CONFIG_PATH)) {
+            try { loaded_config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { /* ignore */ }
+        }
+        const port = Number(loaded_config.llamaServerPort) || 8080;
+        const llama_client = new LlamaServerClient(`http://127.0.0.1:${port}`);
+        let is_ready = await llama_client.discoverActiveLlamaServerModel();
+        if (!is_ready) {
+            const auto_start = await ensureLlamaServerRunning(port);
+            if (!auto_start.success) {
+                return { success: false, error: auto_start.error || 'llama-server is offline and could not be auto-started.' };
+            }
+            await llama_client.discoverActiveLlamaServerModel();
+        }
+
+        const active_model = llama_client.getActiveModelIdentifier() || 'Unknown';
+        const test_prompt = "A cinematic medium shot of an astronaut gazing at an alien neon megalopolis from a rain-slicked balcony, moody anamorphic lighting, cyberpunk style, hyper-detailed 4k.";
+        const system_prompt = "You are an elite cinematic prompt engineer for high-end AI video models. Expand the user's scene into a vivid, visually dense video prompt.";
+
+        const start_time = Date.now();
+        const chat_url = llama_client.getChatCompletionsUrl();
+        if (!chat_url) return { success: false, error: 'Chat completions endpoint not available.' };
+
+        const completion_response = await fetch(chat_url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: active_model,
+                messages: [
+                    { role: 'system', content: system_prompt },
+                    { role: 'user', content: test_prompt }
+                ],
+                max_tokens: 180,
+                temperature: 0.7
+            })
+        });
+
+        const elapsed_ms = Date.now() - start_time;
+        if (!completion_response.ok) {
+            return { success: false, error: `Benchmark HTTP error: ${completion_response.status} ${await completion_response.text()}` };
+        }
+
+        const completion_data = (await completion_response.json()) as {
+            choices?: Array<{ message?: { content?: string } }>;
+            usage?: { completion_tokens?: number; prompt_tokens?: number; total_tokens?: number };
+        };
+
+        const generated_text = completion_data.choices?.[0]?.message?.content || '';
+        const tokens_generated = completion_data.usage?.completion_tokens || generated_text.split(/\s+/).length;
+        const tokens_per_second = elapsed_ms > 0 ? ((tokens_generated / (elapsed_ms / 1000))).toFixed(1) : 'N/A';
+
+        return {
+            success: true,
+            model_name: active_model,
+            duration_ms: elapsed_ms,
+            duration_seconds: (elapsed_ms / 1000).toFixed(2),
+            tokens_generated,
+            tokens_per_second,
+            context_size: loaded_config.llamaContextSize || 8192,
+            gpu_layers: loaded_config.llamaGpuLayers !== undefined ? loaded_config.llamaGpuLayers : 99,
+            generated_text
+        };
+    } catch (bench_error: unknown) {
+        console.error('[LLM] Benchmark failed:', bench_error);
+        return { success: false, error: bench_error instanceof Error ? bench_error.message : String(bench_error) };
+    }
 });

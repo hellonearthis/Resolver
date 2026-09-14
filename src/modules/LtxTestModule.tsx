@@ -5,10 +5,21 @@ import { getValidMinimaxFrameCount } from '../utils/timelineUtils';
 import { uploadFileToComfyUI, waitForPromptWebSocket } from '../services/comfyService';
 import PromptEditorModal from '../components/PromptEditorModal';
 
+import type { FileWithPath } from '../components/DropZone';
+
+interface ElectronIpcRenderer {
+    invoke: (channel_name: string, ...arguments_list: unknown[]) => Promise<{ success: boolean; data?: { prompt_id?: string }; error?: string }>;
+}
+
+interface WindowWithElectron {
+    require?: (module_name: string) => { ipcRenderer?: ElectronIpcRenderer };
+}
+
 // Helper to get IPC renderer
-const getIpcRenderer = () => {
-    if ((window as any).require) {
-        return (window as any).require('electron').ipcRenderer;
+const getIpcRenderer = (): ElectronIpcRenderer | null => {
+    const electron_window = window as unknown as WindowWithElectron;
+    if (electron_window.require) {
+        return electron_window.require('electron')?.ipcRenderer ?? null;
     }
     return null;
 };
@@ -64,9 +75,10 @@ export default function LtxTestModule() {
             } else {
                 setStatusMessage(`Error clearing VRAM: ${response.error || 'Unknown error'}`);
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Clear VRAM Error:', error);
-            setStatusMessage(`Error: ${error.message || String(error)}`);
+            const error_message = error instanceof Error ? error.message : String(error);
+            setStatusMessage(`Error: ${error_message}`);
         } finally {
             setIsClearingVram(false);
         }
@@ -169,8 +181,8 @@ export default function LtxTestModule() {
                 body: JSON.stringify(payload)
             });
 
-            if (response.success) {
-                const promptId = response.data?.prompt_id;
+            if (response.success && response.data?.prompt_id) {
+                const promptId = response.data.prompt_id;
                 setStatusMessage(`Success! Task queued. Prompt ID: ${promptId}`);
 
                 // Wait for the actual generation while showing progress
@@ -185,9 +197,10 @@ export default function LtxTestModule() {
                 setStatusMessage(`Error: ${response.error || 'Failed to queue prompt'}`);
             }
 
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error('Generation Error:', error);
-            setStatusMessage(`Error: ${error.message || String(error)}`);
+            const error_message = error instanceof Error ? error.message : String(error);
+            setStatusMessage(`Error: ${error_message}`);
         } finally {
             setIsGenerating(false);
         }
@@ -221,14 +234,14 @@ export default function LtxTestModule() {
                         <div className="flex flex-col md:flex-row gap-4 items-start">
                             <div className="flex-1 w-full">
                                 <DropZone
-                                    onFilesDropped={(files) => {
-                                        if (files.length > 0) {
-                                            const file = files[0];
-                                            setStartImage(file.name);
-                                            setStartImagePath((file as any).path);
+                                    onFilesDropped={(dropped_files: FileWithPath[]) => {
+                                        if (dropped_files.length > 0) {
+                                            const selected_file = dropped_files[0];
+                                            setStartImage(selected_file.name);
+                                            setStartImagePath(selected_file.path || null);
                                             // Create preview URL
                                             if (startImagePreview) URL.revokeObjectURL(startImagePreview);
-                                            setStartImagePreview(URL.createObjectURL(file));
+                                            setStartImagePreview(URL.createObjectURL(selected_file));
                                         }
                                     }}
                                     accept="image/*"
@@ -251,10 +264,10 @@ export default function LtxTestModule() {
                     <div className="bg-gray-800/40 p-4 rounded border border-gray-700/50">
                         <label className="block text-sm font-medium text-gray-300 mb-1">Audio File</label>
                         <DropZone
-                            onFilesDropped={(files) => {
-                                if (files.length > 0) {
-                                    setAudioFile(files[0].name);
-                                    setAudioFilePath((files[0] as any).path);
+                            onFilesDropped={(dropped_files: FileWithPath[]) => {
+                                if (dropped_files.length > 0) {
+                                    setAudioFile(dropped_files[0].name);
+                                    setAudioFilePath(dropped_files[0].path || null);
                                 }
                             }}
                             accept="audio/*"

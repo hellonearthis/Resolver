@@ -1,8 +1,40 @@
 import React, { useState } from 'react';
-import type { VideoClip } from '../types/assembler';
-import { formatTime, buildTimelineRows, getAlignedDuration } from '../utils/timelineUtils';
+import type { VideoClip, ImageFunction } from '../types/assembler';
+import { formatTime, buildTimelineRows, getAlignedDuration, pathToMediaUrl } from '../utils/timelineUtils';
+import { getImageFunctionConfiguration } from '../services/qwenPromptService';
 import PromptEditorModal from './PromptEditorModal';
 import DurationEditPopup from './DurationEditPopup';
+
+interface ElectronRuntimeBridge {
+    ipcRenderer?: {
+        invoke: (channel_name: string, ...arguments_list: unknown[]) => Promise<unknown>;
+    };
+}
+
+interface NodePathModule {
+    dirname: (file_path: string) => string;
+}
+
+interface WindowWithRequire {
+    require?: (module_name: string) => unknown;
+}
+
+// WHAT: Opens the containing folder of a generated video in the OS file explorer.
+// WHY: Gives video creators instant access to raw high-resolution output files on disk.
+const openFolderInExplorer = async (file_path: string) => {
+    try {
+        const electron_window = window as unknown as WindowWithRequire;
+        if (!electron_window.require) return;
+        const electron_module = electron_window.require('electron') as ElectronRuntimeBridge;
+        const node_path_module = electron_window.require('path') as NodePathModule;
+        if (electron_module?.ipcRenderer && node_path_module?.dirname) {
+            const directory_path = node_path_module.dirname(file_path);
+            await electron_module.ipcRenderer.invoke('open-folder', directory_path);
+        }
+    } catch (folder_open_error) {
+        console.error('Failed to open folder in explorer:', folder_open_error);
+    }
+};
 
 /**
  * Props for the ProjectTimelineTable component.
@@ -16,13 +48,14 @@ interface ProjectTimelineTableProps {
     onUpdateClipEndTime: (clipId: string, newEndTime: number) => void;
     onRemoveClip: (clipId: string) => void;
     onPickImage: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
+    onUpdateClipRole?: (clipId: string, slot: 'startImageFunction' | 'endImageFunction', role: ImageFunction) => void;
     onGenerateClip: (clipId: string) => void;
     onError: (msg: string) => void;
 }
 
 /**
  * Renders the project's timeline of video clips as a detailed table.
- * Supports inline editing of clip labels, picking start/end images, and removing clips.
+ * Supports inline editing of clip labels, picking start/end images, assigning reference roles, and removing clips.
  */
 const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
     clips,
@@ -33,8 +66,9 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
     onUpdateClipEndTime,
     onRemoveClip,
     onPickImage,
+    onUpdateClipRole,
     onGenerateClip,
-    onError
+    onError,
 }) => {
     // Helper to parse time string (e.g., "0:02.49") to seconds
     const parseTime = (timeStr: string): number | null => {
@@ -50,7 +84,7 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                 const secs = parseFloat(parts[0]);
                 if (!isNaN(secs)) return secs;
             }
-        } catch (e) {
+        } catch {
             console.error('Failed to parse time:', timeStr);
         }
         return null;
@@ -207,13 +241,13 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                         <input
                                             type="text"
                                             placeholder="AI Prompt (optional)..."
-                                            value={row.clip.notes?.action || (row.clip as any).promptText || ''}
-                                            onChange={(e) => onUpdateClipPrompt(row.clip!.id, e.target.value)}
+                                            value={row.clip.notes?.action || (row.clip as VideoClip & { promptText?: string }).promptText || ''}
+                                            onChange={(change_event) => onUpdateClipPrompt(row.clip!.id, change_event.target.value)}
                                             className="bg-gray-900/50 border border-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded outline-none w-48 focus:border-indigo-500 focus:bg-gray-900 transition-all"
-                                            onClick={(e) => e.stopPropagation()}
+                                            onClick={(click_event) => click_event.stopPropagation()}
                                         />
                                         <button
-                                            onClick={() => openPromptEditor(row.clip!.id, row.clip!.notes?.action || (row.clip as any).promptText || '')}
+                                            onClick={() => openPromptEditor(row.clip!.id, row.clip!.notes?.action || (row.clip as VideoClip & { promptText?: string }).promptText || '')}
                                             className="text-gray-500 hover:text-indigo-400 transition-colors p-1"
                                             title="Expand editor"
                                         >
@@ -310,19 +344,36 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                             <td className="p-2">
                                 {row.clip ? (
                                     row.clip.startImagePath ? (
-                                        <div
-                                            className="w-16 h-10 bg-gray-800 border border-gray-600 rounded overflow-hidden cursor-pointer hover:border-indigo-400 group relative"
-                                            onClick={() => onPickImage(row.clip!.id, 'startImagePath')}
-                                            title={row.clip.startImagePath}
-                                        >
-                                            <img
-                                                src={`media://${row.clip.startImagePath}?t=${Date.now()}`}
-                                                alt="Start"
-                                                className="w-full h-full object-cover"
-                                            />
-                                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                                <span className="text-white text-[10px]">Change</span>
+                                        <div className="flex flex-col gap-1 items-start">
+                                            <div
+                                                className="w-16 h-10 bg-gray-800 border border-gray-600 rounded overflow-hidden cursor-pointer hover:border-indigo-400 group relative"
+                                                onClick={() => onPickImage(row.clip!.id, 'startImagePath')}
+                                                title={row.clip.startImagePath}
+                                            >
+                                                <img
+                                                    src={pathToMediaUrl(row.clip.startImagePath)}
+                                                    alt="Start"
+                                                    className="w-full h-full object-cover"
+                                                />
+                                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                                    <span className="text-white text-[10px]">Change</span>
+                                                </div>
                                             </div>
+                                            {/* WHAT: Interactive role selector for Image 1. */}
+                                            {/* WHY: Allows assigning semantic function (start frame, character, scene, style) directly in the table. */}
+                                            <select
+                                                className={`text-[8px] font-black uppercase px-1 py-0.5 rounded border outline-none cursor-pointer max-w-[72px] truncate ${getImageFunctionConfiguration(row.clip.startImageFunction || 'start_frame').borderClass} ${getImageFunctionConfiguration(row.clip.startImageFunction || 'start_frame').backgroundClass} ${getImageFunctionConfiguration(row.clip.startImageFunction || 'start_frame').textClass}`}
+                                                value={row.clip.startImageFunction || 'start_frame'}
+                                                onChange={(change_event) => onUpdateClipRole?.(row.clip!.id, 'startImageFunction', change_event.target.value as ImageFunction)}
+                                                title={`Assigned Role: ${getImageFunctionConfiguration(row.clip.startImageFunction || 'start_frame').displayName}`}
+                                            >
+                                                <option value="start_frame">🎬 Start Frame</option>
+                                                <option value="end_frame">🏁 End Frame</option>
+                                                <option value="character_reference">👤 Character</option>
+                                                <option value="scene_reference">🏛️ Scene</option>
+                                                <option value="shot_style">🎨 Style</option>
+                                                <option value="storyboard_action">📐 Action</option>
+                                            </select>
                                         </div>
                                     ) : (
                                         <button
@@ -339,19 +390,36 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                             <td className="p-2">
                                 {row.clip ? (
                                     row.clip.endImagePath ? (
-                                        <div
-                                            className="w-16 h-10 bg-gray-800 border border-gray-600 rounded overflow-hidden cursor-pointer hover:border-indigo-400 group relative"
-                                            onClick={() => onPickImage(row.clip!.id, 'endImagePath')}
-                                            title={row.clip.endImagePath}
-                                        >
-                                            <img
-                                                src={`media://${row.clip.endImagePath}?t=${Date.now()}`}
-                                                alt="End"
-                                                className="w-full h-full object-cover"
-                                            />
-                                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                                <span className="text-white text-[10px]">Change</span>
+                                        <div className="flex flex-col gap-1 items-start">
+                                            <div
+                                                className="w-16 h-10 bg-gray-800 border border-gray-600 rounded overflow-hidden cursor-pointer hover:border-indigo-400 group relative"
+                                                onClick={() => onPickImage(row.clip!.id, 'endImagePath')}
+                                                title={row.clip.endImagePath}
+                                            >
+                                                <img
+                                                    src={pathToMediaUrl(row.clip.endImagePath)}
+                                                    alt="End"
+                                                    className="w-full h-full object-cover"
+                                                />
+                                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                                    <span className="text-white text-[10px]">Change</span>
+                                                </div>
                                             </div>
+                                            {/* WHAT: Interactive role selector for Image 2. */}
+                                            {/* WHY: Allows assigning semantic function (end frame, character, scene, style) directly in the table. */}
+                                            <select
+                                                className={`text-[8px] font-black uppercase px-1 py-0.5 rounded border outline-none cursor-pointer max-w-[72px] truncate ${getImageFunctionConfiguration(row.clip.endImageFunction || 'end_frame').borderClass} ${getImageFunctionConfiguration(row.clip.endImageFunction || 'end_frame').backgroundClass} ${getImageFunctionConfiguration(row.clip.endImageFunction || 'end_frame').textClass}`}
+                                                value={row.clip.endImageFunction || 'end_frame'}
+                                                onChange={(change_event) => onUpdateClipRole?.(row.clip!.id, 'endImageFunction', change_event.target.value as ImageFunction)}
+                                                title={`Assigned Role: ${getImageFunctionConfiguration(row.clip.endImageFunction || 'end_frame').displayName}`}
+                                            >
+                                                <option value="start_frame">🎬 Start Frame</option>
+                                                <option value="end_frame">🏁 End Frame</option>
+                                                <option value="character_reference">👤 Character</option>
+                                                <option value="scene_reference">🏛️ Scene</option>
+                                                <option value="shot_style">🎨 Style</option>
+                                                <option value="storyboard_action">📐 Action</option>
+                                            </select>
                                         </div>
                                     ) : (
                                         <button
@@ -398,27 +466,18 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                     <div className="flex items-center gap-1">
                                         <select
                                             className="text-xs bg-gray-800 border-none text-indigo-300 w-24 rounded p-1 cursor-pointer hover:bg-gray-700"
-                                            onChange={async (e) => {
-                                                const url = e.target.value;
-                                                if (url) {
-                                                    try {
-                                                        // @ts-ignore
-                                                        const { ipcRenderer } = window.require('electron');
-                                                        // @ts-ignore
-                                                        const path = window.require('path');
-                                                        const dir = path.dirname(url);
-                                                        await ipcRenderer.invoke('open-folder', dir);
-                                                    } catch (err) {
-                                                        console.error(err);
-                                                    }
+                                            onChange={async (change_event) => {
+                                                const selected_video_path = change_event.target.value;
+                                                if (selected_video_path) {
+                                                    await openFolderInExplorer(selected_video_path);
                                                 }
-                                                e.target.value = ""; // reset
+                                                change_event.target.value = ""; // reset
                                             }}
                                         >
                                             <option value="">{row.clip.generatedVideos.length} Videos ▼</option>
-                                            {row.clip.generatedVideos.map((vid, idx) => (
-                                                <option key={idx} value={vid}>
-                                                    Take {idx + 1}
+                                            {row.clip.generatedVideos.map((video_file_path, video_take_index) => (
+                                                <option key={video_take_index} value={video_file_path}>
+                                                    Take {video_take_index + 1}
                                                 </option>
                                             ))}
                                         </select>
@@ -428,17 +487,10 @@ const ProjectTimelineTable: React.FC<ProjectTimelineTableProps> = ({
                                     <a
                                         href="#"
                                         className="text-indigo-400 hover:text-indigo-300 text-xs underline cursor-pointer"
-                                        onClick={async (e) => {
-                                            e.preventDefault();
-                                            try {
-                                                // @ts-ignore
-                                                const { ipcRenderer } = window.require('electron');
-                                                // @ts-ignore
-                                                const path = window.require('path');
-                                                const dir = path.dirname(row.clip!.videoPath!);
-                                                await ipcRenderer.invoke('open-folder', dir);
-                                            } catch (err) {
-                                                console.error(err);
+                                        onClick={async (click_event) => {
+                                            click_event.preventDefault();
+                                            if (row.clip?.videoPath) {
+                                                await openFolderInExplorer(row.clip.videoPath);
                                             }
                                         }}
                                         title="Open Videos Folder"

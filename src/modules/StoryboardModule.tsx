@@ -15,21 +15,63 @@ import AnimaticTimeline from '../components/storyboard/AnimaticTimeline';
 import StoryboardPaddingCard from '../components/storyboard/StoryboardPaddingCard';
 import type { BeatProject } from '../hooks/useProjectStorage';
 
+// WHAT: Strict types for storyboard timeline items distinguishing active video shots from timeline gaps.
+// WHY: Replaces `any[]` with a type-safe discriminated union that feeds both the card grid and the bottom animatic bar.
+export interface TimelineClipItem {
+    type: 'clip';
+    startTime: number;
+    endTime: number;
+    duration: number;
+    clip: VideoClip;
+    label: string;
+}
+
+export interface TimelineGapItem {
+    type: 'unselected';
+    startTime: number;
+    endTime: number;
+    duration: number;
+    label: string;
+}
+
+export type StoryboardTimelineItem = TimelineClipItem | TimelineGapItem;
+
+// WHAT: Minimal duck-typed interfaces for Node.js fs and path in Electron environment.
+// WHY: Avoids strict Node import errors in client Vite build while allowing native filesystem access in desktop runtime.
+interface NodeFsModule {
+    existsSync: (file_path: string) => boolean;
+    readdirSync: (directory_path: string) => string[];
+}
+
+interface NodePathModule {
+    join: (...path_segments: string[]) => string;
+}
+
+interface ElectronWindowExtended {
+    require?: (module_name: string) => unknown;
+}
+
 interface StoryboardModuleProps {
     activeProject?: BeatProject;
-    onUpdateProject: (id: string, updates: Partial<BeatProject>) => void;
-    onGenerateVideo?: (clipId: string) => Promise<void>;
-    onPickImage?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
-    onCopyImageFromNext?: (clipId: string, field: 'startImagePath' | 'endImagePath') => void;
-    onCopyEndFrameFromPrev?: (clipId: string, exactBeat?: boolean) => void;
-    onGetImageDescription?: (clipId: string) => Promise<void>;
-    onRewordPrompt?: (clipId: string) => Promise<void>;
-    llmProvider?: 'lmstudio' | 'vino';
+    projects?: BeatProject[];
+    onSelectProject?: (project_identifier: string) => void;
+    onCreateBlankProject?: (project_name?: string) => Promise<BeatProject>;
+    onUpdateProject: (project_identifier: string, project_updates: Partial<BeatProject>) => void;
+    onGenerateVideo?: (clip_identifier: string) => Promise<void>;
+    onPickImage?: (clip_identifier: string, image_field_name: 'startImagePath' | 'endImagePath') => void;
+    onCopyImageFromNext?: (clip_identifier: string, image_field_name: 'startImagePath' | 'endImagePath') => void;
+    onCopyEndFrameFromPrev?: (clip_identifier: string, align_to_exact_beat?: boolean) => void;
+    onGetImageDescription?: (clip_identifier: string, image_slot?: 'startImagePath' | 'endImagePath') => Promise<void>;
+    onRewordPrompt?: (clip_identifier: string) => Promise<void>;
+    llmProvider?: 'llama-server' | 'vino';
     comfyConnected?: boolean;
 }
 
 const StoryboardModule: React.FC<StoryboardModuleProps> = ({ 
     activeProject, 
+    projects,
+    onSelectProject,
+    onCreateBlankProject,
     onUpdateProject, 
     onGenerateVideo,
     onPickImage,
@@ -40,332 +82,403 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
     llmProvider,
     comfyConnected
 }) => {
-    const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+    const [, setSelectedCardId] = useState<string | null>(null);
+    const [newStoryboardTitleInput, setNewStoryboardTitleInput] = useState<string>('');
+    const [isCreatingStoryboardState, setIsCreatingStoryboardState] = useState<boolean>(false);
 
-    const cards = (activeProject?.clips || []) as VideoClip[];
+    const storyboard_cards = (activeProject?.clips || []) as VideoClip[];
 
-    /**
-     * AUTO-HEAL LEGACY DATA:
-     * 
-     * WHY: Older project versions or interrupted generations might leave AI descriptions 
-     * in the 'notes.action' box while leaving the 'actionDescription' box empty.
-     * HOW: We run a one-time check when the project loads. If we find this specific 
-     * pattern, we migrate the text to the correct field to clean up the UI.
-     */
+    // WHAT: Auto-heals legacy project schemas by relocating misplaced AI descriptions.
+    // WHY: Early project versions placed image descriptions into `notes.action`. This migration ensures
+    // descriptions live in `actionDescription` without disturbing custom director dialogue or sound notes.
     React.useEffect(() => {
         if (!activeProject || !activeProject.clips) return;
         
-        let needsHeal = false;
-        const healedClips = activeProject.clips.map(clip => {
-            const hasLegacyAction = clip.notes?.action && clip.notes.action.length > 50; // Description-y length
-            const hasEmptyDesc = !clip.actionDescription;
+        let needs_auto_heal = false;
+        const healed_clips_list = (activeProject.clips as VideoClip[]).map(candidate_clip => {
+            const has_legacy_action_text = candidate_clip.notes?.action && candidate_clip.notes.action.length > 50;
+            const has_empty_description = !candidate_clip.actionDescription;
 
-            // If it looks like a description was misplaced, move it
-            if (hasEmptyDesc && hasLegacyAction) {
-                needsHeal = true;
+            if (has_empty_description && has_legacy_action_text && candidate_clip.notes) {
+                needs_auto_heal = true;
                 return {
-                    ...clip,
-                    actionDescription: clip.notes.action,
-                    notes: { ...clip.notes, action: '' }
+                    ...candidate_clip,
+                    actionDescription: candidate_clip.notes.action,
+                    notes: { ...candidate_clip.notes, action: '' }
                 };
             }
-            return clip;
+            return candidate_clip;
         });
 
-        if (needsHeal) {
+        if (needs_auto_heal) {
             console.log(`🎨 [Storyboard] Auto-healing ${activeProject.name}: Migrating legacy descriptions...`);
-            onUpdateProject(activeProject.id, { clips: healedClips });
+            onUpdateProject(activeProject.id, { clips: healed_clips_list });
         }
-    }, [activeProject?.id]); // Only run when the project itself changes
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- Only runs once per project load when ID changes
+    }, [activeProject?.id]);
 
-    /**
-     * Creates a new blank storyboard card in a specific gap in the timeline.
-     * @param startTime The insertion time in seconds.
-     * @param duration How long the new card should last.
-     */
-    const handleFillPadding = (startTime: number, duration: number) => {
+    // WHAT: Inserts a new blank shot card to fill an empty time gap on the timeline.
+    // WHY: Enables editors to click on empty intervals between shots to scaffold a new scene beat.
+    const handleFillPadding = (start_time_seconds: number, target_duration_seconds: number) => {
         if (!activeProject) return;
-        const frameRate = activeProject.frameRate || 20;
-        const alignedDuration = getAlignedDuration(duration, frameRate);
-        const nextIndex = cards.length + 1;
+        const timeline_frame_rate = activeProject.frameRate || 20;
+        const aligned_duration_seconds = getAlignedDuration(target_duration_seconds, timeline_frame_rate);
+        const next_shot_index = storyboard_cards.length + 1;
 
-        const newCard: VideoClip = {
+        const newly_created_card: VideoClip = {
             id: `card-${Date.now()}`,
-            startTime: startTime,
-            duration: alignedDuration,
-            endTime: startTime + alignedDuration,
+            startTime: start_time_seconds,
+            duration: aligned_duration_seconds,
+            endTime: start_time_seconds + aligned_duration_seconds,
             track: 1,
             status: 'pending',
             source: 'main',
-            label: `Shot ${nextIndex}`,
+            label: `Shot ${next_shot_index}`,
             sceneNumber: '1',
             shotLetter: 'A',
             notes: { action: '', dialogue: '', sound: '' },
             paceWpm: PacingBenchmarks.CONVERSATIONAL
         };
 
-        const updatedCards = [...cards, newCard];
-        // Sort clips by start time just in case, though usually they are appended
-        updatedCards.sort((a, b) => a.startTime - b.startTime);
-        onUpdateProject(activeProject.id, { clips: updatedCards });
+        const updated_cards_list = [...storyboard_cards, newly_created_card];
+        updated_cards_list.sort((first_clip, second_clip) => first_clip.startTime - second_clip.startTime);
+        onUpdateProject(activeProject.id, { clips: updated_cards_list });
     };
 
-    /**
-     * Updates a specific storyboard card and manages side-effects like timing ripples
-     * and data cleanup.
-     * 
-     * @param id The ID of the card to update.
-     * @param updates A partial VideoClip object containing the new data.
-     */
-    const handleUpdateCard = (id: string, updates: any) => {
+    // WHAT: Appends a new blank shot card directly to the active storyboard timeline.
+    // WHY: Enables creators to quickly expand their storyboard scene without needing to find a padding card.
+    const handleAppendShot = () => {
+        if (!activeProject) return;
+        const timeline_frame_rate = activeProject.frameRate || 20;
+        const default_shot_duration_seconds = 4.0;
+        const aligned_duration_seconds = getAlignedDuration(default_shot_duration_seconds, timeline_frame_rate);
+
+        const sorted_existing_clips = [...storyboard_cards].sort((first_clip, second_clip) => first_clip.startTime - second_clip.startTime);
+        const last_clip_entry = sorted_existing_clips[sorted_existing_clips.length - 1];
+        const next_shot_start_time = last_clip_entry ? last_clip_entry.endTime : 0;
+        const next_shot_index = storyboard_cards.length + 1;
+
+        const newly_created_card: VideoClip = {
+            id: `card-${Date.now()}`,
+            startTime: next_shot_start_time,
+            duration: aligned_duration_seconds,
+            endTime: next_shot_start_time + aligned_duration_seconds,
+            track: 1,
+            status: 'pending',
+            source: 'main',
+            label: `Shot ${next_shot_index}`,
+            sceneNumber: '1',
+            shotLetter: 'A',
+            notes: { action: '', dialogue: '', sound: '' },
+            paceWpm: PacingBenchmarks.CONVERSATIONAL
+        };
+
+        const updated_cards_list = [...storyboard_cards, newly_created_card];
+        updated_cards_list.sort((first_clip, second_clip) => first_clip.startTime - second_clip.startTime);
+
+        const new_total_project_duration = Math.max(activeProject.duration || 0, newly_created_card.endTime);
+        onUpdateProject(activeProject.id, {
+            clips: updated_cards_list,
+            duration: new_total_project_duration
+        });
+    };
+
+    // WHAT: Creates a new blank project directly from the Storyboard view.
+    // WHY: Provides a seamless 1-click storyboard instantiation experience without forcing a navigation switch.
+    const handleCreateStoryboardAction = async () => {
+        if (!onCreateBlankProject) return;
+        setIsCreatingStoryboardState(true);
+        try {
+            const desired_project_name = newStoryboardTitleInput.trim() || undefined;
+            await onCreateBlankProject(desired_project_name);
+            setNewStoryboardTitleInput('');
+        } finally {
+            setIsCreatingStoryboardState(false);
+        }
+    };
+
+    // WHAT: Updates card properties and ripples timing forward through subsequent shots.
+    // WHY: Video cuts in film editing are contiguous. If shot 1 expands by 2 seconds, shots 2, 3, etc.
+    // must shift their start and end boundaries forward automatically to prevent overlapping media.
+    const handleUpdateCard = (clip_identifier_to_update: string, property_updates: Partial<VideoClip>) => {
         if (!activeProject) return;
         
-        let newClips = [...cards];
-        const clipIndex = newClips.findIndex(c => c.id === id);
-        if (clipIndex === -1) return;
+        const updated_clips_list = [...storyboard_cards];
+        const target_clip_index = updated_clips_list.findIndex(candidate_clip => candidate_clip.id === clip_identifier_to_update);
+        if (target_clip_index === -1) return;
 
-        // Apply update to the targeted clip
-        let currentClip = newClips[clipIndex];
-        let updatedClip: VideoClip;
+        const current_clip_snapshot = updated_clips_list[target_clip_index];
+        let finalized_updated_clip: VideoClip;
 
-        // Custom handling for nested notes to prevent overwriting other note fields
-        if ('notes' in updates && updates.notes) {
-            updatedClip = {
-                ...currentClip,
+        // Custom handling for nested notes to prevent clobbering dialogue or sound cues
+        if ('notes' in property_updates && property_updates.notes) {
+            finalized_updated_clip = {
+                ...current_clip_snapshot,
                 notes: {
-                    ...(currentClip.notes || { action: '', dialogue: '', sound: '' }),
-                    ...updates.notes
+                    ...(current_clip_snapshot.notes || { action: '', dialogue: '', sound: '' }),
+                    ...property_updates.notes
                 }
             };
         } else {
-            updatedClip = { ...currentClip, ...updates };
+            finalized_updated_clip = { ...current_clip_snapshot, ...property_updates };
         }
 
-        /**
-         * DATA MIGRATION GUARD:
-         * 
-         * WHY: Historically, if the 'actionDescription' field didn't exist, users or the system 
-         * might have stored AI descriptions in 'notes.action'.
-         * HOW: If we just got a new AI description and it matches exactly what was in the 
-         * action field, we clear the action field to force a clean separation between 
-         * narrative prompt and image description.
-         */
-        if (updates.actionDescription && updatedClip.notes?.action === updates.actionDescription) {
-            updatedClip = {
-                ...updatedClip,
-                notes: { ...(updatedClip.notes || { action: '', dialogue: '', sound: '' }), action: '' }
-            } as VideoClip;
+        // Data migration guard: Prevent duplicated narrative prompt and image description
+        if (property_updates.actionDescription && finalized_updated_clip.notes?.action === property_updates.actionDescription) {
+            finalized_updated_clip = {
+                ...finalized_updated_clip,
+                notes: { ...(finalized_updated_clip.notes || { action: '', dialogue: '', sound: '' }), action: '' }
+            };
         }
         
-        // Handle duration auto-calc
-        const hasDialogueUpdate = updates.notes && 'dialogue' in updates.notes && updates.notes.dialogue !== currentClip.notes?.dialogue;
-        const hasPaceUpdate = updates.paceWpm !== undefined && updates.paceWpm !== currentClip.paceWpm;
+        // Dynamic speaking duration calculation based on dialogue word count and words-per-minute (WPM)
+        const has_dialogue_changed = property_updates.notes && 'dialogue' in property_updates.notes && property_updates.notes.dialogue !== current_clip_snapshot.notes?.dialogue;
+        const has_pace_changed = property_updates.paceWpm !== undefined && property_updates.paceWpm !== current_clip_snapshot.paceWpm;
 
-        if (hasDialogueUpdate || hasPaceUpdate) {
-            const dialogue = updatedClip.notes?.dialogue || '';
-            const words = dialogue.trim().split(/\s+/).filter((w: string) => w.length > 0);
-            const wordCount = words.length;
+        if (has_dialogue_changed || has_pace_changed) {
+            const dialogue_text = finalized_updated_clip.notes?.dialogue || '';
+            const dialogue_words = dialogue_text.trim().split(/\s+/).filter((word_string: string) => word_string.length > 0);
+            const total_word_count = dialogue_words.length;
             
-            // Only recalculate duration if there are words, or if there were words and they were just deleted
-            if (wordCount > 0 || (wordCount === 0 && currentClip.notes?.dialogue)) {
-                const rawDuration = Math.max(1.5, (wordCount / (updatedClip.paceWpm || PacingBenchmarks.CONVERSATIONAL)) * 60);
-                const frameRate = activeProject.frameRate || 20;
-                updatedClip.duration = getAlignedDuration(rawDuration, frameRate);
+            if (total_word_count > 0 || (total_word_count === 0 && current_clip_snapshot.notes?.dialogue)) {
+                const calculated_raw_duration = Math.max(1.5, (total_word_count / (finalized_updated_clip.paceWpm || PacingBenchmarks.CONVERSATIONAL)) * 60);
+                const timeline_frame_rate = activeProject.frameRate || 20;
+                finalized_updated_clip.duration = getAlignedDuration(calculated_raw_duration, timeline_frame_rate);
             }
         }
-        updatedClip.endTime = updatedClip.startTime + updatedClip.duration;
-        newClips[clipIndex] = updatedClip;
+        finalized_updated_clip.endTime = finalized_updated_clip.startTime + finalized_updated_clip.duration;
+        updated_clips_list[target_clip_index] = finalized_updated_clip;
 
-        /**
-         * RIPPING EFFECT (Sequential Sync):
-         * 
-         * WHY: In a linear storyboard, clips must remain perfectly contiguous. If clip A's 
-         * duration changes, clip B must shift its start time to match clip A's new end time.
-         * HOW: We iterate through all clips following the edited one and push their 
-         * startTime to the previous clip's endTime.
-         */
-        for (let i = clipIndex + 1; i < newClips.length; i++) {
-            const prev = newClips[i - 1];
-            newClips[i] = {
-                ...newClips[i],
-                startTime: prev.endTime,
-                endTime: prev.endTime + newClips[i].duration
+        // Ripple forward through contiguous downstream clips
+        for (let ripple_index = target_clip_index + 1; ripple_index < updated_clips_list.length; ripple_index++) {
+            const preceding_clip = updated_clips_list[ripple_index - 1];
+            updated_clips_list[ripple_index] = {
+                ...updated_clips_list[ripple_index],
+                startTime: preceding_clip.endTime,
+                endTime: preceding_clip.endTime + updated_clips_list[ripple_index].duration
             };
         }
         
-        onUpdateProject(activeProject.id, { clips: newClips });
+        onUpdateProject(activeProject.id, { clips: updated_clips_list });
     };
 
-    const handleDeleteCard = (id: string) => {
+    // WHAT: Removes a shot card from the timeline and closes the temporal gap.
+    // WHY: Deleting a shot pulls subsequent shots backward so the edit maintains contiguous playback.
+    const handleDeleteCard = (clip_identifier_to_delete: string) => {
         if (!activeProject) return;
-        let newClips = cards.filter(c => c.id !== id);
+        let remaining_clips_list = storyboard_cards.filter(candidate_clip => candidate_clip.id !== clip_identifier_to_delete);
         
-        // Rippling Effect: Re-calculate all timings to close the gap after deletion
-        let currentTime = 0;
-        newClips = newClips.map(c => {
-            const updated = {
-                ...c,
-                startTime: currentTime,
-                endTime: currentTime + c.duration
+        // Ripple effect: Recalculate start and end times to eliminate the empty slot
+        let current_playback_time = 0;
+        remaining_clips_list = remaining_clips_list.map(candidate_clip => {
+            const compacted_clip = {
+                ...candidate_clip,
+                startTime: current_playback_time,
+                endTime: current_playback_time + candidate_clip.duration
             };
-            currentTime = updated.endTime;
-            return updated;
+            current_playback_time = compacted_clip.endTime;
+            return compacted_clip;
         });
 
-        onUpdateProject(activeProject.id, { clips: newClips });
-        if (selectedCardId === id) setSelectedCardId(null);
+        onUpdateProject(activeProject.id, { clips: remaining_clips_list });
+        setSelectedCardId(previous_selected_id => previous_selected_id === clip_identifier_to_delete ? null : previous_selected_id);
     };
 
-    // handleGenerateImage removed as requested
-
-    /**
-     * Scans the project's output/videos folder and synchronizes the project metadata
-     * with the physical files found on disk.
-     * 
-     * HOW: It uses a regular expression to match files like "Shot_1_take2.mp4" and 
-     * automatically associates them with the corresponding storyboard card.
-     */
+    // WHAT: Discovers rendered video takes on disk and matches them with their parent storyboard shots.
+    // WHY: Allows ComfyUI or MiniMax rendering outputs saved in `videos/` to automatically appear as selectable takes.
     const handleSyncGeneratedVideos = async () => {
         if (!activeProject?.outputDir) return;
 
-        const fs = window.require('fs');
-        const path = window.require('path');
-        const videosDir = path.join(activeProject.outputDir, 'videos');
+        const electron_window = window as unknown as ElectronWindowExtended;
+        const node_fs_module: NodeFsModule | null = electron_window.require ? (electron_window.require('fs') as NodeFsModule) : null;
+        const node_path_module: NodePathModule | null = electron_window.require ? (electron_window.require('path') as NodePathModule) : null;
+        if (!node_fs_module || !node_path_module) return;
 
-        if (!fs.existsSync(videosDir)) return;
+        const project_videos_directory = node_path_module.join(activeProject.outputDir, 'videos');
+        if (!node_fs_module.existsSync(project_videos_directory)) return;
 
         try {
-            const files = fs.readdirSync(videosDir).filter((f: string) => f.endsWith('.mp4'));
-            let updateCount = 0;
+            const discovered_video_files: string[] = node_fs_module
+                .readdirSync(project_videos_directory)
+                .filter((video_filename: string) => video_filename.endsWith('.mp4'));
+            let updated_clips_count = 0;
 
-            const updatedClips = cards.map(clip => {
-                const safeLabel = clip.label.replace(/[^a-z0-9]/gi, '_');
+            const synchronized_clips_list = storyboard_cards.map(candidate_clip => {
+                const sanitized_clip_label = candidate_clip.label.replace(/[^a-z0-9]/gi, '_');
                 
-                // 1. Identify which videos currently exist in the videos folder for this clip
-                const matchingFiles = files.filter((f: string) => {
-                    const regex = new RegExp(`^${safeLabel}_take(\\d+)\\.mp4$`, 'i');
-                    return regex.test(f);
-                }).map((f: string) => {
-                    const takeNum = parseInt(f.match(/_take(\d+)\.mp4$/i)?.[1] || "0", 10);
+                // Identify videos currently in directory matching this shot's name
+                const matching_video_files = discovered_video_files.filter((video_filename: string) => {
+                    const take_regex_pattern = new RegExp(`^${sanitized_clip_label}_take(\\d+)\\.mp4$`, 'i');
+                    return take_regex_pattern.test(video_filename);
+                }).map((video_filename: string) => {
+                    const take_number_parsed = parseInt(video_filename.match(/_take(\d+)\.mp4$/i)?.[1] || "0", 10);
                     return {
-                        fullPath: path.join(videosDir, f),
-                        take: takeNum
+                        fullPath: node_path_module.join(project_videos_directory, video_filename),
+                        take: take_number_parsed
                     };
-                }).sort((a: any, b: any) => b.take - a.take);
+                }).sort((first_take, second_take) => second_take.take - first_take.take);
 
-                const foundPaths = matchingFiles.map((m: any) => m.fullPath);
+                const found_video_paths = matching_video_files.map(take_item => take_item.fullPath);
                 
-                // 2. Cross-reference with existing project data to catch deleted or manual additions
-                const existingVideos = clip.generatedVideos || [];
-                // Only keep existing videos that still exist on disk
-                const stillExisting = existingVideos.filter((p: string) => fs.existsSync(p));
+                // Cross-reference with existing video list to filter deleted files
+                const existing_videos_list = candidate_clip.generatedVideos || [];
+                const still_existing_videos = existing_videos_list.filter((video_file_path: string) => node_fs_module.existsSync(video_file_path));
                 
-                // Combine and deduplicate
-                const combinedVideos = Array.from(new Set([...stillExisting, ...foundPaths]));
+                const deduplicated_videos = Array.from(new Set([...still_existing_videos, ...found_video_paths]));
                 
-                // 3. Check active video path
-                let currentVideoPath = clip.videoPath;
-                const activeExists = currentVideoPath ? fs.existsSync(currentVideoPath) : false;
+                let current_selected_video_path = candidate_clip.videoPath;
+                const active_file_exists_on_disk = current_selected_video_path ? node_fs_module.existsSync(current_selected_video_path) : false;
 
-                // Determine if we need an update
-                const videosChanged = combinedVideos.length !== existingVideos.length;
-                const activeMissing = currentVideoPath && !activeExists;
-                const statusUpdate = (combinedVideos.length > 0 && clip.status !== 'done');
+                const has_video_set_changed = deduplicated_videos.length !== existing_videos_list.length;
+                const is_active_video_missing = current_selected_video_path && !active_file_exists_on_disk;
+                const is_status_update_needed = deduplicated_videos.length > 0 && candidate_clip.status !== 'done';
 
-                if (videosChanged || activeMissing || statusUpdate) {
-                    updateCount++;
+                if (has_video_set_changed || is_active_video_missing || is_status_update_needed) {
+                    updated_clips_count++;
                     
-                    // If active video is missing, try to pick the latest take
-                    if (activeMissing || !currentVideoPath) {
-                        currentVideoPath = matchingFiles.length > 0 ? matchingFiles[0].fullPath : (combinedVideos.length > 0 ? combinedVideos[0] : undefined);
+                    if (is_active_video_missing || !current_selected_video_path) {
+                        current_selected_video_path = matching_video_files.length > 0 
+                            ? matching_video_files[0].fullPath 
+                            : (deduplicated_videos.length > 0 ? deduplicated_videos[0] : undefined);
                     }
 
                     return {
-                        ...clip,
-                        status: combinedVideos.length > 0 ? 'done' as const : (clip.status === 'done' ? 'pending' : clip.status),
-                        videoPath: currentVideoPath,
-                        generatedVideos: combinedVideos
+                        ...candidate_clip,
+                        status: deduplicated_videos.length > 0 ? 'done' as const : (candidate_clip.status === 'done' ? 'pending' : candidate_clip.status),
+                        videoPath: current_selected_video_path,
+                        generatedVideos: deduplicated_videos
                     };
                 }
-                return clip;
+                return candidate_clip;
             });
 
-            if (updateCount > 0) {
-                onUpdateProject(activeProject.id, { clips: updatedClips });
+            if (updated_clips_count > 0) {
+                onUpdateProject(activeProject.id, { clips: synchronized_clips_list });
             }
-        } catch (err) {
-            console.error("Sync error:", err);
+        } catch (error_instance) {
+            console.error("Sync error:", error_instance);
         }
     };
 
-    /**
-     * INTERLEAVED TIMELINE ITEMS:
-     * 
-     * WHY: The UI needs to render both the storyboard cards AND the 'gaps' (padding) 
-     * between them as interactive elements.
-     * HOW: We iterate through sorted clips and insert 'unselected' gap objects whenever 
-     * there is a significant jump in the timeline sequence.
-     */
-    const projectDuration = activeProject?.duration || 0;
-    const sortedClips = [...cards].sort((a, b) => a.startTime - b.startTime);
+    // WHAT: Computes an interleaved array of video shot cards and empty timeline intervals.
+    // WHY: Gives visual pacing to the director, showing where clips align against the musical beat duration.
+    const project_total_duration_seconds = activeProject?.duration || 0;
+    const sorted_clips_chronological = [...storyboard_cards].sort((first_clip, second_clip) => first_clip.startTime - second_clip.startTime);
     
-    const timelineItems: any[] = []; // Using any[] temporarily or align with TimelineRow
+    const interleaved_timeline_items: StoryboardTimelineItem[] = [];
     
-    if (activeProject && projectDuration > 0) {
-        let currentTime = 0;
+    if (activeProject && project_total_duration_seconds > 0) {
+        let current_traversed_time = 0;
         
-        for (const clip of sortedClips) {
-            // Check for gap before this clip
-            if (clip.startTime > currentTime + 0.01) {
-                timelineItems.push({
+        for (const candidate_clip of sorted_clips_chronological) {
+            // Check for unassigned gap before this clip
+            if (candidate_clip.startTime > current_traversed_time + 0.01) {
+                interleaved_timeline_items.push({
                     type: 'unselected',
-                    startTime: currentTime,
-                    endTime: clip.startTime,
-                    duration: clip.startTime - currentTime,
+                    startTime: current_traversed_time,
+                    endTime: candidate_clip.startTime,
+                    duration: candidate_clip.startTime - current_traversed_time,
                     label: 'Gap'
                 });
             }
             // Add the clip itself
-            timelineItems.push({
+            interleaved_timeline_items.push({
                 type: 'clip',
-                startTime: clip.startTime,
-                endTime: clip.endTime,
-                duration: clip.duration,
-                clip: clip,
-                label: clip.label
+                startTime: candidate_clip.startTime,
+                endTime: candidate_clip.endTime,
+                duration: candidate_clip.duration,
+                clip: candidate_clip,
+                label: candidate_clip.label
             });
-            currentTime = Math.max(currentTime, clip.endTime);
+            current_traversed_time = Math.max(current_traversed_time, candidate_clip.endTime);
         }
         
         // Final gap at end
-        if (currentTime < projectDuration - 0.01) {
-            timelineItems.push({
+        if (current_traversed_time < project_total_duration_seconds - 0.01) {
+            interleaved_timeline_items.push({
                 type: 'unselected',
-                startTime: currentTime,
-                endTime: projectDuration,
-                duration: projectDuration - currentTime,
+                startTime: current_traversed_time,
+                endTime: project_total_duration_seconds,
+                duration: project_total_duration_seconds - current_traversed_time,
                 label: 'Gap'
             });
         }
     } else {
-        // Fallback for no duration: just show clips
-        sortedClips.forEach(clip => {
-            timelineItems.push({
+        // Fallback when project has no audio duration
+        sorted_clips_chronological.forEach(candidate_clip => {
+            interleaved_timeline_items.push({
                 type: 'clip',
-                startTime: clip.startTime,
-                endTime: clip.endTime,
-                duration: clip.duration,
-                clip: clip,
-                label: clip.label
+                startTime: candidate_clip.startTime,
+                endTime: candidate_clip.endTime,
+                duration: candidate_clip.duration,
+                clip: candidate_clip,
+                label: candidate_clip.label
             });
         });
     }
 
     if (!activeProject) {
         return (
-            <div className="flex flex-col items-center justify-center h-[60vh] text-gray-500 gap-4">
-                <span className="text-6xl opacity-20">📂</span>
-                <p className="text-xl font-medium">Please select or create a project to start storyboarding.</p>
+            <div className="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center bg-[#0a0a0f] text-white">
+                <div className="max-w-md w-full bg-[#11111b] border border-gray-800/80 rounded-2xl p-8 shadow-2xl flex flex-col items-center gap-6">
+                    <div className="w-16 h-16 rounded-2xl bg-indigo-600/10 border border-indigo-500/30 flex items-center justify-center text-3xl">
+                        🎨
+                    </div>
+                    <div>
+                        <h2 className="text-xl font-bold text-white">Start Storyboarding</h2>
+                        <p className="text-xs text-gray-400 mt-1">
+                            Create a new storyboard project or open an existing project to plan your video shots.
+                        </p>
+                    </div>
+
+                    {onCreateBlankProject && (
+                        <div className="w-full flex flex-col gap-3">
+                            <input
+                                autoFocus
+                                type="text"
+                                value={newStoryboardTitleInput}
+                                onChange={(change_event) => setNewStoryboardTitleInput(change_event.target.value)}
+                                onKeyDown={(keyboard_event) => {
+                                    if (keyboard_event.key === 'Enter') {
+                                        handleCreateStoryboardAction();
+                                    }
+                                }}
+                                placeholder="Storyboard Name (e.g. Cyberpunk Chase)..."
+                                className="w-full bg-[#181825] border border-gray-700/60 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                            />
+                            <button
+                                onClick={handleCreateStoryboardAction}
+                                disabled={isCreatingStoryboardState}
+                                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-semibold rounded-lg shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2"
+                            >
+                                <span>➕</span>
+                                {isCreatingStoryboardState ? 'Creating Storyboard...' : 'Create New Storyboard'}
+                            </button>
+                        </div>
+                    )}
+
+                    {projects && projects.length > 0 && onSelectProject && (
+                        <div className="w-full border-t border-gray-800/80 pt-5 flex flex-col gap-2">
+                            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider text-left">
+                                Or Open Existing Project ({projects.length})
+                            </span>
+                            <div className="max-h-48 overflow-y-auto flex flex-col gap-1.5 text-left">
+                                {projects.map((project_entry) => (
+                                    <button
+                                        key={project_entry.id}
+                                        onClick={() => onSelectProject(project_entry.id)}
+                                        className="w-full text-left px-3 py-2 bg-[#181825] hover:bg-indigo-900/20 hover:border-indigo-500/40 border border-transparent rounded-lg text-xs text-gray-300 hover:text-white transition-all flex items-center justify-between group"
+                                    >
+                                        <span className="font-medium truncate">{project_entry.name}</span>
+                                        <span className="text-[10px] text-gray-500 group-hover:text-indigo-400 font-mono">
+                                            {project_entry.clips?.length || 0} shots
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
         );
     }
@@ -379,18 +492,60 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                         <h2 className="text-2xl font-bold flex items-center gap-2">
                              <span className="text-indigo-500">🎨</span> Story Board
                         </h2>
-                        <p className="text-[11px] text-gray-500 uppercase tracking-widest font-semibold mt-1">Project: {activeProject.name}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[11px] text-gray-500 uppercase tracking-widest font-semibold">Project:</span>
+                            {projects && projects.length > 1 && onSelectProject ? (
+                                <select
+                                    value={activeProject.id}
+                                    onChange={(change_event) => onSelectProject(change_event.target.value)}
+                                    className="bg-[#181825] border border-gray-700/60 rounded px-2 py-0.5 text-xs text-indigo-200 font-semibold focus:outline-none focus:border-indigo-500 transition-colors"
+                                >
+                                    {projects.map((project_choice) => (
+                                        <option key={project_choice.id} value={project_choice.id} className="bg-[#11111b] text-white">
+                                            {project_choice.name} ({project_choice.clips?.length || 0} shots)
+                                        </option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <span className="text-[11px] text-indigo-300 font-semibold">{activeProject.name}</span>
+                            )}
+                        </div>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-3">
+                    {/* Add Shot Button */}
+                    <button 
+                        onClick={handleAppendShot}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow-md shadow-indigo-600/20 transition-all text-xs font-semibold"
+                        title="Append a new blank shot card to the end of this storyboard"
+                    >
+                        <span>➕</span> Add Shot
+                    </button>
+
+                    {/* Quick New Storyboard Button */}
+                    {onCreateBlankProject && (
+                        <button
+                            onClick={async () => {
+                                const requested_storyboard_title = window.prompt('Enter name for new storyboard:');
+                                if (requested_storyboard_title !== null) {
+                                    await onCreateBlankProject(requested_storyboard_title.trim() || undefined);
+                                }
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded-lg border border-gray-700/60 transition-all text-xs font-medium"
+                            title="Create another new storyboard"
+                        >
+                            <span>📋</span> New Storyboard
+                        </button>
+                    )}
+
                     <button 
                         onClick={handleSyncGeneratedVideos}
-                        className="flex items-center gap-2 px-3 py-1 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-full border border-indigo-500/30 transition-all text-[10px] font-bold uppercase tracking-widest"
+                        className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-lg border border-indigo-500/30 transition-all text-[10px] font-bold uppercase tracking-widest"
                     >
                         <span>🔄</span> Sync Videos
                     </button>
-                    <div className="flex items-center gap-2 px-3 py-1 bg-black/40 rounded-full border border-gray-800/50">
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-black/40 rounded-lg border border-gray-800/50">
                         <div className={`w-2 h-2 rounded-full ${comfyConnected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'}`}></div>
                         <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none">
                             {comfyConnected ? 'Comfy Connected' : 'Comfy Offline'}
@@ -402,15 +557,15 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
             {/* Main Content Area */}
             <div className="flex-1 overflow-y-auto p-8">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-                    {timelineItems.map((item, idx) => {
-                        if (item.type === 'clip') {
-                            const currentIdx = sortedClips.findIndex(c => c.id === item.clip.id);
-                            const prevClip = sortedClips[currentIdx - 1];
-                            const nextClip = sortedClips[currentIdx + 1];
+                    {interleaved_timeline_items.map((timeline_item, item_index) => {
+                        if (timeline_item.type === 'clip') {
+                            const current_item_index = sorted_clips_chronological.findIndex(candidate => candidate.id === timeline_item.clip.id);
+                            const previous_clip = sorted_clips_chronological[current_item_index - 1];
+                            const following_clip = sorted_clips_chronological[current_item_index + 1];
                             return (
-                                <div key={item.clip.id} className="h-full">
+                                <div key={timeline_item.clip.id} className="h-full">
                                     <StoryboardCardComponent 
-                                        card={item.clip}
+                                        card={timeline_item.clip}
                                         frameRate={activeProject?.frameRate || 20}
                                         onUpdate={handleUpdateCard}
                                         onDelete={handleDeleteCard}
@@ -421,8 +576,8 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                         onGetImageDescription={onGetImageDescription}
                                         onRewordPrompt={onRewordPrompt}
                                         llmProvider={llmProvider}
-                                        nextClipStartImage={nextClip?.startImagePath}
-                                        prevClipEndImage={prevClip?.endImagePath}
+                                        nextClipStartImage={following_clip?.startImagePath}
+                                        prevClipEndImage={previous_clip?.endImagePath}
                                         comfyConnected={comfyConnected}
                                     />
                                 </div>
@@ -430,9 +585,9 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                         } else {
                             return (
                                 <StoryboardPaddingCard 
-                                    key={`padding-${idx}-${item.startTime}`}
-                                    startTime={item.startTime}
-                                    duration={item.duration}
+                                    key={`padding-${item_index}-${timeline_item.startTime}`}
+                                    startTime={timeline_item.startTime}
+                                    duration={timeline_item.duration}
                                     onAdd={handleFillPadding}
                                 />
                             );
@@ -444,7 +599,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
             {/* Persistent Animatic Timeline */}
             <div className="h-44 border-t border-gray-800/30 px-4 py-2 bg-[#050508]/50">
                 <AnimaticTimeline 
-                    items={timelineItems} 
+                    items={interleaved_timeline_items} 
                     onSelectCard={setSelectedCardId}
                     compact={true}
                     onAddPadding={handleFillPadding}
@@ -456,3 +611,4 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
 };
 
 export default StoryboardModule;
+

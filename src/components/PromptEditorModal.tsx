@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 
 interface PromptEditorModalProps {
@@ -9,6 +9,8 @@ interface PromptEditorModalProps {
     title?: string;
 }
 
+// WHAT: Modal dialog allowing focused multi-line editing of complex AI video generation prompts.
+// WHY: Gives the user a distraction-free, maximized text area to craft and review lengthy cinematic prompts.
 const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
     isOpen,
     initialValue,
@@ -16,21 +18,24 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
     onCancel,
     title = "Edit Prompt"
 }) => {
-    const [text, setText] = useState(initialValue);
+    // WHAT: Storing current draft prompt text and tracking incoming prop changes.
+    // WHY: Adjusting state during render when props change conforms to React 19 rules
+    // and eliminates cascading effect render cycles.
+    const [draft_prompt_text, setDraftPromptText] = useState<string>(initialValue);
+    const [previous_initial_value, setPreviousInitialValue] = useState<string>(initialValue);
 
-    useEffect(() => {
-        if (isOpen) {
-            setText(initialValue);
-        }
-    }, [isOpen, initialValue]);
+    if (initialValue !== previous_initial_value) {
+        setPreviousInitialValue(initialValue);
+        setDraftPromptText(initialValue);
+    }
 
     if (!isOpen) return null;
 
-    const modalContent = (
+    const modal_content_element = (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200" style={{ isolation: 'isolate' }}>
             <div 
                 className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(mouse_click_event) => mouse_click_event.stopPropagation()}
             >
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between bg-gray-800/50">
@@ -51,8 +56,8 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
                 <div className="p-6">
                     <textarea
                         autoFocus
-                        value={text}
-                        onChange={(e) => setText(e.target.value)}
+                        value={draft_prompt_text}
+                        onChange={(text_change_event) => setDraftPromptText(text_change_event.target.value)}
                         className="w-full h-[500px] bg-gray-950 border border-gray-700 rounded-lg p-4 text-gray-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none font-mono text-sm leading-relaxed"
                         placeholder="Enter prompt text here..."
                     />
@@ -67,7 +72,7 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
                         Cancel
                     </button>
                     <button
-                        onClick={() => onSave(text)}
+                        onClick={() => onSave(draft_prompt_text)}
                         className="px-6 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-lg shadow-indigo-900/20 transition-all active:scale-95"
                     >
                         Save Changes
@@ -77,7 +82,7 @@ const PromptEditorModal: React.FC<PromptEditorModalProps> = ({
         </div>
     );
 
-    return createPortal(modalContent, document.body);
+    return createPortal(modal_content_element, document.body);
 };
 
 export default PromptEditorModal;

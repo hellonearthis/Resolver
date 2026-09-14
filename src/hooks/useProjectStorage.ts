@@ -2,36 +2,85 @@
  * Project Storage Hook
  * 
  * Persists beat extraction projects with audio paths and associated CSV files.
- * Uses localStorage for browser persistence.
+ * Uses localStorage and filesystem project bundles for desktop persistence.
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import type { StoryboardAsset } from '../types/storyboard';
+import type { VideoClip } from '../types/assembler';
+import type { MusicSection } from '../types/sections';
 
-/**
- * COMPACT JSON STRINGIFICATION:
- * 
- * WHY: Standard JSON.stringify(obj, null, 2) makes large arrays of numbers (like 
- * beat markers) take up thousands of lines, making project files hard to read.
- * HOW: This utility uses a regular expression to find arrays containing only 
- * numbers and collapses them onto a single line, while keeping the rest of 
- * the object properly indented.
- */
-const stringifyWithCompactArrays = (obj: any): string => {
-    const jsonStr = JSON.stringify(obj, null, 2);
+// WHAT: Custom duck-typed interfaces for Electron IPC and Node filesystem access in the renderer.
+// WHY: Avoids `@ts-ignore` and loose `any` casts while supporting both desktop Electron runtime and web preview.
+interface NodeFsModule {
+    existsSync: (file_path: string) => boolean;
+    mkdirSync: (directory_path: string, options?: { recursive?: boolean }) => void;
+    writeFileSync: (file_path: string, data: string) => void;
+    unlinkSync: (file_path: string) => void;
+}
+
+interface NodePathModule {
+    dirname: (file_path: string) => string;
+    basename: (file_path: string) => string;
+    join: (...path_segments: string[]) => string;
+}
+
+interface ElectronIpcRenderer {
+    invoke: (channel: string, ...arguments_list: unknown[]) => Promise<unknown>;
+}
+
+interface WindowWithElectronModules {
+    require?: (module_name: string) => unknown;
+    ipcRenderer?: ElectronIpcRenderer;
+}
+
+const electron_window = window as unknown as WindowWithElectronModules;
+
+const getFsModule = (): NodeFsModule | null => {
+    try {
+        return electron_window.require ? (electron_window.require('fs') as NodeFsModule) : null;
+    } catch {
+        return null;
+    }
+};
+
+const getPathModule = (): NodePathModule | null => {
+    try {
+        return electron_window.require ? (electron_window.require('path') as NodePathModule) : null;
+    } catch {
+        return null;
+    }
+};
+
+const getIpcRenderer = (): ElectronIpcRenderer | null => {
+    try {
+        if (electron_window.require) {
+            const electron_module = electron_window.require('electron') as { ipcRenderer?: ElectronIpcRenderer } | null;
+            return electron_module?.ipcRenderer ?? null;
+        }
+        return electron_window.ipcRenderer ?? null;
+    } catch {
+        return null;
+    }
+};
+
+// WHAT: Serializes a JavaScript object into indented JSON while compacting pure number arrays into single lines.
+// WHY: Projects contain long beat marker timestamp arrays (thousands of numbers). Standard 2-space indentation
+// creates massive 10,000+ line JSON files that are difficult to inspect and slow down editor performance.
+const stringifyWithCompactArrays = (raw_project_object: unknown): string => {
+    const standard_json_string = JSON.stringify(raw_project_object, null, 2);
     // Find arrays that contain only numbers, commas, and whitespace
-    return jsonStr.replace(
+    return standard_json_string.replace(
         /\[\s*([\d\s.,+\-eE]+)\s*\]/g,
-        (match, inside) => {
+        (full_array_match, matched_array_inner_content) => {
             // Verify it's genuinely a list of numbers to avoid matching random text
-            if (/^[ \n\r\t\d.,+\-eE]+$/.test(inside)) {
-                return `[ ${inside.replace(/\s+/g, ' ').trim()} ]`;
+            if (/^[ \n\r\t\d.,+\-eE]+$/.test(matched_array_inner_content)) {
+                return `[ ${matched_array_inner_content.replace(/\s+/g, ' ').trim()} ]`;
             }
-            return match;
+            return full_array_match;
         }
     );
 };
-
-import type { StoryboardAsset } from '../types/storyboard';
 
 export interface ProjectMarker {
     timestamp: number;
@@ -53,19 +102,19 @@ export interface BeatProject {
     bpm?: number;
     beatCount?: number;
     stemType: string;
-    stems?: { type: string; path: string; beats?: number[]; markers?: ProjectMarker[]; color?: string }[]; // New field for separated stems
+    stems?: { type: string; path: string; beats?: number[]; markers?: ProjectMarker[]; color?: string }[];
     outputDir?: string; // Path to save the project JSON
     algorithm?: string;
     enableLoudness?: boolean;
     markers?: ProjectMarker[];
-    segments?: any[]; // Video assembler timeline segments
-    sections?: any[]; // Video assembler timeline sections
+    segments?: unknown[]; // Video assembler timeline segments
+    sections?: MusicSection[]; // Video assembler timeline musical sections (Verse, Chorus, etc.)
     videoPath?: string; // Absolute path to the source video file (not copied)
     videoDuration?: number; // Video duration in seconds
     videoFps?: number; // Video frame rate
     
     // Unified Timeline & Storyboard Data
-    clips?: any[]; // Now holds both video and storyboard metadata
+    clips?: VideoClip[]; // Holds video and storyboard metadata
     elementTray?: StoryboardAsset[];
     animaticEnabled?: boolean;
 
@@ -73,255 +122,239 @@ export interface BeatProject {
     updatedAt: string;
 }
 
-/**
- * useProjectStorage
- * 
- * A custom hook that manages the lifecycle of BeatProjects.
- * It handles loading from disk via Electron IPC, updating state, 
- * and committing changes back to the filesystem as 'project.json' bundles.
- */
+// WHAT: Hook managing persistence, discovery, and mutation of BeatProjects on disk.
+// WHY: Decouples UI modules from direct filesystem manipulation and standardizes the PRJ_ bundle structure.
 export function useProjectStorage() {
     const [projects, setProjects] = useState<BeatProject[]>([]);
-    const [isLoaded, setIsLoaded] = useState(false);
+    const [isLoaded, setIsLoaded] = useState(() => !getIpcRenderer());
 
-    const refreshProjects = useCallback(async (customPath?: string) => {
+    // WHAT: Scans the configured projects directory for project bundles via Electron IPC.
+    // WHY: Populates the project selection drawer on application boot or after directory reconfigurations.
+    const refreshProjects = useCallback(async (custom_directory_path?: string) => {
+        const ipc_renderer_instance = getIpcRenderer();
+        if (!ipc_renderer_instance) {
+            setIsLoaded(true);
+            return;
+        }
+
         try {
-            // @ts-ignore
-            const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
-            if (!ipcRenderer) {
-                setIsLoaded(true);
-                return;
-            }
-
             // 1. Get the path to scan
-            let scanPath = customPath;
-            if (!scanPath) {
-                const configRes = await ipcRenderer.invoke('get-config');
-                if (configRes.success && configRes.config.projectOutputDir) {
-                    scanPath = configRes.config.projectOutputDir;
+            let directory_path_to_scan = custom_directory_path;
+            if (!directory_path_to_scan) {
+                const configuration_result = (await ipc_renderer_instance.invoke('get-config')) as { success: boolean; config?: { projectOutputDir?: string } };
+                if (configuration_result?.success && configuration_result?.config?.projectOutputDir) {
+                    directory_path_to_scan = configuration_result.config.projectOutputDir;
                 }
             }
 
-            if (!scanPath) {
+            if (!directory_path_to_scan) {
                 console.log('[useProjectStorage] No scan path found in config.');
-                setIsLoaded(true);
                 return;
             }
 
-            console.log(`[useProjectStorage] Scanning for projects in: ${scanPath}`);
+            console.log(`[useProjectStorage] Scanning for projects in: ${directory_path_to_scan}`);
             // 2. Scan the folder
-            const scanRes = await ipcRenderer.invoke('scan-projects-folder', scanPath);
-            if (scanRes.success) {
-                setProjects(scanRes.projects);
+            const scan_result = (await ipc_renderer_instance.invoke('scan-projects-folder', directory_path_to_scan)) as { success: boolean; projects?: BeatProject[] };
+            if (scan_result?.success && Array.isArray(scan_result?.projects)) {
+                setProjects(scan_result.projects);
             }
-        } catch (e) {
-            console.error('Failed to refresh projects:', e);
+        } catch (error_instance) {
+            console.error('Failed to refresh projects:', error_instance);
+        } finally {
+            setIsLoaded(true);
         }
-        setIsLoaded(true);
     }, []);
 
     // Load projects on mount
     useEffect(() => {
-        refreshProjects();
+        if (getIpcRenderer()) {
+            refreshProjects();
+        }
     }, [refreshProjects]);
 
-    /**
-     * PROJECT BUNDLING (saveProjectFile):
-     * 
-     * WHY: To stay organized, every project should be its own self-contained folder
-     * (bundle) rather than just a loose JSON file.
-     * HOW: We create a folder prefixed with 'PRJ_' containing the project.json.
-     * We normalize paths to ensure no trailing slashes cause recursive nesting bugs.
-     * 
-     * @param project The project data to save
-     * @returns The updated project data with a resolved outputDir
-     */
-    const saveProjectFile = (project: BeatProject): BeatProject => {
-        let currentOutputDir = project.outputDir;
+    // WHAT: Persists a BeatProject to a self-contained bundle directory (`PRJ_<SafeName>/project.json`).
+    // WHY: Organizing projects into standardized bundle directories prevents loose JSON collisions and keeps
+    // exported stems, storyboard cards, and cache files localized to their parent project.
+    const saveProjectFile = (project_to_save: BeatProject): BeatProject => {
+        let current_output_directory_path = project_to_save.outputDir;
 
         // Fallback to audio path directory if outputDir is not set
-        if (!currentOutputDir && project.audioPath) {
+        if (!current_output_directory_path && project_to_save.audioPath) {
             try {
-                // @ts-ignore
-                const path = window.require('path');
-                currentOutputDir = path.dirname(project.audioPath);
-            } catch (e) {
+                const node_path_instance = getPathModule();
+                if (node_path_instance) {
+                    current_output_directory_path = node_path_instance.dirname(project_to_save.audioPath);
+                }
+            } catch {
                 // ignore
             }
         }
 
-        if (!currentOutputDir) return project;
+        if (!current_output_directory_path) return project_to_save;
 
         try {
-            // @ts-ignore
-            const fs = window.require('fs');
-            // @ts-ignore
-            const path = window.require('path');
+            const node_fs_instance = getFsModule();
+            const node_path_instance = getPathModule();
+            if (!node_fs_instance || !node_path_instance) return project_to_save;
 
-            const safeProjectName = project.name.replace(/[^a-zA-Z0-9-_]/g, '_');
-            const bundleName = `PRJ_${safeProjectName}`; // The standardized prefix for project bundles
+            const safe_project_name = project_to_save.name.replace(/[^a-zA-Z0-9-_]/g, '_');
+            const bundle_folder_name = `PRJ_${safe_project_name}`;
 
             // Normalize path to prevent trailing slashes from breaking basename (recursive nesting fix)
-            const normalizedOutputDir = currentOutputDir.replace(/[\\/]+$/, '');
-            const dirBasename = path.basename(normalizedOutputDir);
+            const normalized_output_directory = current_output_directory_path.replace(/[\\/]+$/, '');
+            const directory_base_name = node_path_instance.basename(normalized_output_directory);
 
             // Determine if outputDir already IS the per-project bundle folder
             // Use startsWith('PRJ_') to prevent infinite nesting if the project name gets slightly altered
-            // Check BOTH the basename and the full path just to be safe if it's already a bundle directory
-            const isAlreadyBundle = dirBasename.startsWith('PRJ_') || dirBasename === safeProjectName || currentOutputDir.includes('PRJ_');
-            const bundleDirectory = isAlreadyBundle
-                ? normalizedOutputDir
-                : path.join(normalizedOutputDir, bundleName);
+            const is_already_bundle_directory = directory_base_name.startsWith('PRJ_') || 
+                                              directory_base_name === safe_project_name || 
+                                              normalized_output_directory.includes('PRJ_');
+            const target_bundle_directory = is_already_bundle_directory
+                ? normalized_output_directory
+                : node_path_instance.join(normalized_output_directory, bundle_folder_name);
 
             // Create bundle directory if it doesn't exist
-            if (!fs.existsSync(bundleDirectory)) {
-                fs.mkdirSync(bundleDirectory, { recursive: true });
+            if (!node_fs_instance.existsSync(target_bundle_directory)) {
+                node_fs_instance.mkdirSync(target_bundle_directory, { recursive: true });
             }
 
             // Save standard project metadata file
-            const filePath = path.join(bundleDirectory, 'project.json');
+            const project_file_path = node_path_instance.join(target_bundle_directory, 'project.json');
 
             // Update outputDir to point to the project subfolder
-            const updatedProject = { ...project, outputDir: bundleDirectory };
-            fs.writeFileSync(filePath, stringifyWithCompactArrays(updatedProject));
-            console.log('Saved project bundle to:', filePath);
-            return updatedProject;
-        } catch (e) {
-            console.error('Failed to save project JSON file:', e);
-            return project;
+            const updated_project_bundle = { ...project_to_save, outputDir: target_bundle_directory };
+            node_fs_instance.writeFileSync(project_file_path, stringifyWithCompactArrays(updated_project_bundle));
+            console.log('Saved project bundle to:', project_file_path);
+            return updated_project_bundle;
+        } catch (error_instance) {
+            console.error('Failed to save project JSON file:', error_instance);
+            return project_to_save;
         }
     };
 
-    /**
-     * Creates a new project, saves it to the filesystem, and adds it to state.
-     * @param project The initial project data (without ID or timestamps)
-     * @returns The newly created project with generated ID and paths
-     */
-    const saveProject = useCallback((project: Omit<BeatProject, 'id' | 'createdAt' | 'updatedAt'>) => {
-        const now = new Date().toISOString();
-        const newProject: BeatProject = {
-            ...project,
+    // WHAT: Creates a new project with a unique identifier and timestamp, then writes it to disk.
+    // WHY: Ensures every new project immediately gains persistent storage identity.
+    const saveProject = useCallback((initial_project_data: Omit<BeatProject, 'id' | 'createdAt' | 'updatedAt'>) => {
+        const current_iso_timestamp = new Date().toISOString();
+        const newly_created_project: BeatProject = {
+            ...initial_project_data,
             id: `project-${Date.now()}`,
-            createdAt: now,
-            updatedAt: now,
+            createdAt: current_iso_timestamp,
+            updatedAt: current_iso_timestamp,
         };
 
         // Save to file immediately and get the updated project with the resolved PRJ folder path
-        const finalProject = saveProjectFile(newProject);
+        const finalized_saved_project = saveProjectFile(newly_created_project);
 
-        setProjects(prev => {
-            const updated = [finalProject, ...prev];
-            return updated;
-        });
+        setProjects(previous_projects_list => [finalized_saved_project, ...previous_projects_list]);
 
-        return finalProject;
+        return finalized_saved_project;
     }, []);
 
-    /**
-     * Updates an existing project by ID with partial data and commits changes to disk.
-     * Supports either a partial update object or a functional update.
-     * @param id The ID of the project to update
-     * @param updates The new data to merge into the project, or a function returning updates
-     */
-    const updateProject = useCallback((id: string, updates: Partial<BeatProject> | ((prev: BeatProject) => Partial<BeatProject>)) => {
-        console.log(`[useProjectStorage] updateProject called for ${id}`);
-        setProjects(prev => prev.map(p => {
-            if (p.id === id) {
-                const appliedUpdates = typeof updates === 'function' ? updates(p) : updates;
-                const updatedProject = { ...p, ...appliedUpdates, updatedAt: new Date().toISOString() };
-                // Save to file and use the returned object with resolved outputDir
-                const finalProject = saveProjectFile(updatedProject);
-                return finalProject;
+    // WHAT: Updates an existing project by ID with partial data and writes changes to disk.
+    // WHY: Synchronizes React timeline and storyboard edits with the local `project.json` file.
+    const updateProject = useCallback((
+        project_identifier_to_update: string, 
+        project_updates_payload: Partial<BeatProject> | ((previous_project: BeatProject) => Partial<BeatProject>)
+    ) => {
+        console.log(`[useProjectStorage] updateProject called for ${project_identifier_to_update}`);
+        setProjects(previous_projects_list => previous_projects_list.map(candidate_project => {
+            if (candidate_project.id === project_identifier_to_update) {
+                const applied_updates = typeof project_updates_payload === 'function' 
+                    ? project_updates_payload(candidate_project) 
+                    : project_updates_payload;
+                const merged_updated_project = { 
+                    ...candidate_project, 
+                    ...applied_updates, 
+                    updatedAt: new Date().toISOString() 
+                };
+                return saveProjectFile(merged_updated_project);
             }
-            return p;
+            return candidate_project;
         }));
     }, []);
 
-    /**
-     * Deletes a project from state and attempts to remove its project.json file from disk.
-     * @param id The ID of the project to delete
-     */
-    const deleteProject = useCallback((id: string) => {
-        setProjects(prev => {
-            const project = prev.find(p => p.id === id);
-            if (project && project.outputDir) {
+    // WHAT: Deletes a project from active React state and removes its project.json file from the filesystem.
+    // WHY: Cleans up orphaned configuration files when a user permanently removes a project.
+    const deleteProject = useCallback((project_identifier_to_delete: string) => {
+        setProjects(previous_projects_list => {
+            const project_to_delete = previous_projects_list.find(candidate => candidate.id === project_identifier_to_delete);
+            if (project_to_delete && project_to_delete.outputDir) {
                 try {
-                    // @ts-ignore
-                    const fs = window.require('fs');
-                    // @ts-ignore
-                    const path = window.require('path');
-                    const filePath = path.join(project.outputDir, 'project.json');
-                    if (fs.existsSync(filePath)) {
-                        fs.unlinkSync(filePath);
-                        console.log('[useProjectStorage] Deleted project file:', filePath);
+                    const node_fs_instance = getFsModule();
+                    const node_path_instance = getPathModule();
+                    if (node_fs_instance && node_path_instance) {
+                        const target_file_path = node_path_instance.join(project_to_delete.outputDir, 'project.json');
+                        if (node_fs_instance.existsSync(target_file_path)) {
+                            node_fs_instance.unlinkSync(target_file_path);
+                            console.log('[useProjectStorage] Deleted project file:', target_file_path);
+                        }
                     }
-                } catch (e) {
-                    console.error('Failed to delete project file:', e);
+                } catch (error_instance) {
+                    console.error('Failed to delete project file:', error_instance);
                 }
             }
-            return prev.filter(p => p.id !== id);
+            return previous_projects_list.filter(candidate => candidate.id !== project_identifier_to_delete);
         });
     }, []);
 
-    /**
-     * Retrieves a project directly from the current state by its ID.
-     * @param id The ID of the project to find
-     * @returns The project object, or undefined if not found
-     */
-    const getProject = useCallback((id: string) => {
-        return projects.find(p => p.id === id);
+    // WHAT: Retrieves a project directly from active state by its unique identifier.
+    // WHY: Used by route controllers and detail modals to inspect selected project metadata.
+    const getProject = useCallback((project_identifier: string) => {
+        return projects.find(candidate_project => candidate_project.id === project_identifier);
     }, [projects]);
 
-    /**
-     * Forces a re-export of all currently loaded projects to their respective directories.
-     * Useful for batch migrations or recovery.
-     * @returns An object detailing success/failure counts and specific error messages
-     */
+    // WHAT: Forces batch re-export of all in-memory projects to their disk locations.
+    // WHY: Useful during schema migrations or when recovering unsaved workspace state.
     const exportAllProjects = useCallback(async () => {
-        let successCount = 0;
-        let failCount = 0;
-        const details: string[] = [];
+        let successful_projects_count = 0;
+        let failed_projects_count = 0;
+        const export_detail_messages: string[] = [];
 
         try {
-            // @ts-ignore
-            const fs = window.require('fs');
-            // @ts-ignore
-            const path = window.require('path');
+            const node_fs_instance = getFsModule();
+            const node_path_instance = getPathModule();
+            if (!node_fs_instance || !node_path_instance) {
+                return { success: 0, failed: projects.length, details: ['Filesystem not available'] };
+            }
 
-            for (const project of projects) {
+            for (const current_project of projects) {
                 try {
-                    let targetDir = project.outputDir;
+                    let target_export_directory = current_project.outputDir;
 
                     // Fallback if no outputDir set
-                    if (!targetDir && project.audioPath) {
-                        const audioDir = path.dirname(project.audioPath);
-                        targetDir = path.join(audioDir, 'Stems');
+                    if (!target_export_directory && current_project.audioPath) {
+                        const audio_parent_directory = node_path_instance.dirname(current_project.audioPath);
+                        target_export_directory = node_path_instance.join(audio_parent_directory, 'Stems');
                     }
 
-                    if (targetDir) {
-                        if (!fs.existsSync(targetDir)) {
-                            fs.mkdirSync(targetDir, { recursive: true });
+                    if (target_export_directory) {
+                        if (!node_fs_instance.existsSync(target_export_directory)) {
+                            node_fs_instance.mkdirSync(target_export_directory, { recursive: true });
                         }
 
-                        const filePath = path.join(targetDir, 'project.json');
-
-                        fs.writeFileSync(filePath, stringifyWithCompactArrays(project));
-                        successCount++;
+                        const target_file_path = node_path_instance.join(target_export_directory, 'project.json');
+                        node_fs_instance.writeFileSync(target_file_path, stringifyWithCompactArrays(current_project));
+                        successful_projects_count++;
                     } else {
-                        failCount++;
-                        details.push(`Skipped "${project.name}": No valid output path`);
+                        failed_projects_count++;
+                        export_detail_messages.push(`Skipped "${current_project.name}": No valid output path`);
                     }
-                } catch (e) {
-                    failCount++;
-                    details.push(`Failed "${project.name}": ${e}`);
+                } catch (error_instance) {
+                    failed_projects_count++;
+                    export_detail_messages.push(`Failed "${current_project.name}": ${error_instance}`);
                 }
             }
-        } catch (e) {
-            console.error('Batch export failed:', e);
+        } catch (error_instance) {
+            console.error('Batch export failed:', error_instance);
             return { success: 0, failed: projects.length, details: ['System error'] };
         }
 
-        return { success: successCount, failed: failCount, details };
+        return { 
+            success: successful_projects_count, 
+            failed: failed_projects_count, 
+            details: export_detail_messages 
+        };
     }, [projects]);
 
     return {
@@ -337,3 +370,4 @@ export function useProjectStorage() {
 }
 
 export default useProjectStorage;
+

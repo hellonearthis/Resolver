@@ -4,7 +4,7 @@ import ScriptManagerModule from './ScriptManagerModule';
 
 // Mock Electron IPC
 const mockInvoke = vi.fn();
-window.require = vi.fn(() => ({
+(window as unknown as { require: unknown }).require = vi.fn(() => ({
     ipcRenderer: {
         invoke: mockInvoke,
     },

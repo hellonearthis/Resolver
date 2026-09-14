@@ -1,9 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 
+interface ElectronRuntimeBridge {
+    require?: (module_name: string) => {
+        ipcRenderer?: {
+            invoke: <T = unknown>(channel: string, ...arguments_list: unknown[]) => Promise<T>;
+        };
+        dirname?: (file_path: string) => string;
+    };
+}
+
 // Helper to get IPC renderer (allows mocking in tests)
 const getIpcRenderer = () => {
-    if ((window as any).require) {
-        return (window as any).require('electron').ipcRenderer;
+    const electron_runtime = window as unknown as ElectronRuntimeBridge;
+    if (electron_runtime.require) {
+        return electron_runtime.require('electron')?.ipcRenderer ?? null;
     }
     return null;
 };
@@ -15,11 +25,28 @@ interface ScriptFile {
     mtime: string | Date; // Date string or object from IPC
 }
 
+interface BridgeStatusInfo {
+    is_installed: boolean;
+    installed_file_path: string;
+    is_online: boolean;
+    application_name?: string;
+    active_project_name?: string | null;
+    active_timeline_name?: string | null;
+    timeline_frame_rate?: number;
+    error_message?: string;
+}
+
 export default function ScriptManagerModule() {
     const [scripts, setScripts] = useState<ScriptFile[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [status, setStatus] = useState('');
     const [resolvePath] = useState('C:\\ProgramData\\Blackmagic Design\\DaVinci Resolve\\Fusion\\Scripts\\Comp\\'); // Just a display string
+
+    // DaVinci Resolve HTTP Loopback Bridge State
+    const [bridgeStatus, setBridgeStatus] = useState<BridgeStatusInfo | null>(null);
+    const [isCheckingBridge, setIsCheckingBridge] = useState(false);
+    const [isInstallingBridge, setIsInstallingBridge] = useState(false);
+    const [bridgeMessage, setBridgeMessage] = useState('');
 
     const ipcRenderer = getIpcRenderer();
 
@@ -32,19 +59,19 @@ export default function ScriptManagerModule() {
 
         setIsLoading(true);
         try {
-            const result = await ipcRenderer.invoke('list-resolve-scripts');
+            const result = await ipcRenderer.invoke<ScriptFile[]>('list-resolve-scripts');
             if (isMounted) {
                 // Ensure mtime is a Date object
-                const processed = result.map((f: any) => ({
-                    ...f,
-                    mtime: new Date(f.mtime)
+                const processed = (result || []).map((script_file_item: ScriptFile) => ({
+                    ...script_file_item,
+                    mtime: new Date(script_file_item.mtime)
                 }));
                 setScripts(processed);
                 setStatus('');
             }
-        } catch (err) {
+        } catch (caught_error) {
             if (isMounted) {
-                console.error('Failed to list scripts:', err);
+                console.error('Failed to list scripts:', caught_error);
                 setStatus('Failed to load scripts.');
             }
         } finally {
@@ -75,15 +102,15 @@ export default function ScriptManagerModule() {
         }
 
         try {
-            const result = await ipcRenderer.invoke('rename-resolve-script', { oldPath, newName });
+            const result = await ipcRenderer.invoke<{ success: boolean; error?: string }>('rename-resolve-script', { oldPath, newName });
             if (result.success) {
                 setStatus(`Renamed to ${newName}`);
                 loadScripts();
             } else {
                 setStatus(`Failed to rename: ${result.error}`);
             }
-        } catch (err) {
-            console.error('Failed to rename script:', err);
+        } catch (caught_error) {
+            console.error('Failed to rename script:', caught_error);
             setStatus('Error renaming script.');
         } finally {
             setRenamingScript(null);
@@ -97,8 +124,8 @@ export default function ScriptManagerModule() {
         try {
             await ipcRenderer.invoke('edit-resolve-script', scriptPath);
             setStatus('Opened script in Notepad');
-        } catch (err) {
-            console.error('Failed to open script:', err);
+        } catch (caught_error) {
+            console.error('Failed to open script:', caught_error);
             setStatus('Error opening script.');
         }
     };
@@ -111,15 +138,15 @@ export default function ScriptManagerModule() {
         if (!ipcRenderer) return;
 
         try {
-            const result = await ipcRenderer.invoke('delete-resolve-script', scriptPath);
+            const result = await ipcRenderer.invoke<{ success: boolean; error?: string }>('delete-resolve-script', scriptPath);
             if (result.success) {
                 setStatus(`Deleted ${scriptName}`);
                 loadScripts(); // Refresh list
             } else {
                 setStatus(`Failed to delete: ${result.error}`);
             }
-        } catch (err) {
-            console.error('Failed to delete script:', err);
+        } catch (caught_error) {
+            console.error('Failed to delete script:', caught_error);
             setStatus('Error deleting script.');
         }
     };
@@ -127,11 +154,13 @@ export default function ScriptManagerModule() {
     const handleOpenFolder = async (scriptPath: string) => {
         if (!ipcRenderer) return;
         try {
-            // Get the directory containing the script
-            const dir = (window as any).require('path').dirname(scriptPath);
-            await ipcRenderer.invoke('open-folder', dir);
-        } catch (err) {
-            console.error('Failed to open folder:', err);
+            const electron_runtime = window as unknown as ElectronRuntimeBridge;
+            const target_directory = electron_runtime.require ? electron_runtime.require('path')?.dirname?.(scriptPath) : null;
+            if (target_directory) {
+                await ipcRenderer.invoke('open-folder', target_directory);
+            }
+        } catch (error_instance) {
+            console.error('Failed to open folder:', error_instance);
             setStatus('Error opening folder.');
         }
     };
@@ -140,18 +169,57 @@ export default function ScriptManagerModule() {
         if (!ipcRenderer) return;
         try {
             await ipcRenderer.invoke('open-folder', dirPath);
-        } catch (err) {
-            console.error('Failed to open folder:', err);
+        } catch (caught_error) {
+            console.error('Failed to open folder:', caught_error);
             setStatus('Error opening folder.');
+        }
+    };
+
+    // WHAT: Query the live connection and installation state of the Resolve Bridge.
+    // WHY: Updates the connection badge and informs user whether Resolve is ready.
+    const checkBridgeStatus = useCallback(async () => {
+        if (!ipcRenderer) return;
+        setIsCheckingBridge(true);
+        try {
+            const statusResult = await ipcRenderer.invoke<BridgeStatusInfo>('resolve-bridge-status');
+            if (statusResult && typeof statusResult === 'object' && 'is_installed' in statusResult) {
+                setBridgeStatus(statusResult);
+            }
+        } catch (bridgeError) {
+            console.error('Failed to check bridge status:', bridgeError);
+        } finally {
+            setIsCheckingBridge(false);
+        }
+    }, [ipcRenderer]);
+
+    // WHAT: Installs resolve_bridge.py into Resolve's Utility scripts directory.
+    // WHY: One-click setup without requiring manual navigation in Windows Explorer.
+    const handleInstallBridge = async () => {
+        if (!ipcRenderer) return;
+        setIsInstallingBridge(true);
+        setBridgeMessage('');
+        try {
+            const installResult = await ipcRenderer.invoke<{ success: boolean; error?: string }>('resolve-bridge-install');
+            if (installResult.success) {
+                setBridgeMessage('Bridge script installed successfully into DaVinci Resolve Utility folder!');
+                await checkBridgeStatus();
+            } else {
+                setBridgeMessage(`Failed to install bridge: ${installResult.error}`);
+            }
+        } catch (installError: unknown) {
+            setBridgeMessage(`Error installing bridge: ${installError instanceof Error ? installError.message : String(installError)}`);
+        } finally {
+            setIsInstallingBridge(false);
         }
     };
 
     useEffect(() => {
         const cleanup = loadScripts(); 
+        checkBridgeStatus();
         return () => {
-            cleanup.then(c => c && c());
+            cleanup.then(cleanup_callback => cleanup_callback && cleanup_callback());
         };
-    }, [loadScripts]);
+    }, [loadScripts, checkBridgeStatus]);
 
     // Format bytes to KB/MB
     const formatSize = (bytes: number) => {
@@ -188,6 +256,133 @@ export default function ScriptManagerModule() {
                 <p className="module-description">
                     Manage generated markers scripts in DaVinci Resolve's folder.
                 </p>
+            </div>
+
+            {/* DaVinci Resolve HTTP Bridge Section */}
+            <div className="card" style={{ marginBottom: '24px' }}>
+                <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <h3 className="card-title" style={{ margin: 0 }}>⚡ DaVinci Resolve Bridge (Direct Control)</h3>
+                        {bridgeStatus?.is_online ? (
+                            <span style={{
+                                backgroundColor: 'rgba(34, 197, 94, 0.2)',
+                                color: '#4ade80',
+                                border: '1px solid rgba(34, 197, 94, 0.4)',
+                                padding: '3px 10px',
+                                borderRadius: '12px',
+                                fontSize: '0.75rem',
+                                fontWeight: 'bold',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                            }}>
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#4ade80', display: 'inline-block' }}></span>
+                                Connected
+                            </span>
+                        ) : (
+                            <span style={{
+                                backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                                color: '#f87171',
+                                border: '1px solid rgba(239, 68, 68, 0.4)',
+                                padding: '3px 10px',
+                                borderRadius: '12px',
+                                fontSize: '0.75rem',
+                                fontWeight: 'bold',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                            }}>
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#f87171', display: 'inline-block' }}></span>
+                                Offline
+                            </span>
+                        )}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={checkBridgeStatus}
+                            disabled={isCheckingBridge}
+                            style={{ fontSize: '0.85rem', padding: '4px 12px' }}
+                        >
+                            {isCheckingBridge ? 'Checking...' : '🔄 Test Connection'}
+                        </button>
+                        <button
+                            className="btn btn-primary"
+                            onClick={handleInstallBridge}
+                            disabled={isInstallingBridge}
+                            style={{ fontSize: '0.85rem', padding: '4px 12px' }}
+                        >
+                            {isInstallingBridge ? 'Installing...' : bridgeStatus?.is_installed ? '⚡ Re-install Script' : '⚡ Install Bridge Script'}
+                        </button>
+                    </div>
+                </div>
+
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '8px 0 16px' }}>
+                    Enables instant real-time sync with DaVinci Resolve Free &amp; Studio without exporting manual Python scripts.
+                </p>
+
+                {bridgeMessage && (
+                    <div style={{
+                        padding: '10px 14px',
+                        background: bridgeMessage.includes('Failed') || bridgeMessage.includes('Error') ? 'rgba(255, 100, 100, 0.1)' : 'rgba(100, 255, 100, 0.1)',
+                        borderLeft: `3px solid ${bridgeMessage.includes('Failed') || bridgeMessage.includes('Error') ? 'var(--error)' : 'var(--success)'}`,
+                        marginBottom: '16px',
+                        borderRadius: '4px',
+                        fontSize: '0.85rem'
+                    }}>
+                        {bridgeMessage}
+                    </div>
+                )}
+
+                {bridgeStatus?.is_online ? (
+                    <div style={{
+                        background: 'rgba(34, 197, 94, 0.05)',
+                        border: '1px solid rgba(34, 197, 94, 0.2)',
+                        borderRadius: '6px',
+                        padding: '12px 16px',
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                        gap: '12px',
+                        fontSize: '0.85rem'
+                    }}>
+                        <div>
+                            <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Project</span>
+                            <span style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>{bridgeStatus.active_project_name || 'None open'}</span>
+                        </div>
+                        <div>
+                            <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Current Timeline</span>
+                            <span style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>{bridgeStatus.active_timeline_name || 'None selected'}</span>
+                        </div>
+                        <div>
+                            <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Connection</span>
+                            <span style={{ fontWeight: 'bold', color: '#4ade80' }}>127.0.0.1:8878 (Live HTTP)</span>
+                        </div>
+                    </div>
+                ) : (
+                    <div style={{
+                        background: 'var(--bg-tertiary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        padding: '14px 16px',
+                        fontSize: '0.85rem'
+                    }}>
+                        <div style={{ fontWeight: 'bold', marginBottom: '8px', color: 'var(--text-primary)' }}>
+                            Quick Setup Guide:
+                        </div>
+                        <ol style={{ margin: 0, paddingLeft: '20px', lineHeight: '1.6', color: 'var(--text-secondary)' }}>
+                            <li>
+                                {bridgeStatus?.is_installed ? (
+                                    <span style={{ color: '#4ade80' }}>✅ Bridge script is installed in Resolve's Utility scripts folder.</span>
+                                ) : (
+                                    <span>Click <b>"Install Bridge Script"</b> above to copy <code>resolve_bridge.py</code> to Resolve's Utility folder.</span>
+                                )}
+                            </li>
+                            <li>Open <b>DaVinci Resolve</b> and open or create any project.</li>
+                            <li>From DaVinci Resolve's menu: go to <b>Workspace ▸ Scripts ▸ Utility ▸ resolve_bridge</b>.</li>
+                            <li>Click <b>"Test Connection"</b> above. Once online, live marker pushing and timeline building are enabled!</li>
+                        </ol>
+                    </div>
+                )}
             </div>
 
             <div className="card">

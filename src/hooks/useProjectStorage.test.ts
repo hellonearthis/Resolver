@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { useProjectStorage, type BeatProject } from './useProjectStorage';
 
 // ---------------------------------------------------------------------------
@@ -155,23 +155,51 @@ describe('useProjectStorage', () => {
     });
 
     // -----------------------------------------------------------------------
-    // localStorage persistence
+    // persistence (Electron IPC & Filesystem Bundles)
     // -----------------------------------------------------------------------
     describe('persistence', () => {
-        it('persists projects to localStorage', () => {
+        it('saves project bundle to filesystem when fs is available', () => {
+            // WHAT: Mocking the Electron node fs and path modules.
+            // WHY: In Electron runtime, useProjectStorage writes project.json bundles to disk.
+            const mockWriteFileSync = vi.fn();
+            const mockExistsSync = vi.fn().mockReturnValue(true);
+            const mockMkdirSync = vi.fn();
+
+            window.require = vi.fn((moduleName: string) => {
+                if (moduleName === 'fs') {
+                    return {
+                        existsSync: mockExistsSync,
+                        mkdirSync: mockMkdirSync,
+                        writeFileSync: mockWriteFileSync,
+                    };
+                }
+                if (moduleName === 'path') {
+                    return {
+                        dirname: (pathString: string) => pathString.substring(0, pathString.lastIndexOf('/')),
+                        basename: (pathString: string) => pathString.substring(pathString.lastIndexOf('/') + 1),
+                        join: (...segments: string[]) => segments.join('/'),
+                    };
+                }
+                return {};
+            }) as unknown as typeof window.require;
+
             const { result } = renderHook(() => useProjectStorage());
 
             act(() => {
                 result.current.saveProject(mockProject);
             });
 
-            const stored = JSON.parse(localStorage.getItem('resolve-tools-projects') || '[]');
-            expect(stored).toHaveLength(1);
-            expect(stored[0].name).toBe('Test Song');
+            expect(mockWriteFileSync).toHaveBeenCalled();
+            const [writtenFilePath, writtenContentString] = mockWriteFileSync.mock.calls[0];
+            expect(writtenFilePath).toContain('PRJ_Test_Song/project.json');
+            const parsedSavedContent = JSON.parse(writtenContentString);
+            expect(parsedSavedContent.name).toBe('Test Song');
         });
 
-        it('loads projects from localStorage on mount', () => {
-            const existing: BeatProject[] = [{
+        it('loads projects from electron IPC scan on mount', async () => {
+            // WHAT: Mocking the Electron IPC channel for project discovery.
+            // WHY: The application discovers saved project bundles on startup via scan-projects-folder.
+            const existingProjectList: BeatProject[] = [{
                 id: 'project-existing',
                 name: 'Existing',
                 audioPath: '/path',
@@ -182,22 +210,50 @@ describe('useProjectStorage', () => {
                 updatedAt: new Date().toISOString(),
             }];
 
-            localStorage.setItem('resolve-tools-projects', JSON.stringify(existing));
+            const mockInvoke = vi.fn().mockImplementation(async (channel: string) => {
+                if (channel === 'get-config') {
+                    return { success: true, config: { projectOutputDir: '/test/projects' } };
+                }
+                if (channel === 'scan-projects-folder') {
+                    return { success: true, projects: existingProjectList };
+                }
+                return { success: false };
+            });
+
+            window.require = vi.fn((moduleName: string) => {
+                if (moduleName === 'electron') {
+                    return { ipcRenderer: { invoke: mockInvoke } };
+                }
+                return {};
+            }) as unknown as typeof window.require;
 
             const { result } = renderHook(() => useProjectStorage());
-            expect(result.current.projects).toHaveLength(1);
+
+            await waitFor(() => {
+                expect(result.current.projects).toHaveLength(1);
+            });
             expect(result.current.projects[0].name).toBe('Existing');
         });
 
-        it('handles corrupted localStorage gracefully', () => {
-            localStorage.setItem('resolve-tools-projects', 'not-valid-json{{{');
+        it('handles IPC errors gracefully without crashing', async () => {
+            // WHAT: Simulating an IPC error during project refresh.
+            // WHY: Confirms that storage state still reaches isLoaded: true even if IPC fails.
+            const mockInvoke = vi.fn().mockRejectedValue(new Error('IPC channel unavailable'));
+            window.require = vi.fn((moduleName: string) => {
+                if (moduleName === 'electron') {
+                    return { ipcRenderer: { invoke: mockInvoke } };
+                }
+                return {};
+            }) as unknown as typeof window.require;
 
-            const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => { });
+            const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             const { result } = renderHook(() => useProjectStorage());
 
+            await waitFor(() => {
+                expect(result.current.isLoaded).toBe(true);
+            });
             expect(result.current.projects).toEqual([]);
-            expect(result.current.isLoaded).toBe(true);
-            consoleSpy.mockRestore();
+            consoleErrorSpy.mockRestore();
         });
     });
 });

@@ -30,3 +30,7 @@ non_api_comfyui_workflows/
 # Intel NUP AI Models & Hardware Cache
 vino/gemma-3-openvino/
 vino/ov_cache/
+
+# Python Cache
+__pycache__/
+*.pyc

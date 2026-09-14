@@ -12,60 +12,69 @@ interface MultiTrackWaveformProps {
     markers?: Record<string, number[]>; // stemType -> timestamps
 }
 
+// WHAT: Color lookup dictionary mapping audio stem types to distinctive hex colors.
+// WHY: Visual differentiation between drums, bass, vocals, and instruments helps the
+// editor immediately discern rhythm vs melodic layers in the multi-track view.
+const STEM_COLOR_PALETTE_MAP: Record<string, string> = {
+    'Drums': '#ef4444',  // Red - High impact percussive events
+    'Bass': '#3b82f6',   // Blue - Low-frequency rhythmic foundations
+    'Vocals': '#10b981', // Emerald Green - Prominent lead melodic content
+    'Other': '#f59e0b',  // Amber - Secondary instrumental and harmonic beds
+};
+
+// WHAT: Resolves the waveform hex color based on audio stem category.
+// WHY: Hoisted to the module scope to prevent declaration-order errors and avoid
+// recreating the color mapping function on every component render.
+function getStemColor(stem_instrument_type: string, is_progress_indicator: boolean = false): string {
+    const base_color = STEM_COLOR_PALETTE_MAP[stem_instrument_type] || '#8b5cf6'; // Purple default fallback
+    return is_progress_indicator ? base_color : base_color;
+}
+
 const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers = {} }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [wavesurfers, setWavesurfers] = useState<WaveSurfer[]>([]);
-    const regionsPluginsRef = useRef<any[]>([]); // Store plugin instances directly
+    // WHAT: Storing references to RegionsPlugin instances directly.
+    // WHY: Enables adding and clearing transient marker visualizers without recreating WaveSurfer.
+    const regionsPluginsRef = useRef<ReturnType<typeof RegionsPlugin.create>[]>([]);
     const [isPlaying, setIsPlaying] = useState(false);
     const [duration, setDuration] = useState(0);
     const [currentTime, setCurrentTime] = useState(0);
 
-    // Initialize WaveSurfers
+    // WHAT: Initializes synchronized WaveSurfer instances for every audio stem.
+    // WHY: Each audio track needs its own waveform visualization canvas while sharing
+    // transport controls (play, pause, seek) with the rest of the project.
     useEffect(() => {
-        if (!containerRef.current || stems.length === 0) return;
+        const current_container_element = containerRef.current;
+        if (!current_container_element || stems.length === 0) return;
 
-        // Cleanup old instances
-        wavesurfers.forEach(ws => {
-            try { ws.destroy(); } catch (e) { /* ignore */ }
-        });
-        setWavesurfers([]);
         regionsPluginsRef.current = [];
 
-        const newSurfers: WaveSurfer[] = [];
-        let maxDuration = 0;
+        const initialized_wavesurfer_instances: WaveSurfer[] = [];
+        let maximum_detected_duration_seconds = 0;
 
-        stems.forEach((stem) => {
-            const wrapper = document.createElement('div');
-            wrapper.style.marginBottom = '8px';
-            wrapper.style.position = 'relative';
+        stems.forEach((current_stem) => {
+            const track_wrapper_element = document.createElement('div');
+            track_wrapper_element.style.marginBottom = '8px';
+            track_wrapper_element.style.position = 'relative';
 
-            // Label
-            const label = document.createElement('div');
-            // Try explicit match first, then lowercase match for debug count
-            label.className = 'absolute top-1 left-1 z-10 text-[10px] px-1 py-0.5 rounded bg-black/70 text-white pointer-events-none';
-            let debugCount = 0;
-            const stemType = stem.type;
-            let m = markers[stemType];
-            if (!m) {
-                const lowerType = stemType.toLowerCase();
-                const markerKey = Object.keys(markers).find(k => k.toLowerCase() === lowerType);
-                if (markerKey) m = markers[markerKey];
-            }
-            if (m) debugCount = m.length;
+            // WHAT: Constructing track title badge for the audio stem.
+            // WHY: Gives the user immediate feedback on which stem track is rendered.
+            const track_label_element = document.createElement('div');
+            track_label_element.className = 'absolute top-1 left-1 z-10 text-[10px] px-1 py-0.5 rounded bg-black/70 text-white pointer-events-none track-stem-label';
+            track_label_element.dataset.stemType = current_stem.type;
+            track_label_element.innerHTML = `<strong>${current_stem.type}</strong>`;
+            track_wrapper_element.appendChild(track_label_element);
 
-            label.innerHTML = `<strong>${stem.type}</strong> <span class="opacity-70 text-[9px]">(${debugCount} markers)</span>`;
+            const waveform_canvas_container = document.createElement('div');
+            track_wrapper_element.appendChild(waveform_canvas_container);
+            current_container_element.appendChild(track_wrapper_element);
 
-            wrapper.appendChild(label);
-
-            const div = document.createElement('div');
-            wrapper.appendChild(div);
-            containerRef.current?.appendChild(wrapper);
-
-            // Create WaveSurfer first
-            const ws = WaveSurfer.create({
-                container: div,
-                waveColor: getStemColor(stem.type),
-                progressColor: getStemColor(stem.type, true),
+            // WHAT: Instantiate WaveSurfer for this stem track.
+            // WHY: Renders high-performance WebGL/Canvas audio peaks with custom track colors.
+            const current_wavesurfer_instance = WaveSurfer.create({
+                container: waveform_canvas_container,
+                waveColor: getStemColor(current_stem.type),
+                progressColor: getStemColor(current_stem.type, true),
                 height: 64,
                 barWidth: 2,
                 cursorWidth: 1,
@@ -74,171 +83,142 @@ const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers 
                 minPxPerSec: 50,
                 interact: true, // Allow clicking to seek
                 hideScrollbar: true,
-                // plugins: [wsRegions], // Don't pass here
             });
 
-            // Register plugin explicitly and store reference
-            const wsRegions = ws.registerPlugin(RegionsPlugin.create());
-            regionsPluginsRef.current.push(wsRegions);
+            // WHAT: Register the RegionsPlugin for marker overlays.
+            // WHY: Enables displaying vertical lines or shaded slices at rhythmic beat locations.
+            const regions_plugin_instance = current_wavesurfer_instance.registerPlugin(RegionsPlugin.create());
+            regionsPluginsRef.current.push(regions_plugin_instance);
 
-            // Handle media protocol for Electron
-            // Direct file read to bypass protocol/fetch issues
+            // WHAT: Reading audio file directly into memory buffer for local playback.
+            // WHY: Bypasses browser fetch and CORS restrictions inside Electron desktop app.
             try {
-                // @ts-ignore
-                const fs = window.require('fs');
-                const buffer = fs.readFileSync(stem.path);
-                const blob = new Blob([buffer], { type: 'audio/mpeg' }); // MIME type might need to vary, but mp3/wav usually works with generic or specific
-                const url = URL.createObjectURL(blob);
+                const electron_runtime = (window as unknown as { require?: (module_name: string) => { readFileSync: (file_path: string) => Uint8Array } });
+                if (electron_runtime.require) {
+                    const filesystem_module = electron_runtime.require('fs');
+                    const file_buffer = filesystem_module.readFileSync(current_stem.path);
+                    const audio_blob = new Blob([file_buffer as unknown as BlobPart], { type: 'audio/mpeg' });
+                    const audio_object_url = URL.createObjectURL(audio_blob);
 
-                ws.load(url).catch(e => {
-                    const msg = e instanceof Error ? e.message : String(e);
-                    if (e?.name !== 'AbortError' && !msg.toLowerCase().includes('abort') && !msg.toLowerCase().includes('destroy')) {
-                        console.error("Wavesurfer load error:", e);
-                    }
-                });
-
-
-                // Cleanup using an event listener on destroy (though checking documentation, destroy doesn't emit 'destroy' on the instance itself usually, but let's try to keep it simple)
-                // We'll rely on the useEffect cleanup to revoke if we track them, but for now this is a massive improvement over broken media://
-            } catch (err) {
-                console.error("Failed to load stem:", stem.path, err);
+                    current_wavesurfer_instance.load(audio_object_url).catch(load_error => {
+                        const error_message = load_error instanceof Error ? load_error.message : String(load_error);
+                        if (load_error?.name !== 'AbortError' && !error_message.toLowerCase().includes('abort') && !error_message.toLowerCase().includes('destroy')) {
+                            console.error("Wavesurfer load error:", load_error);
+                        }
+                    });
+                }
+            } catch (file_read_error) {
+                console.error("Failed to load stem file from disk:", current_stem.path, file_read_error);
             }
 
-            ws.on('ready', () => {
-                const dur = ws.getDuration();
-                if (dur > maxDuration) {
-                    maxDuration = dur;
-                    setDuration(dur);
+            current_wavesurfer_instance.on('ready', () => {
+                const track_duration_seconds = current_wavesurfer_instance.getDuration();
+                if (track_duration_seconds > maximum_detected_duration_seconds) {
+                    maximum_detected_duration_seconds = track_duration_seconds;
+                    setDuration(track_duration_seconds);
                 }
             });
 
-            // Master seek on interaction
-            ws.on('interaction', (newTime) => {
-                // Sync others
-                newSurfers.forEach(other => {
-                    if (other !== ws) {
-                        other.seekTo(newTime / (other.getDuration() || 1));
+            // WHAT: Master seek synchronization on user interaction.
+            // WHY: Clicking on any single stem waveform must seek all other stems to the identical timestamp.
+            current_wavesurfer_instance.on('interaction', (new_playback_time_seconds) => {
+                initialized_wavesurfer_instances.forEach(other_wavesurfer_instance => {
+                    if (other_wavesurfer_instance !== current_wavesurfer_instance) {
+                        const total_track_duration = other_wavesurfer_instance.getDuration() || 1;
+                        other_wavesurfer_instance.seekTo(new_playback_time_seconds / total_track_duration);
                     }
                 });
-                setCurrentTime(newTime);
+                setCurrentTime(new_playback_time_seconds);
             });
 
-            ws.on('finish', () => {
-                // If all finished? simpler to just track one or master state
+            current_wavesurfer_instance.on('finish', () => {
                 setIsPlaying(false);
             });
 
-            newSurfers.push(ws);
+            initialized_wavesurfer_instances.push(current_wavesurfer_instance);
         });
 
-        setWavesurfers(newSurfers);
+        queueMicrotask(() => {
+            setWavesurfers(initialized_wavesurfer_instances);
+        });
 
         return () => {
-            newSurfers.forEach(ws => {
-                try { ws.destroy(); } catch (e) { /* ignore */ }
+            initialized_wavesurfer_instances.forEach(wavesurfer_instance => {
+                try {
+                    wavesurfer_instance.destroy();
+                } catch (cleanup_error) {
+                    console.warn('WaveSurfer cleanup error:', cleanup_error);
+                }
             });
-            if (containerRef.current) containerRef.current.innerHTML = '';
+            if (current_container_element) {
+                current_container_element.innerHTML = '';
+            }
         };
-
     }, [stems]);
 
-    // Handle Markers (Separate Effect)
+    // WHAT: Renders marker regions across all active waveform instances.
+    // WHY: Keeps marker visuals in sync whenever beat analysis completes or changes.
     useEffect(() => {
-        // console.log('[Waveform] Marker Effect Triggered', { 
-        //     wavesurfersCount: wavesurfers.length, 
-        //     pluginsCount: regionsPluginsRef.current.length,
-        //     markersKeys: Object.keys(markers) 
-        // });
-
         if (wavesurfers.length === 0 || regionsPluginsRef.current.length === 0) return;
 
-        wavesurfers.forEach((_ws, index) => {
-            const stem = stems[index];
-            const wsRegions = regionsPluginsRef.current[index];
+        wavesurfers.forEach((_wavesurfer_instance, track_index) => {
+            const current_stem = stems[track_index];
+            const regions_plugin_instance = regionsPluginsRef.current[track_index];
 
-            if (!stem || !wsRegions) {
-                console.warn('[Waveform] Missing stem or region plugin for index', index);
+            if (!current_stem || !regions_plugin_instance) {
+                console.warn('[Waveform] Missing stem or region plugin for index', track_index);
                 return;
             }
 
-            // Clear existing regions
+            // Clear existing regions before redrawing
             try {
-                wsRegions.clearRegions();
-            } catch (e) {
-                console.error('[Waveform] Failed to clear regions', e);
+                regions_plugin_instance.clearRegions();
+            } catch (clear_error) {
+                console.error('[Waveform] Failed to clear regions', clear_error);
             }
 
-            // Re-add regions
-            // Try explicit match first, then lowercase match
-            let stemMarkers = markers[stem.type];
-            if (!stemMarkers) {
-                const lowerType = stem.type.toLowerCase();
-                const markerKey = Object.keys(markers).find(k => k.toLowerCase() === lowerType);
-                if (markerKey) stemMarkers = markers[markerKey];
-            }
-
-            if (stemMarkers && stemMarkers.length > 0) {
-                console.log(`[Waveform] Adding ${stemMarkers.length} markers for ${stem.type} (Plugin: ${!!wsRegions})`);
-                if (stemMarkers.length > 0) {
-                    console.log(`[Waveform] First marker for ${stem.type}: ${stemMarkers[0]}s`);
+            let stem_marker_timestamps = markers[current_stem.type];
+            if (!stem_marker_timestamps) {
+                const lowercase_stem_type = current_stem.type.toLowerCase();
+                const matched_marker_key = Object.keys(markers).find(
+                    key_name => key_name.toLowerCase() === lowercase_stem_type
+                );
+                if (matched_marker_key) {
+                    stem_marker_timestamps = markers[matched_marker_key];
                 }
+            }
 
-                // Update the label count dynamically
-                if (containerRef.current && containerRef.current.children[index]) {
-                    const wrapper = containerRef.current.children[index];
-                    const label = wrapper.querySelector('.stem-label');
-                    if (label) {
-                        label.innerHTML = `<strong>${stem.type}</strong> <span class="opacity-70 text-[9px]">(${stemMarkers.length} markers)</span>`;
+            if (stem_marker_timestamps && stem_marker_timestamps.length > 0) {
+                const marker_color_accent = getStemColor(current_stem.type);
+
+                stem_marker_timestamps.forEach((timestamp_seconds) => {
+                    try {
+                        regions_plugin_instance.addRegion({
+                            start: timestamp_seconds,
+                            end: timestamp_seconds + 0.05,
+                            color: marker_color_accent,
+                            drag: false,
+                            resize: false,
+                        });
+                    } catch (add_region_error) {
+                        console.error('[Waveform] Failed to add region at timestamp:', timestamp_seconds, add_region_error);
                     }
-                }
-
-                try {
-                    stemMarkers.forEach(time => {
-                        if (typeof time === 'number' && !isNaN(time)) {
-                            wsRegions.addRegion({
-                                start: time,
-                                end: time + 0.05,
-                                color: 'rgba(255, 255, 255, 0.5)',
-                                drag: false,
-                                resize: false,
-                            });
-                        }
-                    });
-                } catch (e) {
-                    console.error('[Waveform] Error adding regions:', e);
-                }
-            } else {
-                // console.log(`[Waveform] No markers found for stem: ${stem.type}. Available keys:`, Object.keys(markers));
+                });
             }
         });
     }, [wavesurfers, markers, stems]);
 
-    // Master Play/Pause
-    const togglePlay = () => {
-        if (wavesurfers.length === 0) return;
-
+    // WHAT: Toggles synchronized multi-track playback.
+    // WHY: Controls all stems in tandem so the user hears the unified mix.
+    const handleTogglePlayback = () => {
         if (isPlaying) {
-            wavesurfers.forEach(ws => ws.pause());
+            wavesurfers.forEach(wavesurfer_instance => wavesurfer_instance.pause());
             setIsPlaying(false);
         } else {
-            wavesurfers.forEach(ws => ws.play());
+            wavesurfers.forEach(wavesurfer_instance => wavesurfer_instance.play());
             setIsPlaying(true);
         }
     };
-
-    const getStemColor = (type: string, isProgress = false) => {
-        const colors: Record<string, string> = {
-            'Drums': '#ef4444',  // Red
-            'Bass': '#3b82f6',   // Blue
-            'Vocals': '#10b981', // Green (Emerald)
-            'Other': '#f59e0b',  // Yellow (Amber)
-        };
-        const base = colors[type] || '#8b5cf6'; // Purple default
-        return isProgress ? lighten(base) : base;
-    };
-
-    // Simple lighten helper
-    const lighten = (col: string) => col; // Placeholder, maybe redundant if we just use opacity or same color
 
     return (
         <div className="bg-gray-900/50 p-4 rounded border border-gray-700">
@@ -250,23 +230,32 @@ const MultiTrackWaveform: React.FC<MultiTrackWaveformProps> = ({ stems, markers 
                 </div>
             </div>
 
-            <div ref={containerRef} className="mb-4 bg-gray-900 rounded overflow-hidden" />
+            {/* Containers for each stem will be mounted here */}
+            <div ref={containerRef} className="space-y-2" />
 
-            <div className="flex justify-center">
-                <button
-                    onClick={togglePlay}
-                    className="btn bg-white text-black px-6 py-2 rounded-full font-bold hover:bg-gray-200 transition-colors shadow-lg flex items-center gap-2"
-                >
-                    {isPlaying ? (
-                        <>
-                            <span>⏸</span> Pause
-                        </>
-                    ) : (
-                        <>
-                            <span>▶</span> Play All
-                        </>
-                    )}
-                </button>
+            {/* Playback Controls */}
+            <div className="mt-4 flex justify-between items-center">
+                <div className="flex gap-2">
+                    <button
+                        onClick={handleTogglePlayback}
+                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-sm font-medium flex items-center gap-1"
+                    >
+                        {isPlaying ? '⏸ Pause All' : '▶ Play All'}
+                    </button>
+                    <button
+                        onClick={() => {
+                            wavesurfers.forEach(wavesurfer_instance => wavesurfer_instance.stop());
+                            setIsPlaying(false);
+                            setCurrentTime(0);
+                        }}
+                        className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded text-sm"
+                    >
+                        ⏹ Stop
+                    </button>
+                </div>
+                <div className="text-xs text-gray-400 italic">
+                    Click any waveform track to seek all stems synchronously.
+                </div>
             </div>
         </div>
     );

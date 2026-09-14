@@ -1,30 +1,135 @@
-const { ipcRenderer } = window.require('electron');
 import React, { useEffect, useRef, useState } from 'react';
 import { AppTooltip } from '../components/ui/Tooltip';
 
-
-
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
-import { analyzeBeats, analyzeOnsets, analyzeLoudness, type BeatAlgorithm, initEssentia } from '../services/essentiaService';
+import { 
+    analyzeBeats, 
+    analyzeOnsets, 
+    analyzeLoudness, 
+    generateBeatGrid, 
+    analyzeSongSections, 
+    type BeatAlgorithm, 
+    type LoudnessRegion, 
+    initEssentia 
+} from '../services/essentiaService';
 
-import DropZone from '../components/DropZone';
+import DropZone, { type FileWithPath } from '../components/DropZone';
 import ProjectsPanel from '../components/ProjectsPanel';
+import BpmTapControl from '../components/BpmTapControl';
+import SectionTimelineBar from '../components/SectionTimelineBar';
+import { type MusicSection, SECTION_TYPE_COLOR_MAP } from '../types/sections';
 import { 
     queuePrompt, 
     uploadFileToComfyUI, 
     convertAudioForComfyUI, 
-    waitForPromptWebSocket 
+    waitForPromptWebSocket,
+    type ComfyWorkflow
 } from '../services/comfyService';
 import workflowJsonTemplate from '../../comfyui_workflows/Extract_Stems.json';
 import { getValidMinimaxFrameCount, getAlignedDuration } from '../utils/timelineUtils';
 import type { BeatProject, ProjectMarker } from '../hooks/useProjectStorage';
 import ProjectTimelineTable from '../components/ProjectTimelineTable';
+import type { ImageFunction } from '../types/assembler';
 import CollapsibleCard from '../components/CollapsibleCard';
 import VideoTimelineBar from '../components/VideoTimelineBar';
 import DurationEditPopup from '../components/DurationEditPopup';
 
 import './MusicVideoAssemblerModule.css';
+
+interface NodeFsModule {
+    existsSync: (path_string: string) => boolean;
+    readdirSync: (directory_path: string) => string[];
+    readFileSync: (file_path: string) => Uint8Array;
+    mkdirSync: (target_dir: string, options?: { recursive?: boolean }) => void;
+    copyFileSync: (source_path: string, destination_path: string) => void;
+    statSync: (file_path: string) => { mtimeMs: number };
+}
+
+interface NodePathModule {
+    join: (...path_segments: string[]) => string;
+    resolve: (...path_segments: string[]) => string;
+    isAbsolute: (path_string: string) => boolean;
+    basename: (path_string: string, optional_extension?: string) => string;
+    dirname: (path_string: string) => string;
+    extname: (path_string: string) => string;
+    parse: (path_string: string) => { name: string; ext: string; base: string; dir: string };
+}
+
+interface ElectronIpcRenderer {
+    invoke<T = unknown>(channel: string, ...args: unknown[]): Promise<T>;
+    send: (channel: string, ...args: unknown[]) => void;
+    on: (channel: string, listener: (...args: unknown[]) => void) => void;
+    removeListener: (channel: string, listener: (...args: unknown[]) => void) => void;
+}
+
+interface WaveSurferRegionLike {
+    id?: string;
+    start: number;
+    end: number;
+    color?: string;
+    element?: HTMLElement;
+    setOptions: (options: { start?: number; end?: number; color?: string }) => void;
+    remove?: () => void;
+}
+
+interface WaveSurferRegionsPluginInstance {
+    getRegions: () => WaveSurferRegionLike[];
+    addRegion: (options: { start: number; end: number; color?: string; id?: string; drag?: boolean; resize?: boolean }) => WaveSurferRegionLike;
+    enableDragSelection: (options: { color: string }) => void;
+    clearRegions: () => void;
+    on: (event_name: string, callback_listener: (region_candidate: WaveSurferRegionLike) => void) => void;
+}
+
+export interface ResolveExportMarker {
+    time: number;
+    timestamp: number;
+    frame: number;
+    type: string;
+    color: string;
+    note: string;
+    duration_sec: number;
+}
+
+export interface MarkerLegendTooltipItem {
+    label: string;
+    count: number;
+    color: string;
+}
+
+// WHAT: Safely retrieves the Electron IPC bridge when executing in a desktop container.
+// WHY: Prevents browser errors during SSR and pure web execution while enabling native Resolve RPC.
+const getElectronIpc = (): ElectronIpcRenderer | null => {
+    try {
+        if (window.require) {
+            const electron_module = window.require('electron') as { ipcRenderer?: ElectronIpcRenderer } | null;
+            return electron_module?.ipcRenderer ?? null;
+        }
+        return (window as unknown as { ipcRenderer?: ElectronIpcRenderer }).ipcRenderer ?? null;
+    } catch {
+        return null;
+    }
+};
+
+// WHAT: Safely retrieves Node filesystem module.
+// WHY: Enables binary audio buffering and stems directory management in desktop Electron.
+const getNodeFs = (): NodeFsModule | null => {
+    try {
+        return window.require ? (window.require('fs') as NodeFsModule) : null;
+    } catch {
+        return null;
+    }
+};
+
+// WHAT: Safely retrieves Node path manipulation module.
+// WHY: Cross-platform directory separator handling between Windows and POSIX DaVinci Resolve environments.
+const getNodePath = (): NodePathModule | null => {
+    try {
+        return window.require ? (window.require('path') as NodePathModule) : null;
+    } catch {
+        return null;
+    }
+};
 
 /**
  * Props required to initialize the MusicVideoAssemblerModule.
@@ -94,7 +199,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const wavesurfer = useRef<WaveSurfer | null>(null);
-    const wsRegions = useRef<any>(null);
+    const wsRegions = useRef<WaveSurferRegionsPluginInstance | null>(null);
     const [audioFile, setAudioFile] = useState<{ name: string; path: string } | null>(null);
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
     const [mainMarkers, setMainMarkers] = useState<AudioMarker[]>([]);
@@ -102,7 +207,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const clips = (activeProject?.clips || []) as VideoClip[];
     const [stems, setStems] = useState<StemData[]>([]);
     const stemSurfers = useRef<WaveSurfer[]>([]);
-    const stemRegionsRefs = useRef<Map<number, any>>(new Map());
+    const stemRegionsRefs = useRef<Map<number, WaveSurferRegionsPluginInstance>>(new Map());
 
     // Duration Popup State
     const [durationPopup, setDurationPopup] = useState<{ clipId: string, duration: number, startTime: number, x: number, y: number } | null>(null);
@@ -140,27 +245,33 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [mainBeatSource, setMainBeatSource] = useState<'main' | number>('main'); // 'main' or index of stem
     const [waveSurfersReady, setWaveSurfersReady] = useState(0); // Trigger for re-rendering regions
 
+    // BPM, Tap Tempo & Section Analysis State
+    const [projectBpm, setProjectBpm] = useState<number>(activeProject?.bpm || 120);
+    const [projectSections, setProjectSections] = useState<MusicSection[]>(activeProject?.sections || []);
+    const [isDetectingSections, setIsDetectingSections] = useState<boolean>(false);
+    const [isPushingSectionsToResolve, setIsPushingSectionsToResolve] = useState<boolean>(false);
+    const [resolveBridgeOnline, setResolveBridgeOnline] = useState<boolean>(false);
+    const [playbackCurrentTime, setPlaybackCurrentTime] = useState<number>(0);
+
     useEffect(() => {
         loadConfig();
         initEssentia();
     }, []);
 
+    // WHAT: Retrieves application default configuration including preferred project output directory.
+    // WHY: Populates initial state with user-selected scratch/render directory from settings.
     const loadConfig = async () => {
         try {
-            // @ts-ignore
-            const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+            const ipcRenderer = getElectronIpc();
             if (!ipcRenderer) return;
 
-            const res = await ipcRenderer.invoke('get-config');
-            if (res.success) {
-                // comfyOutputDir is now a prop, no need to set local state
-                if (res.config.projectOutputDir) {
-                    setDefaultOutputDir(res.config.projectOutputDir);
-                    setOutputDir((prev) => prev || res.config.projectOutputDir);
-                }
+            const response = await ipcRenderer.invoke<{ success: boolean; config?: { projectOutputDir?: string } }>('get-config');
+            if (response.success && response.config?.projectOutputDir) {
+                setDefaultOutputDir(response.config.projectOutputDir);
+                setOutputDir((prev_output_dir) => prev_output_dir || response.config!.projectOutputDir!);
             }
-        } catch (e) {
-            console.error("Failed to load config", e);
+        } catch (caught_error) {
+            console.error("Failed to load config", caught_error);
         }
     };
 
@@ -168,6 +279,15 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     useEffect(() => {
         if (activeProject) {
             loadProjectAudio(activeProject);
+
+            if (activeProject.bpm) {
+                setProjectBpm(activeProject.bpm);
+            }
+            if (activeProject.sections && Array.isArray(activeProject.sections)) {
+                setProjectSections(activeProject.sections);
+            } else {
+                setProjectSections([]);
+            }
 
             // Auto defaults for older projects without frameRate
             if (!activeProject.frameRate) {
@@ -178,6 +298,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             setDuration(0);
             setAudioUrl(null);
             setStems([]);
+            setProjectSections([]);
         }
     }, [
         activeProject?.id,
@@ -185,6 +306,25 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         activeProject?.stems?.length,
         activeProject?.clips // Dependency on clips array itself to catch status updates
     ]);
+
+    // WHAT: Periodically polls the DaVinci Resolve bridge connection status.
+    // WHY: Enables or disables the "Push to Resolve" buttons in real time.
+    useEffect(() => {
+        const checkBridgeHealth = async () => {
+            const ipc_renderer_instance = getElectronIpc();
+            if (ipc_renderer_instance) {
+                try {
+                    const health_response = await ipc_renderer_instance.invoke<{ is_online: boolean }>('resolve-bridge-status');
+                    setResolveBridgeOnline(Boolean(health_response?.is_online));
+                } catch {
+                    setResolveBridgeOnline(false);
+                }
+            }
+        };
+        checkBridgeHealth();
+        const bridge_health_timer = setInterval(checkBridgeHealth, 5000);
+        return () => clearInterval(bridge_health_timer);
+    }, []);
 
     // REDRAW FIX: Force redraw when panels are expanded
     // Wait for the 300ms transition to complete before triggering redraw
@@ -201,19 +341,23 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     useEffect(() => {
         if (panelVisibility?.showStems && stemSurfers.current.length > 0) {
             setTimeout(() => {
-                stemSurfers.current.forEach(s => s.zoom(zoomLevel));
+                stemSurfers.current.forEach(stem_surfer => stem_surfer.zoom(zoomLevel));
                 window.dispatchEvent(new Event('resize'));
             }, 400);
         }
     }, [panelVisibility?.showStems, zoomLevel]);
 
 
-    const analyzeAudio = async (blob: Blob) => {
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const arrayBuffer = await blob.arrayBuffer();
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        const result = await analyzeBeats(audioBuffer);
-        return result.beats;
+    // WHAT: Decodes an audio blob and performs algorithmic beat detection using Essentia.
+    // WHY: Provides both timestamp markers and estimated BPM for the main audio track.
+    const analyzeAudio = async (audio_blob: Blob) => {
+        const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextClass) throw new Error('AudioContext not supported in this runtime environment.');
+        const audio_context_instance = new AudioContextClass();
+        const array_buffer = await audio_blob.arrayBuffer();
+        const audio_buffer = await audio_context_instance.decodeAudioData(array_buffer);
+        const beat_detection_result = await analyzeBeats(audio_buffer, algorithm);
+        return beat_detection_result;
     };
 
     const handleUpdateDuration = (newDuration: number) => {
@@ -234,10 +378,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         }
     };
 
-    const handleAudioDrop = (files: File[]) => {
+    const handleAudioDrop = (files: FileWithPath[]) => {
         if (files.length > 0) {
             const file = files[0];
-            const pathStr = (file as any).path;
+            const pathStr = file.path;
 
             if (!pathStr) {
                 if (onStatusChange) onStatusChange("Error: Could not read file path.");
@@ -250,15 +394,14 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 setOutputDir(defaultOutputDir);
             } else {
                 try {
-                    // @ts-ignore
-                    const pathModule = window.require ? window.require('path') : null;
+                    const pathModule = getNodePath();
                     if (pathModule) {
                         const audioDir = pathModule.dirname(pathStr);
                         setOutputDir(audioDir);
                         finalOutputDir = audioDir;
                     }
-                } catch (e) {
-                    console.error("Failed to auto-set output dir", e);
+                } catch (caught_error) {
+                    console.error("Failed to auto-set output dir", caught_error);
                 }
             }
 
@@ -270,13 +413,19 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     };
 
     // --- Video Drop Handler ---
-    const handleVideoDrop = async (files: File[]) => {
+    const handleVideoDrop = async (files: FileWithPath[]) => {
         if (files.length === 0) return;
         const file = files[0];
-        const pathStr = (file as any).path;
+        const pathStr = file.path;
 
         if (!pathStr) {
             if (onStatusChange) onStatusChange('Error: Could not read video file path.');
+            return;
+        }
+
+        const ipcRenderer = getElectronIpc();
+        if (!ipcRenderer) {
+            if (onStatusChange) onStatusChange('Error: Desktop IPC unavailable.');
             return;
         }
 
@@ -284,9 +433,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         try {
             // Get video metadata via ffprobe
-            const infoResult = await ipcRenderer.invoke('get-video-info', pathStr);
-            if (!infoResult.success) {
-                if (onStatusChange) onStatusChange(`Video info error: ${infoResult.error}`);
+            const infoResult = await ipcRenderer.invoke<{ success: boolean; info?: VideoInfo; error?: string }>('get-video-info', pathStr);
+            if (!infoResult.success || !infoResult.info) {
+                if (onStatusChange) onStatusChange(`Video info error: ${infoResult.error || 'Failed to read info'}`);
                 return;
             }
 
@@ -307,7 +456,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             // Extract thumbnails for filmstrip (3fps default)
             if (activeProject?.outputDir) {
                 if (onStatusChange) onStatusChange('Extracting video thumbnails...');
-                const thumbResult = await ipcRenderer.invoke('extract-video-thumbnails', {
+                const thumbResult = await ipcRenderer.invoke<{ success: boolean; thumbnails?: VideoThumbnail[]; error?: string }>('extract-video-thumbnails', {
                     filePath: pathStr,
                     outputDir: activeProject.outputDir,
                     fps: 3,
@@ -319,9 +468,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     if (onStatusChange) onStatusChange(`Thumbnail extraction failed: ${thumbResult.error}`);
                 }
             }
-        } catch (err: any) {
-            console.error('Video drop error:', err);
-            if (onStatusChange) onStatusChange(`Video error: ${err.message}`);
+        } catch (caught_error: unknown) {
+            console.error('Video drop error:', caught_error);
+            const error_message = caught_error instanceof Error ? caught_error.message : String(caught_error);
+            if (onStatusChange) onStatusChange(`Video error: ${error_message}`);
         }
     };
 
@@ -332,9 +482,15 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             return;
         }
 
+        const ipcRenderer = getElectronIpc();
+        if (!ipcRenderer) {
+            if (onStatusChange) onStatusChange('Desktop IPC bridge unavailable.');
+            return;
+        }
+
         if (onStatusChange) onStatusChange(`Saving frame at ${time.toFixed(3)}s...`);
         try {
-            const result = await ipcRenderer.invoke('save-video-frame', {
+            const result = await ipcRenderer.invoke<{ success: boolean; framePath?: string; error?: string }>('save-video-frame', {
                 filePath: videoFile.path,
                 time,
                 outputDir: activeProject.outputDir,
@@ -344,8 +500,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             } else {
                 if (onStatusChange) onStatusChange(`Frame save error: ${result.error}`);
             }
-        } catch (err: any) {
-            if (onStatusChange) onStatusChange(`Frame save error: ${err.message}`);
+        } catch (caught_error: unknown) {
+            const error_message = caught_error instanceof Error ? caught_error.message : String(caught_error);
+            if (onStatusChange) onStatusChange(`Frame save error: ${error_message}`);
         }
     };
 
@@ -361,11 +518,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const startTime = Date.now(); // Capture start time to find new files
 
         try {
-            const prompt = JSON.parse(JSON.stringify(workflowJsonTemplate)); // Use imported template
+            const prompt = JSON.parse(JSON.stringify(workflowJsonTemplate)) as ComfyWorkflow;
 
             let loadNodeKey: string | null = null;
             for (const [key, node] of Object.entries(prompt)) {
-                // @ts-ignore
                 if (node.class_type === 'LoadAudio' || node.class_type === 'LoadAudioPath') {
                     loadNodeKey = key;
                     break;
@@ -390,18 +546,14 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
             if (onStatusChange) onStatusChange(`Audio uploaded: ${uploaded.name}`);
 
-            // @ts-ignore
             prompt[loadNodeKey].inputs.audio = uploaded.name;
 
             const runId = Date.now().toString();
             const prefix = `stem_${runId}`;
 
             for (const node of Object.values(prompt)) {
-                // @ts-ignore
                 if (node.class_type.includes('Save') && node.inputs) {
-                    // @ts-ignore
-                    const currentPrefix = node.inputs.filename_prefix || '';
-                    // @ts-ignore
+                    const currentPrefix = String(node.inputs.filename_prefix || '');
                     node.inputs.filename_prefix = `${prefix}_${currentPrefix}`;
                 }
             }
@@ -420,12 +572,12 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             const movedFiles = await moveFilesToProject(outputDir, startTime, prefix);
 
             // Re-wrap files matching the StemData interface required by MusicVideoAssemblerModule
-            const newStems: StemData[] = movedFiles.map((f, i) => ({
-                id: `stem-${i}-${Date.now()}`,
-                type: f.type,
-                path: f.path,
-                url: `media://${f.path.replace(/\\/g, '/')}`,
-                color: STEM_COLORS[f.type.toLowerCase()] || Object.values(STEM_COLORS)[i % Object.values(STEM_COLORS).length] || DEFAULT_STEM_COLOR,
+            const newStems: StemData[] = movedFiles.map((moved_file, file_index) => ({
+                id: `stem-${file_index}-${Date.now()}`,
+                type: moved_file.type,
+                path: moved_file.path,
+                url: `media://${moved_file.path.replace(/\\/g, '/')}`,
+                color: STEM_COLORS[moved_file.type.toLowerCase()] || Object.values(STEM_COLORS)[file_index % Object.values(STEM_COLORS).length] || DEFAULT_STEM_COLOR,
                 markers: [],
                 beats: []
             }));
@@ -435,10 +587,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
             if (activeProject) {
                 // We need to omit 'url' when saving to `ProjectStorage` since it isn't tracked in project data
-                const projectStemsToSave = newStems.map(s => ({
-                    type: s.type,
-                    path: s.path,
-                    color: s.color,
+                const projectStemsToSave = newStems.map(stem_item => ({
+                    type: stem_item.type,
+                    path: stem_item.path,
+                    color: stem_item.color,
                     markers: [] as ProjectMarker[],
                     beats: [] as number[]
                 }));
@@ -451,29 +603,31 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
             if (onStatusChange) onStatusChange(newStems.length > 0 ? 'Separation Complete!' : 'Warning: No output files found.');
 
-        } catch (err: any) {
-            console.error(err);
-            if (onStatusChange) onStatusChange(`Error: ${err.message}`);
+        } catch (caught_error: unknown) {
+            console.error(caught_error);
+            const error_message = caught_error instanceof Error ? caught_error.message : String(caught_error);
+            if (onStatusChange) onStatusChange(`Error: ${error_message}`);
         } finally {
             setIsProcessing(false);
         }
     };
 
-    const waitForGeneration = async (promptId: string): Promise<any> => {
+    const waitForGeneration = async (promptId: string): Promise<unknown> => {
         return waitForPromptWebSocket(
             promptId,
-            workflowJsonTemplate, // Use imported template
+            workflowJsonTemplate as unknown as ComfyWorkflow,
             (status) => {
                 if (onStatusChange) onStatusChange(status);
             }
         );
     };
 
+    // WHAT: Inspects ComfyUI output directories, discovers newly isolated audio stems, and copies them to the active project folder.
+    // WHY: Keeps project bundles self-contained and portable across machines by collecting generated stems into local project subdirectories.
     const moveFilesToProject = async (targetDir: string, _startTime: number, runPrefix: string) => {
-        // @ts-ignore
-        const fs = window.require('fs');
-        // @ts-ignore
-        const path = window.require('path');
+        const fs = getNodeFs();
+        const path = getNodePath();
+        if (!fs || !path || !comfyOutputDir) return [];
 
         const stemsDir = path.join(targetDir, 'stems');
         if (!fs.existsSync(stemsDir)) {
@@ -485,49 +639,53 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const baseName = audioFile?.path ? path.parse(audioFile.path).name : 'stem';
 
         try {
-            const files = fs.readdirSync(comfyOutputDir); // Use prop
+            const files = fs.readdirSync(comfyOutputDir);
             for (const type of stemTypes) {
                 const regex = new RegExp(`^${runPrefix}_.*${type}.*\\.(mp3|flac|wav)$`, 'i');
-                const matches = files.filter((f: string) => regex.test(f))
-                    .map((f: string) => {
-                        const fullPath = path.join(comfyOutputDir, f); // Use prop
+                const matches = files.filter((file_candidate: string) => regex.test(file_candidate))
+                    .map((file_candidate: string) => {
+                        const fullPath = path.join(comfyOutputDir, file_candidate);
                         const stats = fs.statSync(fullPath);
-                        return { file: f, path: fullPath, time: stats.mtimeMs as number };
+                        return { file: file_candidate, path: fullPath, time: stats.mtimeMs as number };
                     })
-                    .sort((a: any, b: any) => b.time - a.time);
+                    .sort((earlier_stat, later_stat) => later_stat.time - earlier_stat.time);
 
                 if (matches.length > 0) {
                     const latest = matches[0];
-                    const ext = path.extname(latest.file);
-                    const destFilename = `${baseName}_${type}${ext}`;
+                    const extension_suffix = path.extname(latest.file);
+                    const destFilename = `${baseName}_${type}${extension_suffix}`;
                     const destPath = path.join(stemsDir, destFilename);
 
                     fs.copyFileSync(latest.path, destPath);
                     console.log(`Found & Moved: ${latest.path} -> ${destPath}`);
                     movedStems.push({ type, path: `./stems/${destFilename}` });
                 } else {
-                    console.warn(`No new ${type} file found in ${comfyOutputDir} matching ${runPrefix}`); // Use prop
+                    console.warn(`No new ${type} file found in ${comfyOutputDir} matching ${runPrefix}`);
                 }
             }
-        } catch (e) {
-            console.error("Error moving files:", e);
+        } catch (caught_error) {
+            console.error("Error moving files:", caught_error);
         }
 
         return movedStems;
     };
 
 
+    // WHAT: Analyzes beat timestamps, onset transients, and perceptual loudness envelopes for an isolated stem track.
+    // WHY: Provides tempo-synchronized visual markers allowing editors to cut on specific instrumental beats.
     const runBeatAnalysis = async (audioPath: string, stemType: string) => {
         setIsProcessing(true);
         if (onStatusChange) onStatusChange(`Analyzing beats for ${stemType} (${algorithm})…`);
         setDetectionStatus(`Analyzing ${stemType}...`);
 
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextClass) throw new Error('AudioContext unavailable in current browser context.');
+        const audioContext = new AudioContextClass();
         try {
-            // @ts-ignore
-            const fs = window.require('fs');
+            const fs = getNodeFs();
+            if (!fs) throw new Error('Filesystem access unavailable.');
             const buffer = fs.readFileSync(audioPath);
-            const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+            const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
             const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
             setDetectionStatus('Analyzing beats...');
@@ -535,24 +693,24 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             console.log('[Essentia] BPM:', beatResult.bpm, 'beats:', beatResult.beats.length);
 
             const allMarkers: AudioMarker[] = [];
-            const stemMapping = getStemTheme(stemType); // getStemTheme should be guaranteed imported, but wait we didn't import it!
+            const stemMapping = getStemTheme(stemType);
             const frameRate = activeProject?.frameRate || 24;
 
-            beatResult.beats.forEach((time: number) => {
+            beatResult.beats.forEach((time_seconds: number) => {
                 allMarkers.push({
-                    time: time,
+                    time: time_seconds,
                     color: stemMapping.base,
                     type: 'beat',
-                    isDownbeat: false // Standard tracking doesn't distinguish out of box without secondary check
+                    isDownbeat: false
                 });
             });
 
             if (enableOnsets) {
                 setDetectionStatus('Analyzing onsets...');
                 const onsetResult = await analyzeOnsets(audioBuffer);
-                onsetResult.onsets.forEach((time: number) => {
+                onsetResult.onsets.forEach((time_seconds: number) => {
                     allMarkers.push({
-                        time: time,
+                        time: time_seconds,
                         color: stemMapping.light,
                         type: 'onset'
                     });
@@ -562,41 +720,41 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             if (enableLoudness) {
                 setDetectionStatus('Analyzing loudness...');
                 const loudResult = await analyzeLoudness(audioBuffer);
-                loudResult.regions.forEach((region: any) => {
+                loudResult.regions.forEach((loudness_region: LoudnessRegion) => {
                     allMarkers.push({
-                        time: region.start,
+                        time: loudness_region.start,
                         color: stemMapping.light,
                         type: 'loudness'
                     });
                 });
             }
 
-            const beatsOnly = allMarkers.filter((m: AudioMarker) => m.type === 'beat').map((m: AudioMarker) => m.time);
+            const beatsOnly = allMarkers.filter((marker_item: AudioMarker) => marker_item.type === 'beat').map((marker_item: AudioMarker) => marker_item.time);
 
             // Update markers on the specific stem object inside `stems` array
-            const updatedStems = stems.map(stem => {
-                if (stem.type === stemType) {
-                    return { ...stem, markers: allMarkers, beats: beatsOnly };
+            const updatedStems = stems.map(stem_item => {
+                if (stem_item.type === stemType) {
+                    return { ...stem_item, markers: allMarkers, beats: beatsOnly };
                 }
-                return stem;
+                return stem_item;
             });
             setStems(updatedStems);
 
             // Save to project
             if (activeProject && onUpdateProject) {
                 // Wipe older markers for this stem note
-                const otherMarkers = (activeProject.markers || []).filter((m: ProjectMarker) => m.note !== stemType);
+                const otherMarkers = (activeProject.markers || []).filter((marker_item: ProjectMarker) => marker_item.note !== stemType);
 
                 // Convert AudioMarkers to ProjectMarkers before saving
-                const projectMarkersToSave: ProjectMarker[] = allMarkers.map(m => {
-                    const mappedType = (m.type === 'beat' || m.type === 'onset' || m.type === 'loudness')
-                        ? m.type
+                const projectMarkersToSave: ProjectMarker[] = allMarkers.map(marker_item => {
+                    const mappedType = (marker_item.type === 'beat' || marker_item.type === 'onset' || marker_item.type === 'loudness')
+                        ? marker_item.type
                         : 'beat';
 
                     return {
-                        timestamp: m.time,
-                        frame: Math.round(m.time * frameRate),
-                        color: m.color || stemMapping.base,
+                        timestamp: marker_item.time,
+                        frame: Math.round(marker_item.time * frameRate),
+                        color: marker_item.color || stemMapping.base,
                         note: stemType,
                         type: mappedType as "beat" | "onset" | "loudness",
                         duration_sec: 0.05 // Default duration for markers
@@ -604,27 +762,31 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 });
 
                 // Omit URL for project stems
-                const projectStemsToSave = updatedStems.map(s => ({
-                    type: s.type,
-                    path: s.path,
-                    color: s.color,
+                const projectStemsToSave = updatedStems.map(stem_item => ({
+                    type: stem_item.type,
+                    path: stem_item.path,
+                    color: stem_item.color,
                     markers: [] as ProjectMarker[]
                 }));
 
+                const detected_stem_tempo_bpm = Math.round(beatResult.bpm * 10) / 10;
                 onUpdateProject(activeProject.id, {
                     stems: projectStemsToSave,
                     markers: [...otherMarkers, ...projectMarkersToSave],
-                    outputDir: outputDir || undefined
+                    outputDir: outputDir || undefined,
+                    bpm: detected_stem_tempo_bpm
                 });
+                setProjectBpm(detected_stem_tempo_bpm);
             }
 
             setDetectionStatus(`Complete: ${beatsOnly.length} beats @${Math.round(beatResult.bpm)} BPM`);
             if (onStatusChange) onStatusChange(`Analysis for ${stemType} complete!`);
 
-        } catch (err: any) {
-            console.error('Analysis failed:', err);
+        } catch (caught_error: unknown) {
+            console.error('Analysis failed:', caught_error);
+            const error_message = caught_error instanceof Error ? caught_error.message : String(caught_error);
             setDetectionStatus(`Analysis failed for ${stemType}.`);
-            if (onStatusChange) onStatusChange(`Error analyzing stem: ${err.message}`);
+            if (onStatusChange) onStatusChange(`Error analyzing stem: ${error_message}`);
         } finally {
             setIsProcessing(false);
             audioContext.close().catch(() => { });
@@ -640,8 +802,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         // Resolve relative paths (like ./stems/...) against project output directory
         let finalPath = path;
         try {
-            // @ts-ignore
-            const pathModule = window.require ? window.require('path') : null;
+            const pathModule = getNodePath();
             if (pathModule && !pathModule.isAbsolute(path)) {
                 // Determine best base directory
                 const baseDir = activeProject?.outputDir || outputDir || '';
@@ -650,18 +811,20 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     console.log(`[handleAnalyzeLocal] Resolved ${path} -> ${finalPath}`);
                 }
             }
-        } catch (e) {
-            console.error("[handleAnalyzeLocal] Path resolution error:", e);
+        } catch (caught_error) {
+            console.error("[handleAnalyzeLocal] Path resolution error:", caught_error);
         }
         await runBeatAnalysis(finalPath, type);
     };
 
+    // WHAT: Loads audio waveform, extracts stem tracks, and restores project video timeline state.
+    // WHY: Re-establishes editor timeline state whenever the active project changes.
     const loadProjectAudio = async (project: BeatProject) => {
         console.log("[loadProjectAudio] Loading project:", project.name, project.id);
 
         // Track updates needed for the project
-        let stemsUpdated = false;
-        let newStems = project.stems ? [...project.stems] : [];
+        const stemsUpdated = false;
+        const newStems = project.stems ? [...project.stems] : [];
 
         // Determine if we need to reload the audio files (heavy operation)
         const isNewProject = lastProjectIdRef.current !== project.id;
@@ -669,26 +832,23 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         if (onStatusChange && isNewProject) onStatusChange(`Loading project audio: ${project.audioFileName}`);
 
-        // Always sync basic metadata
-
         try {
-            // @ts-ignore
-            const fs = window.require('fs');
+            const fs = getNodeFs();
+            const pathModule = getNodePath();
+            const ipcRenderer = getElectronIpc();
 
             // 1. Audio Setup (Only if project changed)
-            if (isNewProject) {
+            if (isNewProject && fs && pathModule) {
                 setIsAnalyzing(true);
                 setDuration(project.duration || 0);
                 setStems([]);
                 setMainMarkers([]);
 
                 if (project.audioPath) {
-                    // @ts-ignore
-                    const pathModule = window.require('path');
                     const absoluteAudioPath = pathModule.resolve(project.outputDir || '', project.audioPath);
 
                     const buffer = fs.readFileSync(absoluteAudioPath);
-                    const blob = new Blob([buffer], { type: 'audio/mpeg' });
+                    const blob = new Blob([buffer.buffer as ArrayBuffer], { type: 'audio/mpeg' });
                     const url = URL.createObjectURL(blob);
 
                     setAudioUrl(url);
@@ -708,77 +868,73 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
 
             // 2. Load Stems & Analyze their beats
-            let loadedStems: StemData[] = [];
-            if (newStems.length > 0) {
+            const loadedStems: StemData[] = [];
+            if (newStems.length > 0 && fs && pathModule) {
                 // Deduplicate stems by path to prevent visual duplication on load
-                const uniqueStems = newStems.filter((s, index, self) =>
-                    index === self.findIndex((t) => t.path === s.path)
+                const uniqueStems = newStems.filter((stem_item, filter_index, self_array) =>
+                    filter_index === self_array.findIndex((comparison_item) => comparison_item.path === stem_item.path)
                 );
 
-                for (let i = 0; i < uniqueStems.length; i++) {
-                    const stem = uniqueStems[i];
+                for (let stem_index = 0; stem_index < uniqueStems.length; stem_index++) {
+                    const current_stem = uniqueStems[stem_index];
 
                     // Optimization: Reuse existing URL if available
-                    const existingStem = stems.find(s => s.path === stem.path);
+                    const existingStem = stems.find(stem_element => stem_element.path === current_stem.path);
                     let finalUrl = existingStem?.url;
 
                     try {
                         if (!finalUrl) {
-                            // @ts-ignore
-                            const pathModule = window.require('path');
-                            const absoluteStemPath = pathModule.resolve(project.outputDir || '', stem.path);
-                            const sBuffer = fs.readFileSync(absoluteStemPath);
-                            const sBlob = new Blob([sBuffer], { type: 'audio/mpeg' });
-                            finalUrl = URL.createObjectURL(sBlob);
+                            const absoluteStemPath = pathModule.resolve(project.outputDir || '', current_stem.path);
+                            const stem_audio_buffer = fs.readFileSync(absoluteStemPath);
+                            const stem_audio_blob = new Blob([stem_audio_buffer.buffer as ArrayBuffer], { type: 'audio/mpeg' });
+                            finalUrl = URL.createObjectURL(stem_audio_blob);
                         }
 
                         const projectMarkers = project.markers || [];
-                        const stemProjectMarkers = projectMarkers.filter(m => m.note === stem.type);
+                        const stemProjectMarkers = projectMarkers.filter(marker_candidate => marker_candidate.note === current_stem.type);
 
                         // Fallback to stem.markers if the global filter finds nothing (backwards compatibility)
-                        const markersToUse = stemProjectMarkers.length > 0 ? stemProjectMarkers : (stem.markers || []);
-                        const stemColor = stem.color || STEM_COLORS[stem.type.toLowerCase()] || DEFAULT_STEM_COLOR;
+                        const markersToUse = stemProjectMarkers.length > 0 ? stemProjectMarkers : (current_stem.markers || []);
+                        const stemColor = current_stem.color || STEM_COLORS[current_stem.type.toLowerCase()] || DEFAULT_STEM_COLOR;
 
                         let finalAudioMarkers: AudioMarker[] = [];
 
                         // 1. Try modern ProjectMarkers array
                         if (markersToUse && markersToUse.length > 0) {
                             let beatIndex = 0;
-                            finalAudioMarkers = markersToUse.map(m => {
+                            finalAudioMarkers = markersToUse.map(marker_item => {
                                 let isDownbeat = false;
-                                if (m.type === 'beat') {
+                                if (marker_item.type === 'beat') {
                                     isDownbeat = beatIndex % 4 === 0;
                                     beatIndex++;
                                 }
                                 return {
-                                    time: m.timestamp,
-                                    type: m.type as any,
+                                    time: marker_item.timestamp,
+                                    type: marker_item.type as "beat" | "onset" | "loudness",
                                     isDownbeat,
-                                    color: m.color
+                                    color: marker_item.color
                                 };
                             });
                         }
                         // 2. Fallback to legacy flat beats array
-                        else if (stem.beats && stem.beats.length > 0) {
-                            finalAudioMarkers = stem.beats.map((t, index) => ({
-                                time: t,
+                        else if (current_stem.beats && current_stem.beats.length > 0) {
+                            finalAudioMarkers = current_stem.beats.map((beat_timestamp, flat_index) => ({
+                                time: beat_timestamp,
                                 type: 'beat',
-                                isDownbeat: index % 4 === 0,
+                                isDownbeat: flat_index % 4 === 0,
                                 color: undefined
                             }));
                         }
 
-                        // 3. Removed auto-fallback so stems don't analyze immediately on load
-
                         loadedStems.push({
-                            type: stem.type,
+                            type: current_stem.type,
                             url: finalUrl as string,
-                            path: stem.path,
+                            path: current_stem.path,
                             color: stemColor,
                             markers: finalAudioMarkers
                         });
-                    } catch (err) {
-                        console.error(`Failed to load stem ${stem.path}`, err);
+                    } catch (stem_error) {
+                        console.error(`Failed to load stem ${current_stem.path}`, stem_error);
                     }
                 }
                 setStems(loadedStems);
@@ -788,15 +944,15 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
             // 3. Load Main Markers
             const projectMarkersForMain = project.markers || [];
-            const mainProjectMarkers = projectMarkersForMain.filter(m => !m.note || m.note === '');
+            const mainProjectMarkers = projectMarkersForMain.filter(marker_item => !marker_item.note || marker_item.note === '');
 
             if (mainProjectMarkers.length > 0) {
-                const audioMarkers: AudioMarker[] = mainProjectMarkers.map(m => {
+                const audioMarkers: AudioMarker[] = mainProjectMarkers.map(marker_item => {
                     return {
-                        time: m.timestamp,
-                        type: m.type,
-                        isDownbeat: m.color === MARKER_COLORS.downbeat,
-                        color: m.color
+                        time: marker_item.timestamp,
+                        type: marker_item.type,
+                        isDownbeat: marker_item.color === MARKER_COLORS.downbeat,
+                        color: marker_item.color
                     };
                 });
                 setMainMarkers(audioMarkers);
@@ -805,35 +961,33 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
 
             if (onStatusChange) onStatusChange("Ready.");
-            // 4. Load Clips (Already synced via props)
 
             // 5. Restore Video Timeline State
-            if (project.videoPath && isNewProject) {
+            if (project.videoPath && isNewProject && ipcRenderer && pathModule && fs) {
                 try {
-                    const infoResult = await ipcRenderer.invoke('get-video-info', project.videoPath);
+                    const infoResult = await ipcRenderer.invoke<{ success: boolean; info: VideoInfo }>('get-video-info', project.videoPath);
                     if (infoResult.success) {
                         setVideoFile({ path: project.videoPath, info: infoResult.info });
 
                         // Check for existing thumbnails
                         if (project.outputDir) {
-                            const pathModule = window.require('path');
                             const thumbDir = pathModule.join(project.outputDir, 'thumbnails');
                             if (fs.existsSync(thumbDir)) {
-                                const files = fs.readdirSync(thumbDir)
-                                    .filter((f: string) => f.startsWith('thumb_') && f.endsWith('.jpg'))
+                                const thumbnail_files = fs.readdirSync(thumbDir)
+                                    .filter((file_candidate: string) => file_candidate.startsWith('thumb_') && file_candidate.endsWith('.jpg'))
                                     .sort();
-                                if (files.length > 0) {
-                                    const thumbs: VideoThumbnail[] = files.map((f: string, i: number) => ({
-                                        path: pathModule.join(thumbDir, f),
-                                        time: i / 3, // Assumes 3fps extraction
+                                if (thumbnail_files.length > 0) {
+                                    const thumbs: VideoThumbnail[] = thumbnail_files.map((thumb_filename: string, thumb_index: number) => ({
+                                        path: pathModule.join(thumbDir, thumb_filename),
+                                        time: thumb_index / 3, // Assumes 3fps extraction
                                     }));
                                     setVideoThumbnails(thumbs);
                                 }
                             }
                         }
                     }
-                } catch (e) {
-                    console.warn('[loadProjectAudio] Failed to restore video state:', e);
+                } catch (caught_error) {
+                    console.warn('[loadProjectAudio] Failed to restore video state:', caught_error);
                 }
             } else if (!project.videoPath && isNewProject) {
                 setVideoFile(null);
@@ -851,9 +1005,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 console.log("[loadProjectAudio] No stem updates needed.");
             }
 
-        } catch (e) {
-            console.error("Failed to load project audio", e);
-            if (onStatusChange) onStatusChange(`Error loading project: ${e}`);
+        } catch (caught_error) {
+            console.error("Failed to load project audio", caught_error);
+            if (onStatusChange) onStatusChange(`Error loading project: ${caught_error}`);
         } finally {
             setIsAnalyzing(false);
         }
@@ -870,44 +1024,262 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         setDetectionStatus("Analyzing main track...");
 
         try {
-            // @ts-ignore
-            const fs = window.require('fs');
+            const fs = getNodeFs();
+            if (!fs) throw new Error('Filesystem access unavailable.');
             const buffer = fs.readFileSync(audioFile.path);
-            const blob = new Blob([buffer], { type: 'audio/mpeg' });
+            const blob = new Blob([buffer.buffer as ArrayBuffer], { type: 'audio/mpeg' });
 
-            const rawBeats = await analyzeAudio(blob);
-            const audioMarkers: AudioMarker[] = rawBeats.map((t, i) => ({
-                time: t,
+            const beat_detection_payload = await analyzeAudio(blob);
+            const rawBeats = beat_detection_payload.beats;
+            const detected_master_tempo_bpm = beat_detection_payload.bpm
+                ? Math.round(beat_detection_payload.bpm * 10) / 10
+                : projectBpm;
+
+            const audioMarkers: AudioMarker[] = rawBeats.map((time_seconds, beat_index) => ({
+                time: time_seconds,
                 type: 'beat',
-                isDownbeat: i % 4 === 0
+                isDownbeat: beat_index % 4 === 0
             }));
 
             setMainMarkers(audioMarkers);
-            setDetectionStatus(`Complete: ${rawBeats.length} beats.`);
+            setProjectBpm(detected_master_tempo_bpm);
+            setDetectionStatus(`Complete: ${rawBeats.length} beats @${detected_master_tempo_bpm} BPM.`);
             if (onStatusChange) onStatusChange("Main track beat analysis complete!");
 
             // Save to project explicitly so it persists
             onUpdateProject(activeProject.id, {
-                markers: audioMarkers.map(m => ({
-                    timestamp: m.time,
-                    frame: Math.round(m.time * (activeProject.frameRate || 20)),
-                    color: m.color || (m.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat),
+                bpm: detected_master_tempo_bpm,
+                markers: audioMarkers.map(marker_item => ({
+                    timestamp: marker_item.time,
+                    frame: Math.round(marker_item.time * (activeProject.frameRate || 20)),
+                    color: marker_item.color || (marker_item.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat),
                     note: '',
-                    type: m.type as any,
+                    type: marker_item.type as "beat" | "onset" | "loudness",
                     duration_sec: 0.05 // Default duration for markers
                 }))
             });
 
-        } catch (err: any) {
-            console.error("Main track analysis failed:", err);
+        } catch (caught_error: unknown) {
+            console.error("Main track analysis failed:", caught_error);
+            const error_message = caught_error instanceof Error ? caught_error.message : String(caught_error);
             setDetectionStatus("Analysis failed.");
-            if (onStatusChange) onStatusChange(`Error analyzing main track: ${err.message}`);
+            if (onStatusChange) onStatusChange(`Error analyzing main track: ${error_message}`);
         } finally {
             setIsProcessing(false);
             setTimeout(() => {
                 setDetectionStatus('');
                 if (onStatusChange) onStatusChange('');
             }, 4000);
+        }
+    };
+
+    // WHAT: Updates local BPM state and stores the adjusted tempo on activeProject.
+    // WHY: Keeps BPM synchronized when user types or steps the tempo value.
+    const handleBpmChange = (new_tempo_value: number) => {
+        const validated_tempo_value = Math.max(20, Math.min(300, new_tempo_value));
+        setProjectBpm(validated_tempo_value);
+        if (activeProject && onUpdateProject) {
+            onUpdateProject(activeProject.id, { bpm: validated_tempo_value });
+        }
+    };
+
+    // WHAT: Synthesizes an exact beat grid for the audio duration and updates main markers.
+    // WHY: Allows manual tempo override or alignment when Essentia algorithm estimates incorrectly.
+    const handleApplyBeatGrid = (target_tempo_beats_per_minute: number) => {
+        if (!activeProject) return;
+        const total_duration_seconds = duration || activeProject.duration || 60;
+        const initial_offset_timestamp_seconds = mainMarkers.length > 0
+            ? Math.max(0, mainMarkers[0].time % (60 / target_tempo_beats_per_minute))
+            : 0;
+
+        const generated_beat_timestamps_collection = generateBeatGrid(
+            target_tempo_beats_per_minute,
+            total_duration_seconds,
+            initial_offset_timestamp_seconds
+        );
+
+        const new_audio_markers_collection: AudioMarker[] = generated_beat_timestamps_collection.map((beat_timestamp_seconds, beat_index) => ({
+            time: beat_timestamp_seconds,
+            type: 'beat',
+            isDownbeat: beat_index % 4 === 0,
+            color: beat_index % 4 === 0 ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat
+        }));
+
+        setMainMarkers(new_audio_markers_collection);
+        setProjectBpm(target_tempo_beats_per_minute);
+
+        const frame_rate_value = activeProject.frameRate || 24;
+        const project_markers_to_save: ProjectMarker[] = new_audio_markers_collection.map((marker_item) => ({
+            timestamp: marker_item.time,
+            frame: Math.round(marker_item.time * frame_rate_value),
+            color: marker_item.color || (marker_item.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat),
+            note: 'grid',
+            type: 'beat',
+            duration_sec: 0.05
+        }));
+
+        onUpdateProject(activeProject.id, {
+            bpm: target_tempo_beats_per_minute,
+            markers: project_markers_to_save
+        });
+
+        if (wavesurfer.current) {
+            renderBeatMarkers(wavesurfer.current, new_audio_markers_collection, total_duration_seconds);
+        }
+
+        if (onStatusChange) {
+            onStatusChange(`Applied beat grid: ${target_tempo_beats_per_minute} BPM (${new_audio_markers_collection.length} beats)`);
+        }
+    };
+
+    // WHAT: Computes audio dynamics and structural transitions to detect song sections.
+    // WHY: Automatically tags Verse, Chorus, Bridge, etc., for timeline arrangement and video pacing.
+    const handleDetectSections = async () => {
+        if (!activeProject || !audioFile?.path) {
+            if (onStatusChange) onStatusChange('No audio file loaded for section detection.');
+            return;
+        }
+
+        setIsDetectingSections(true);
+        if (onStatusChange) onStatusChange('Analyzing audio dynamics and song sections...');
+
+        try {
+            const fs_module = getNodeFs();
+            if (!fs_module) throw new Error('File system access is unavailable.');
+
+            const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+            if (!AudioContextClass) throw new Error('AudioContext unavailable.');
+            const audio_context_instance = new AudioContextClass();
+
+            // Decode master audio
+            const master_file_buffer = fs_module.readFileSync(audioFile.path);
+            const master_array_buffer = master_file_buffer.buffer.slice(
+                master_file_buffer.byteOffset,
+                master_file_buffer.byteOffset + master_file_buffer.byteLength
+            ) as ArrayBuffer;
+            const master_audio_buffer = await audio_context_instance.decodeAudioData(master_array_buffer);
+
+            // Decode available stem audio buffers for multi-stem activity weighting
+            const optional_stem_audio_buffers_dictionary: Record<string, AudioBuffer> = {};
+            if (stems.length > 0) {
+                for (const stem_item of stems) {
+                    if (stem_item.path && fs_module.existsSync(stem_item.path)) {
+                        try {
+                            const stem_file_buffer = fs_module.readFileSync(stem_item.path);
+                            const stem_array_buffer = stem_file_buffer.buffer.slice(
+                                stem_file_buffer.byteOffset,
+                                stem_file_buffer.byteOffset + stem_file_buffer.byteLength
+                            ) as ArrayBuffer;
+                            const decoded_stem_buffer = await audio_context_instance.decodeAudioData(stem_array_buffer);
+                            optional_stem_audio_buffers_dictionary[stem_item.type.toLowerCase()] = decoded_stem_buffer;
+                        } catch (stem_decode_error) {
+                            console.warn(`Failed to decode stem for section analysis: ${stem_item.type}`, stem_decode_error);
+                        }
+                    }
+                }
+            }
+
+            const detected_song_sections = await analyzeSongSections(
+                master_audio_buffer,
+                optional_stem_audio_buffers_dictionary
+            );
+
+            setProjectSections(detected_song_sections);
+            onUpdateProject(activeProject.id, { sections: detected_song_sections });
+
+            await audio_context_instance.close();
+
+            if (onStatusChange) {
+                onStatusChange(`Detected ${detected_song_sections.length} song sections successfully!`);
+            }
+        } catch (section_detection_error) {
+            console.error('Section detection failed:', section_detection_error);
+            const error_message = section_detection_error instanceof Error ? section_detection_error.message : String(section_detection_error);
+            if (onStatusChange) onStatusChange(`Section detection failed: ${error_message}`);
+        } finally {
+            setIsDetectingSections(false);
+        }
+    };
+
+    // WHAT: Pushes detected song sections as colored chapter markers to DaVinci Resolve.
+    // WHY: Populates Resolve's timeline ruler with labeled verse/chorus navigation markers.
+    const handlePushSectionsToResolve = async () => {
+        if (!activeProject || projectSections.length === 0) {
+            if (onStatusChange) onStatusChange('No sections available to push to DaVinci Resolve.');
+            return;
+        }
+
+        const ipc_renderer_instance = getElectronIpc();
+        if (!ipc_renderer_instance) {
+            if (onStatusChange) onStatusChange('Desktop IPC unavailable.');
+            return;
+        }
+
+        setIsPushingSectionsToResolve(true);
+        if (onStatusChange) onStatusChange('Pushing section markers to DaVinci Resolve...');
+
+        try {
+            const frame_rate_value = activeProject.frameRate || 24;
+            const resolve_markers_payload = projectSections.map(section_item => {
+                const color_meta = SECTION_TYPE_COLOR_MAP[section_item.type];
+                return {
+                    frame: Math.round(section_item.startTime * frame_rate_value),
+                    timestamp: section_item.startTime,
+                    color: color_meta.resolveColor,
+                    note: `${section_item.name} (${section_item.type.toUpperCase()})`,
+                    type: 'chapter',
+                    duration_sec: Math.max(1, section_item.endTime - section_item.startTime)
+                };
+            });
+
+            const result = await ipc_renderer_instance.invoke<{ success: boolean; error?: string }>(
+                'resolve-bridge-push-markers',
+                resolve_markers_payload
+            );
+
+            if (result && result.success) {
+                if (onStatusChange) onStatusChange(`Successfully pushed ${projectSections.length} sections to DaVinci Resolve!`);
+            } else {
+                const error_reason = result?.error || 'Unknown bridge response';
+                if (onStatusChange) onStatusChange(`Resolve push failed: ${error_reason}`);
+            }
+        } catch (push_error) {
+            console.error('Failed to push sections to Resolve:', push_error);
+            const error_message = push_error instanceof Error ? push_error.message : String(push_error);
+            if (onStatusChange) onStatusChange(`Resolve bridge error: ${error_message}`);
+        } finally {
+            setIsPushingSectionsToResolve(false);
+        }
+    };
+
+    // WHAT: Modifies an existing section's label, type, or timestamps and persists to active project.
+    // WHY: Enables manual correction of auto-detected section bounds or naming.
+    const handleUpdateSection = (updated_section: MusicSection) => {
+        const revised_sections_collection = projectSections.map(existing_section =>
+            existing_section.id === updated_section.id ? updated_section : existing_section
+        );
+        setProjectSections(revised_sections_collection);
+        if (activeProject && onUpdateProject) {
+            onUpdateProject(activeProject.id, { sections: revised_sections_collection });
+        }
+    };
+
+    // WHAT: Removes a section from the project timeline.
+    // WHY: Allows editors to clean up unwanted or merged section boundaries.
+    const handleDeleteSection = (section_identifier: string) => {
+        const filtered_sections_collection = projectSections.filter(section_item => section_item.id !== section_identifier);
+        setProjectSections(filtered_sections_collection);
+        if (activeProject && onUpdateProject) {
+            onUpdateProject(activeProject.id, { sections: filtered_sections_collection });
+        }
+    };
+
+    // WHAT: Seeks the master waveform player to a specific timestamp in seconds.
+    // WHY: Clicking on a section header immediately jumps playback to that section.
+    const handleSeekToSectionTime = (seek_timestamp_seconds: number) => {
+        if (wavesurfer.current && duration > 0) {
+            const progress_ratio = Math.max(0, Math.min(1, seek_timestamp_seconds / duration));
+            wavesurfer.current.seekTo(progress_ratio);
         }
     };
 
@@ -928,8 +1300,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             return;
         }
 
-        const fs = window.require('fs');
-        const path = window.require('path');
+        const fs = getNodeFs();
+        const path = getNodePath();
+        if (!fs || !path) return;
         const videosDir = path.join(activeProject.outputDir, 'videos');
 
         if (!fs.existsSync(videosDir)) {
@@ -940,30 +1313,30 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         if (onStatusChange) onStatusChange("Scanning 'videos' folder for missing takes...");
 
         try {
-            const files = fs.readdirSync(videosDir).filter((f: string) => f.endsWith('.mp4'));
+            const files = fs.readdirSync(videosDir).filter((file_candidate: string) => file_candidate.endsWith('.mp4'));
             let updateCount = 0;
 
             const updatedClips = clips.map(clip => {
                 const safeLabel = clip.label.replace(/[^a-z0-9]/gi, '_');
                 
                 // 1. Identify which videos currently exist in the videos folder for this clip
-                const matchingFiles = files.filter((f: string) => {
+                const matchingFiles = files.filter((file_candidate: string) => {
                     const regex = new RegExp(`^${safeLabel}_take(\\d+)\\.mp4$`, 'i');
-                    return regex.test(f);
-                }).map((f: string) => {
-                    const takeNum = parseInt(f.match(/_take(\d+)\.mp4$/i)?.[1] || "0", 10);
+                    return regex.test(file_candidate);
+                }).map((file_candidate: string) => {
+                    const takeNum = parseInt(file_candidate.match(/_take(\d+)\.mp4$/i)?.[1] || "0", 10);
                     return {
-                        fullPath: path.join(videosDir, f),
+                        fullPath: path.join(videosDir, file_candidate),
                         take: takeNum
                     };
-                }).sort((a: any, b: any) => b.take - a.take);
+                }).sort((take_a, take_b) => take_b.take - take_a.take);
 
-                const foundPaths = matchingFiles.map((m: any) => m.fullPath);
+                const foundPaths = matchingFiles.map(match_item => match_item.fullPath);
                 
                 // 2. Cross-reference with existing project data to catch deleted or manual additions
                 const existingVideos = clip.generatedVideos || [];
                 // Only keep existing videos that still exist on disk
-                const stillExisting = existingVideos.filter(p => fs.existsSync(p));
+                const stillExisting = existingVideos.filter(video_path => fs.existsSync(video_path));
                 
                 // Combine and deduplicate
                 const combinedVideos = Array.from(new Set([...stillExisting, ...foundPaths]));
@@ -1003,34 +1376,35 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             } else {
                 if (onStatusChange) onStatusChange("Sync complete: No new videos found.");
             }
-        } catch (err: any) {
-            console.error("Sync Error:", err);
-            if (onStatusChange) onStatusChange(`Sync failed: ${err.message}`);
+        } catch (caught_error: unknown) {
+            console.error("Sync Error:", caught_error);
+            const error_message = caught_error instanceof Error ? caught_error.message : String(caught_error);
+            if (onStatusChange) onStatusChange(`Sync failed: ${error_message}`);
         }
     };
 
 
     // Helper: inject beat markers into a WaveSurfer's internal wrapper
-    const renderBeatMarkers = (ws: WaveSurfer, markers: AudioMarker[], markerDuration: number) => {
+    const renderBeatMarkers = (ws_instance: WaveSurfer, markers: AudioMarker[], markerDuration: number) => {
         try {
-            const wrapper = ws.getWrapper();
+            const wrapper = ws_instance.getWrapper();
             if (!wrapper) return;
             // Remove existing markers
-            wrapper.querySelectorAll('.beat-marker').forEach(el => el.remove());
+            wrapper.querySelectorAll('.beat-marker').forEach(element_item => element_item.remove());
             if (markerDuration <= 0) return;
 
-            markers.forEach((marker) => {
-                const left = (marker.time / markerDuration) * 100;
+            markers.forEach((marker_item) => {
+                const left = (marker_item.time / markerDuration) * 100;
                 if (left > 100) return;
 
                 let color = MARKER_COLORS.default;
 
-                if (marker.color) {
-                    color = marker.color;
+                if (marker_item.color) {
+                    color = marker_item.color;
                 } else {
-                    switch (marker.type) {
+                    switch (marker_item.type) {
                         case 'beat':
-                            color = marker.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat;
+                            color = marker_item.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat;
                             break;
                         case 'onset':
                             color = MARKER_COLORS.onset;
@@ -1044,9 +1418,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 }
 
                 // Visual style tweaks based on type
-                const isDownbeat = marker.type === 'beat' && marker.isDownbeat;
+                const isDownbeat = marker_item.type === 'beat' && marker_item.isDownbeat;
                 const width = isDownbeat ? '2px' : '1px';
-                const opacity = marker.type === 'onset' ? '0.7' : '1';
+                const opacity = marker_item.type === 'onset' ? '0.7' : '1';
 
                 const div = document.createElement('div');
                 div.className = 'beat-marker';
@@ -1063,8 +1437,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 `;
                 wrapper.appendChild(div);
             });
-        } catch (e) {
-            console.error('renderBeatMarkers error:', e);
+        } catch (marker_render_error) {
+            console.error('renderBeatMarkers error:', marker_render_error);
         }
     };
 
@@ -1075,20 +1449,20 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         if (wavesurfer.current) {
             try {
                 wavesurfer.current.zoom(zoomLevel);
-            } catch (e) {
+            } catch {
                 // Silently ignore — audio may still be decoding
             }
             const currentMarkers = mainBeatSource === 'main' ? mainMarkers : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].markers : []);
             renderBeatMarkers(wavesurfer.current, currentMarkers, duration);
         }
-        stemSurfers.current.forEach((ws, idx) => {
+        stemSurfers.current.forEach((stem_surfer, stem_index) => {
             try {
-                ws.zoom(zoomLevel);
-            } catch (e) {
+                stem_surfer.zoom(zoomLevel);
+            } catch {
                 // Silently ignore
             }
-            if (stems[idx] && stems[idx].markers) {
-                renderBeatMarkers(ws, stems[idx].markers, duration);
+            if (stems[stem_index] && stems[stem_index].markers) {
+                renderBeatMarkers(stem_surfer, stems[stem_index].markers, duration);
             }
         });
     }, [zoomLevel, mainMarkers, stems, mainBeatSource, duration]);
@@ -1110,11 +1484,15 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             url: audioUrl,
         });
 
-        ws.on('error', (e: any) => {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (e?.name !== 'AbortError' && !msg.toLowerCase().includes('abort') && !msg.toLowerCase().includes('destroy')) {
-                console.error("Wavesurfer error:", e);
+        ws.on('error', (wavesurfer_error: unknown) => {
+            const error_message = wavesurfer_error instanceof Error ? wavesurfer_error.message : String(wavesurfer_error);
+            if (!error_message.toLowerCase().includes('abort') && !error_message.toLowerCase().includes('destroy')) {
+                console.error("Wavesurfer error:", wavesurfer_error);
             }
+        });
+
+        ws.on('timeupdate', (current_time_seconds: number) => {
+            setPlaybackCurrentTime(current_time_seconds);
         });
 
         ws.on('ready', () => {
@@ -1129,18 +1507,14 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             // Calculate Min Zoom to prevent horizontal scrolling
             if (containerRef.current) {
                 const width = containerRef.current.clientWidth;
-                // e.g. if duration is 10s and width is 1000px, minPxPerSec = 100
-                // If duration is 0, default to 1
                 const calculatedMin = dur > 0 ? width / dur : 1;
-                // Round down slightly to ensure fit? Or up? WaveSurfer sometimes adds padding.
-                // Let's floor it.
                 setMinZoom(calculatedMin);
             }
 
             try {
                 ws.zoom(zoomLevel);
-            } catch (e) {
-                console.warn("WaveSurfer initial zoom failed", e);
+            } catch (zoom_error) {
+                console.warn("WaveSurfer initial zoom failed", zoom_error);
             }
             // Render beat markers inside WaveSurfer wrapper
             const currentMarkers = mainBeatSource === 'main' ? mainMarkers : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].markers : []);
@@ -1151,15 +1525,15 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         });
 
         // Register Regions Plugin
-        const regions = ws.registerPlugin(RegionsPlugin.create());
+        const regions = ws.registerPlugin(RegionsPlugin.create()) as unknown as WaveSurferRegionsPluginInstance;
         wsRegions.current = regions;
 
         // Helper: clear only interactive (drag) regions, keep saved ones
-        const clearInteractiveRegions = (regPlugin: any) => {
-            const allRegions = regPlugin.getRegions();
-            allRegions.forEach((r: any) => {
-                if (!r.id || !r.id.startsWith('saved-')) {
-                    r.remove();
+        const clearInteractiveRegions = (regions_plugin: WaveSurferRegionsPluginInstance) => {
+            const allRegions = regions_plugin.getRegions();
+            allRegions.forEach((region_item: WaveSurferRegionLike) => {
+                if (!region_item.id || !region_item.id.startsWith('saved-')) {
+                    region_item.remove?.();
                 }
             });
         };
@@ -1169,10 +1543,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         });
 
         // Snap to Beat Logic
-        regions.on('region-updated', (region) => {
+        regions.on('region-updated', (region_item: WaveSurferRegionLike) => {
             const currentMarkers = mainBeatSource === 'main' ? mainMarkers : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].markers : []);
 
-            let newStart = region.start;
+            let newStart = region_item.start;
 
             // Stage 1: Snap START to the nearest beat marker (if within threshold)
             if (currentMarkers.length > 0) {
@@ -1183,22 +1557,22 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     );
                     return closest.time;
                 };
-                const snappedStart = snapToBeat(region.start);
+                const snappedStart = snapToBeat(region_item.start);
                 const SNAP_THRESHOLD_PX = 10;
                 const snapThresholdSecs = SNAP_THRESHOLD_PX / zoomLevel;
-                if (Math.abs(region.start - snappedStart) <= snapThresholdSecs) {
+                if (Math.abs(region_item.start - snappedStart) <= snapThresholdSecs) {
                     newStart = snappedStart;
                 }
             }
 
             // Stage 2: Calculate Aligned duration and set END relative to newStart
             const fps = activeProject?.frameRate || 24;
-            const rawDuration = Math.max(0.1, region.end - newStart);
+            const rawDuration = Math.max(0.1, region_item.end - newStart);
             const alignedDuration = getAlignedDuration(rawDuration, fps);
             const newEnd = newStart + alignedDuration;
 
-            if (newStart !== region.start || Math.abs(newEnd - region.end) > 0.001) {
-                region.setOptions({
+            if (newStart !== region_item.start || Math.abs(newEnd - region_item.end) > 0.001) {
+                region_item.setOptions({
                     start: newStart,
                     end: newEnd
                 });
@@ -1206,39 +1580,39 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
             setActiveSelection({
                 source: 'main',
-                start: region.start,
-                end: region.end
+                start: region_item.start,
+                end: region_item.end
             });
-            stemRegionsRefs.current.forEach(r => clearInteractiveRegions(r));
+            stemRegionsRefs.current.forEach(stem_region => clearInteractiveRegions(stem_region));
         });
 
-        regions.on('region-created', (region) => {
+        regions.on('region-created', (region_item: WaveSurferRegionLike) => {
             // Skip saved regions being re-added
-            if (region.id && region.id.startsWith('saved-')) return;
+            if (region_item.id && region_item.id.startsWith('saved-')) return;
             setActiveSelection({
                 source: 'main',
-                start: region.start,
-                end: region.end
+                start: region_item.start,
+                end: region_item.end
             });
-            stemRegionsRefs.current.forEach(r => clearInteractiveRegions(r));
+            stemRegionsRefs.current.forEach(stem_region => clearInteractiveRegions(stem_region));
         });
 
         // Sync Stems on Interaction
         const syncStems = () => {
             const time = ws.getCurrentTime();
-            stemSurfers.current.forEach(s => {
-                if (Math.abs(s.getCurrentTime() - time) > 0.1) {
-                    s.setTime(time);
+            stemSurfers.current.forEach(stem_surfer => {
+                if (Math.abs(stem_surfer.getCurrentTime() - time) > 0.1) {
+                    stem_surfer.setTime(time);
                 }
             });
         };
 
         ws.on('interaction', syncStems);
         ws.on('play', () => {
-            if (isStemPlaying) stemSurfers.current.forEach(s => s.play());
+            if (isStemPlaying) stemSurfers.current.forEach(stem_surfer => stem_surfer.play());
         });
         ws.on('pause', () => {
-            if (isStemPlaying) stemSurfers.current.forEach(s => s.pause());
+            if (isStemPlaying) stemSurfers.current.forEach(stem_surfer => stem_surfer.pause());
         });
 
         wavesurfer.current = ws;
@@ -1246,11 +1620,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         return () => {
             try {
                 ws.destroy();
-            } catch (e) {
+            } catch {
                 // Ignore destroy errors
             }
         };
     }, [audioUrl]);
+
+    const stemsFingerprint = stems.map(stem_item => stem_item.path + stem_item.type).join(',');
 
     // Initialize WaveSurfers (Stems)
     useEffect(() => {
@@ -1263,18 +1639,15 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
         // Cleanup function for stems
         const cleanupStems = () => {
-            stemSurfers.current.forEach(ws => {
+            stemSurfers.current.forEach(stem_surfer => {
                 try {
-                    ws.destroy();
-                } catch (e) {
+                    stem_surfer.destroy();
+                } catch {
                     // Ignore
                 }
             });
             stemSurfers.current = [];
         };
-
-        // We no longer clear all stems on every render.
-        // Re-initialization only happens when paths actually change.
 
         if (stems.length === 0) return;
 
@@ -1286,8 +1659,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 const containerId = `stem-waveform-${index}`;
                 const container = document.getElementById(containerId);
                 if (container) {
-                    // Fix: shadowRoot is a property, not a selector.
-                    // Also check for the WaveSurfer-specific class to be sure.
                     if (container.shadowRoot || container.querySelector('shadow-root') || container.innerHTML.includes('wavesurfer')) {
                         console.warn(`Container ${containerId} already occupied, skipping init.`);
                         return;
@@ -1305,18 +1676,18 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     });
 
                     // Add Regions
-                    const stemRegions = ws.registerPlugin(RegionsPlugin.create());
+                    const stemRegions = ws.registerPlugin(RegionsPlugin.create()) as unknown as WaveSurferRegionsPluginInstance;
                     stemRegionsRefs.current.set(index, stemRegions);
 
                     stemRegions.enableDragSelection({
                         color: hexToRgba(stem.color, 0.2),
                     });
 
-                    const handleStemRegionUpdate = (region: any) => {
+                    const handleStemRegionUpdate = (region_item: WaveSurferRegionLike) => {
                         // Skip saved regions
-                        if (region.id && region.id.startsWith('saved-')) return;
+                        if (region_item.id && region_item.id.startsWith('saved-')) return;
 
-                        let newStart = region.start;
+                        let newStart = region_item.start;
                         const stemMarkers = stem.markers || [];
 
                         // Stage 1: Snap START to Stem's OWN beats
@@ -1328,22 +1699,22 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 );
                                 return closest.time;
                             };
-                            const snappedStart = snapToBeat(region.start);
+                            const snappedStart = snapToBeat(region_item.start);
                             const SNAP_THRESHOLD_PX = 10;
                             const snapThresholdSecs = SNAP_THRESHOLD_PX / zoomLevel;
-                            if (Math.abs(region.start - snappedStart) <= snapThresholdSecs) {
+                            if (Math.abs(region_item.start - snappedStart) <= snapThresholdSecs) {
                                 newStart = snappedStart;
                             }
                         }
 
                         // Stage 2: Calculate Aligned duration and set END relative to newStart
                         const fps = activeProject?.frameRate || 24;
-                        const rawDuration = Math.max(0.1, region.end - newStart);
+                        const rawDuration = Math.max(0.1, region_item.end - newStart);
                         const alignedDuration = getAlignedDuration(rawDuration, fps);
                         const newEnd = newStart + alignedDuration;
 
-                        if (newStart !== region.start || Math.abs(newEnd - region.end) > 0.001) {
-                            region.setOptions({
+                        if (newStart !== region_item.start || Math.abs(newEnd - region_item.end) > 0.001) {
+                            region_item.setOptions({
                                 start: newStart,
                                 end: newEnd
                             });
@@ -1352,8 +1723,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         setActiveSelection({
                             source: 'stem',
                             stemIndex: index,
-                            start: region.start,
-                            end: region.end
+                            start: region_item.start,
+                            end: region_item.end
                         });
                     };
 
@@ -1387,12 +1758,12 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 stemRafRef.current = null;
             }
         };
-    }, [stems.map(s => s.path + s.type).join(',')]);
+    }, [stemsFingerprint]);
 
     // Auto-select Bass as main beat source if available
     useEffect(() => {
         if (stems.length > 0) {
-            const bassIndex = stems.findIndex(s => s.type.toLowerCase() === 'bass');
+            const bassIndex = stems.findIndex(stem_item => stem_item.type.toLowerCase() === 'bass');
             if (bassIndex !== -1) {
                 console.log("Auto-selecting Bass as main beat source");
                 setMainBeatSource(bassIndex);
@@ -1404,10 +1775,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         }
     }, [stems]);
 
-    // NLE Keyboard Shortcuts
+    // WHAT: Global keyboard listener for non-linear editor (NLE) playback navigation and clip markers.
+    // WHY: Provides keyboard workflow parity with standard NLE suites (Space, J, K, L, I, O, C) for sub-frame beat editing.
     useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            // Disable if typing in an input or textarea
+        const handleKeyDown = (keyboard_event: KeyboardEvent) => {
+            // Disable when typing inside active text inputs or contenteditable containers
             if (
                 document.activeElement?.tagName === 'INPUT' ||
                 document.activeElement?.tagName === 'TEXTAREA' ||
@@ -1416,130 +1788,126 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 return;
             }
 
-            const ws = wavesurfer.current;
-            if (!ws) return;
+            const main_wavesurfer = wavesurfer.current;
+            if (!main_wavesurfer) {
+                return;
+            }
 
-            // Current time info
-            const time = ws.getCurrentTime();
-            const dur = ws.getDuration();
+            const current_playback_time = main_wavesurfer.getCurrentTime();
+            const total_duration = main_wavesurfer.getDuration();
 
-            switch (e.key.toLowerCase()) {
-                case ' ':
-                    e.preventDefault();
-                    if (ws.isPlaying()) {
-                        ws.pause();
-                        stemSurfers.current.forEach(s => s.pause());
+            switch (keyboard_event.key.toLowerCase()) {
+                case ' ': {
+                    keyboard_event.preventDefault();
+                    if (main_wavesurfer.isPlaying()) {
+                        main_wavesurfer.pause();
+                        stemSurfers.current.forEach(stem_surfer => stem_surfer.pause());
                     } else {
-                        ws.play();
-                        // Assume stems play if they exist for now, or use a ref if we need strict isStemPlaying sync
-                        stemSurfers.current.forEach(s => s.play());
+                        main_wavesurfer.play();
+                        stemSurfers.current.forEach(stem_surfer => stem_surfer.play());
                     }
                     break;
-                case 'k': // Pause
-                    e.preventDefault();
-                    ws.pause();
-                    stemSurfers.current.forEach(s => s.pause());
+                }
+                case 'k': {
+                    // WHAT: Pause playback immediately across all tracks
+                    keyboard_event.preventDefault();
+                    main_wavesurfer.pause();
+                    stemSurfers.current.forEach(stem_surfer => stem_surfer.pause());
                     break;
-                case 'l': // Play / Fast Forward
-                    e.preventDefault();
-                    if (!ws.isPlaying()) {
-                        ws.setPlaybackRate(1);
-                        stemSurfers.current.forEach(s => s.setPlaybackRate(1));
-                        ws.play();
-                        stemSurfers.current.forEach(s => s.play());
+                }
+                case 'l': {
+                    // WHAT: Play forward or cycle speed multiplier (up to 8x)
+                    keyboard_event.preventDefault();
+                    if (!main_wavesurfer.isPlaying()) {
+                        main_wavesurfer.setPlaybackRate(1);
+                        stemSurfers.current.forEach(stem_surfer => stem_surfer.setPlaybackRate(1));
+                        main_wavesurfer.play();
+                        stemSurfers.current.forEach(stem_surfer => stem_surfer.play());
                     } else {
-                        // Increase speed up to 8x
-                        const currentRate = ws.getPlaybackRate();
-                        const nextRate = Math.min(8, currentRate * 2);
-                        ws.setPlaybackRate(nextRate);
-                        stemSurfers.current.forEach(s => s.setPlaybackRate(nextRate));
+                        const current_rate = main_wavesurfer.getPlaybackRate();
+                        const next_rate = Math.min(8, current_rate * 2);
+                        main_wavesurfer.setPlaybackRate(next_rate);
+                        stemSurfers.current.forEach(stem_surfer => stem_surfer.setPlaybackRate(next_rate));
                     }
                     break;
-                case 'j': // Rewind / Reverse / Normal Speed
-                    e.preventDefault();
-                    const currentRate = ws.getPlaybackRate();
-                    if (ws.isPlaying() && currentRate > 1) {
-                        // Slow down to normal first
-                        ws.setPlaybackRate(1);
-                        stemSurfers.current.forEach(s => s.setPlaybackRate(1));
+                }
+                case 'j': {
+                    // WHAT: Rewind / return to 1x normal speed or step backward by 5 seconds
+                    keyboard_event.preventDefault();
+                    const current_rate = main_wavesurfer.getPlaybackRate();
+                    if (main_wavesurfer.isPlaying() && current_rate > 1) {
+                        main_wavesurfer.setPlaybackRate(1);
+                        stemSurfers.current.forEach(stem_surfer => stem_surfer.setPlaybackRate(1));
                     } else {
-                        // Wavesurfer negative playback rate isn't reliable, skip backwards
-                        const newTime = Math.max(0, time - 5);
-                        ws.setTime(newTime);
-                        stemSurfers.current.forEach(s => s.setTime(newTime));
+                        const new_rewound_time = Math.max(0, current_playback_time - 5);
+                        main_wavesurfer.setTime(new_rewound_time);
+                        stemSurfers.current.forEach(stem_surfer => stem_surfer.setTime(new_rewound_time));
                     }
                     break;
-                case 'i': // Mark In
-                    e.preventDefault();
+                }
+                case 'i': {
+                    // WHAT: Mark In point for region selection
+                    keyboard_event.preventDefault();
                     if (wsRegions.current) {
-                        // Clear existing interactive region to reset it
-                        const allRegions = wsRegions.current.getRegions();
-                        let existingRegion = null;
+                        const all_regions = wsRegions.current.getRegions();
+                        const existing_region = all_regions.find((region_item: WaveSurferRegionLike) => !region_item.id || !region_item.id.startsWith('saved-'));
 
-                        allRegions.forEach((r: any) => {
-                            if (!r.id || !r.id.startsWith('saved-')) {
-                                existingRegion = r;
+                        const mark_in_time = current_playback_time;
+                        let mark_out_time = Math.min(total_duration, mark_in_time + 5);
+
+                        if (existing_region) {
+                            mark_out_time = existing_region.end;
+                            if (mark_in_time > mark_out_time) {
+                                mark_out_time = Math.min(total_duration, mark_in_time + 5);
                             }
-                        });
-
-                        const markInTime = time;
-                        let markOutTime = Math.min(dur, markInTime + 5); // Default to 5s loop if no 'O' is set
-
-                        if (existingRegion) {
-                            // @ts-ignore
-                            markOutTime = existingRegion.end;
-                            if (markInTime > markOutTime) markOutTime = Math.min(dur, markInTime + 5);
-                            // @ts-ignore
-                            existingRegion.setOptions({ start: markInTime, end: markOutTime });
-                            setActiveSelection({ source: 'main', start: markInTime, end: markOutTime });
+                            existing_region.setOptions({ start: mark_in_time, end: mark_out_time });
+                            setActiveSelection({ source: 'main', start: mark_in_time, end: mark_out_time });
                         } else {
                             wsRegions.current.addRegion({
-                                start: markInTime,
-                                end: markOutTime,
+                                start: mark_in_time,
+                                end: mark_out_time,
                                 color: 'rgba(255, 0, 0, 0.2)',
                             });
-                            setActiveSelection({ source: 'main', start: markInTime, end: markOutTime });
+                            setActiveSelection({ source: 'main', start: mark_in_time, end: mark_out_time });
                         }
                     }
                     break;
-                case 'o': // Mark Out
-                    e.preventDefault();
+                }
+                case 'o': {
+                    // WHAT: Mark Out point for region selection
+                    keyboard_event.preventDefault();
                     if (wsRegions.current) {
-                        const allRegions = wsRegions.current.getRegions();
-                        let existingRegion = null;
+                        const all_regions = wsRegions.current.getRegions();
+                        const existing_region = all_regions.find((region_item: WaveSurferRegionLike) => !region_item.id || !region_item.id.startsWith('saved-'));
 
-                        allRegions.forEach((r: any) => {
-                            if (!r.id || !r.id.startsWith('saved-')) {
-                                existingRegion = r;
+                        const mark_out_time = current_playback_time;
+                        let mark_in_time = Math.max(0, mark_out_time - 5);
+
+                        if (existing_region) {
+                            mark_in_time = existing_region.start;
+                            if (mark_in_time > mark_out_time) {
+                                mark_in_time = Math.max(0, mark_out_time - 5);
                             }
-                        });
-
-                        const markOutTime = time;
-                        let markInTime = Math.max(0, markOutTime - 5);
-
-                        if (existingRegion) {
-                            // @ts-ignore
-                            markInTime = existingRegion.start;
-                            if (markInTime > markOutTime) markInTime = Math.max(0, markOutTime - 5);
-                            // @ts-ignore
-                            existingRegion.setOptions({ start: markInTime, end: markOutTime });
-                            setActiveSelection({ source: 'main', start: markInTime, end: markOutTime });
+                            existing_region.setOptions({ start: mark_in_time, end: mark_out_time });
+                            setActiveSelection({ source: 'main', start: mark_in_time, end: mark_out_time });
                         } else {
                             wsRegions.current.addRegion({
-                                start: markInTime,
-                                end: markOutTime,
+                                start: mark_in_time,
+                                end: mark_out_time,
                                 color: 'rgba(255, 0, 0, 0.2)',
                             });
-                            setActiveSelection({ source: 'main', start: markInTime, end: markOutTime });
+                            setActiveSelection({ source: 'main', start: mark_in_time, end: mark_out_time });
                         }
                     }
                     break;
-                case 'c': // Cut (Add Segment)
-                    e.preventDefault();
-                    // trigger visually clicking the Add Segment button requires either state changes or button ref.
-                    // Better to just call a ref to our handleAddSegment function, but since it depends on state, we might hit stale closures if not careful.
-                    // We'll dispatch a custom event and catch it.
+                }
+                case 'c': {
+                    // WHAT: Cut keyboard command ('C') triggers segment creation from current active selection
+                    keyboard_event.preventDefault();
                     document.dispatchEvent(new CustomEvent('NLE_ADD_SEGMENT'));
+                    break;
+                }
+                default:
                     break;
             }
         };
@@ -1548,7 +1916,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [stems]);
 
-    // Catch the custom NLE Cut event to ensure we have fresh activeSelection / clips state from the component body
+    // WHAT: Catches the decoupled 'NLE_ADD_SEGMENT' custom event
+    // WHY: Decouples keyboard listener from closure staleness, assuring freshest selection and clip arrays.
     useEffect(() => {
         const handleCustomAdd = () => {
             handleAddSegment();
@@ -1557,348 +1926,390 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         return () => document.removeEventListener('NLE_ADD_SEGMENT', handleCustomAdd);
     }, [activeSelection, clips, stems]);
 
-
-    // Add the current selection as a segment to the timeline (no ComfyUI generation)
+    // WHAT: Adds the currently active region selection as a discrete video clip to the timeline
+    // WHY: Aligns clip duration to valid MiniMax frame boundary mathematical formulas.
     const handleAddSegment = () => {
         if (!activeSelection) {
-            if (onStatusChange) onStatusChange('Select a region on a waveform first.');
+            if (onStatusChange) {
+                onStatusChange('Select a region on a waveform first.');
+            }
             return;
         }
         const { start, end, source, stemIndex } = activeSelection;
 
         // Snap duration UP to the nearest valid aligned frame boundary
-        const rawDuration = end - start;
-        const fps = activeProject?.frameRate || 20;
-        const alignedDuration = getAlignedDuration(rawDuration, fps);
-        const alignedEnd = start + alignedDuration;
+        const raw_duration = end - start;
+        const project_fps = activeProject?.frameRate || 20;
+        const aligned_duration = getAlignedDuration(raw_duration, project_fps);
+        const aligned_end_time = start + aligned_duration;
 
-        const track = (clips.length % 2) + 1;
+        const timeline_track_index = (clips.length % 2) + 1;
 
-        const newClip: VideoClip = {
+        const new_clip_item: VideoClip = {
             id: Date.now().toString(),
             startTime: start,
-            endTime: alignedEnd,
-            duration: alignedDuration,
-            track,
+            endTime: aligned_end_time,
+            duration: aligned_duration,
+            track: timeline_track_index,
             status: 'pending',
             source,
             stemName: source === 'stem' && stemIndex !== undefined ? stems[stemIndex]?.type : undefined,
             label: `clip_${clips.length}`,
         };
 
-        onUpdateProject(activeProject!.id, (prev: BeatProject) => ({ clips: [...(prev.clips || []), newClip] }) as Partial<BeatProject>);
+        onUpdateProject(activeProject!.id, (prev: BeatProject) => ({ clips: [...(prev.clips || []), new_clip_item] }) as Partial<BeatProject>);
         setActiveSelection(null);
 
-        // Clear interactive drag regions so only saved ones remain
-        if (wsRegions.current) wsRegions.current.clearRegions();
-        stemRegionsRefs.current.forEach(r => r.clearRegions());
+        // Clear interactive drag regions so only saved ones remain visible
+        if (wsRegions.current) {
+            wsRegions.current.clearRegions();
+        }
+        stemRegionsRefs.current.forEach(region_instance => region_instance.clearRegions());
 
-        const frames = getValidMinimaxFrameCount(rawDuration, fps);
-        if (onStatusChange) onStatusChange(`Segment added: ${formatTime(start)} – ${formatTime(alignedEnd)} (${frames} frames @ ${fps}fps, ${alignedDuration.toFixed(2)}s)`);
+        const total_aligned_frames = getValidMinimaxFrameCount(raw_duration, project_fps);
+        if (onStatusChange) {
+            onStatusChange(`Segment added: ${formatTime(start)} – ${formatTime(aligned_end_time)} (${total_aligned_frames} frames @ ${project_fps}fps, ${aligned_duration.toFixed(2)}s)`);
+        }
 
         if (activeProject) {
-            onUpdateProject(activeProject.id, { clips: [...clips, newClip] });
+            onUpdateProject(activeProject.id, { clips: [...clips, new_clip_item] });
         }
     };
 
-    // Remove a clip/segment from the timeline
+    // WHAT: Deletes a specific clip from the timeline by unique ID
+    // WHY: Allows pruning and reordering segments without modifying underlying audio sources.
     const handleRemoveClip = (clipId: string) => {
-        const filtered = clips.filter(c => c.id !== clipId);
-        onUpdateProject(activeProject!.id, { clips: filtered });
+        const filtered_clips = clips.filter(clip_item => clip_item.id !== clipId);
+        onUpdateProject(activeProject!.id, { clips: filtered_clips });
     };
 
-    // Save clips to the active project
+    // WHAT: Serializes and saves all project clips, markers, and stem definitions to disk
+    // WHY: Preserves full project state across sessions and updates the active project file.
     const handleSaveToProject = async (overrideClips?: VideoClip[]) => {
         if (!activeProject) {
-            if (onStatusChange) onStatusChange('No project selected.');
+            if (onStatusChange) {
+                onStatusChange('No project selected.');
+            }
             return;
         }
         try {
-            // @ts-ignore
-            const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
+            const ipcRenderer = getElectronIpc();
 
-            // If project has no outputDir, load it from config
-            let baseOutputDir = activeProject.outputDir;
-            if (!baseOutputDir && ipcRenderer) {
-                const res = await ipcRenderer.invoke('get-config');
-                if (res.success && res.config.projectOutputDir) {
-                    baseOutputDir = res.config.projectOutputDir;
+            // If project has no outputDir, load it from user preferences config
+            let base_output_directory = activeProject.outputDir;
+            if (!base_output_directory && ipcRenderer) {
+                const config_response = await ipcRenderer.invoke<{ success: boolean; config?: { projectOutputDir?: string } }>('get-config');
+                if (config_response.success && config_response.config?.projectOutputDir) {
+                    base_output_directory = config_response.config.projectOutputDir;
                 }
             }
 
-            if (!baseOutputDir) {
-                if (onStatusChange) onStatusChange('No output folder configured. Set one in Settings → Defaults.');
+            if (!base_output_directory) {
+                if (onStatusChange) {
+                    onStatusChange('No output folder configured. Set one in Settings → Defaults.');
+                }
                 return;
             }
 
             // Build the full set of project stems (with current marker data) for saving
-            const projectStemsToSave = stems.map(s => ({
-                type: s.type,
-                path: s.path,
-                color: s.color,
-                beats: s.markers
-                    ? s.markers.filter(m => m.type === 'beat').map(m => m.time)
+            const project_stems_to_save = stems.map(stem_item => ({
+                type: stem_item.type,
+                path: stem_item.path,
+                color: stem_item.color,
+                beats: stem_item.markers
+                    ? stem_item.markers.filter(marker_item => marker_item.type === 'beat').map(marker_item => marker_item.time)
                     : [],
-                markers: s.markers
-                    ? s.markers.map(m => ({
-                        timestamp: m.time,
-                        frame: Math.round(m.time * (activeProject.frameRate || 20)),
-                        color: m.color || '#ffffff',
-                        note: s.type,
-                        type: m.type as 'beat' | 'onset' | 'loudness',
-                        duration_sec: 0.05 // Default duration for markers
+                markers: stem_item.markers
+                    ? stem_item.markers.map(marker_item => ({
+                        timestamp: marker_item.time,
+                        frame: Math.round(marker_item.time * (activeProject.frameRate || 20)),
+                        color: marker_item.color || '#ffffff',
+                        note: stem_item.type,
+                        type: marker_item.type as 'beat' | 'onset' | 'loudness',
+                        duration_sec: 0.05
                     }))
                     : []
             }));
 
             // Build main markers from current mainMarkers state
-            const mainMarkersToSave = mainMarkers.map(m => ({
-                timestamp: m.time,
-                frame: Math.round(m.time * (activeProject.frameRate || 20)),
-                color: m.color || (m.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat),
+            const main_markers_to_save = mainMarkers.map(main_marker => ({
+                timestamp: main_marker.time,
+                frame: Math.round(main_marker.time * (activeProject.frameRate || 20)),
+                color: main_marker.color || (main_marker.isDownbeat ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat),
                 note: '',
-                type: m.type as 'beat' | 'onset' | 'loudness',
-                duration_sec: 0.05 // Default duration for markers
+                type: main_marker.type as 'beat' | 'onset' | 'loudness',
+                duration_sec: 0.05
             }));
 
-            // Update project with all available data
-            const beatOnlyMarkers = mainMarkers.filter(m => m.type === 'beat');
+            // Update project with all available metadata
+            const beat_only_markers = mainMarkers.filter(marker_item => marker_item.type === 'beat');
             onUpdateProject(activeProject.id, {
                 clips: overrideClips || clips,
-                outputDir: baseOutputDir,
-                markers: mainMarkersToSave,
-                stems: projectStemsToSave,
+                outputDir: base_output_directory,
+                markers: main_markers_to_save,
+                stems: project_stems_to_save,
                 frameRate: activeProject.frameRate || 20,
                 algorithm: algorithm,
-                beatCount: beatOnlyMarkers.length || undefined,
-                bpm: beatOnlyMarkers.length > 1
-                    ? Math.round(60 / ((beatOnlyMarkers[beatOnlyMarkers.length - 1].time - beatOnlyMarkers[0].time) / (beatOnlyMarkers.length - 1)))
+                beatCount: beat_only_markers.length || undefined,
+                bpm: beat_only_markers.length > 1
+                    ? Math.round(60 / ((beat_only_markers[beat_only_markers.length - 1].time - beat_only_markers[0].time) / (beat_only_markers.length - 1)))
                     : activeProject.bpm,
             });
-            if (onStatusChange) onStatusChange(`Project saved ✓  →  ${baseOutputDir}`);
-        } catch (e) {
-            console.error('Save failed:', e);
-            if (onStatusChange) onStatusChange('Error saving project.');
+            if (onStatusChange) {
+                onStatusChange(`Project saved ✓  →  ${base_output_directory}`);
+            }
+        } catch (save_error: unknown) {
+            console.error('Save failed:', save_error);
+            if (onStatusChange) {
+                onStatusChange('Error saving project.');
+            }
         }
     };
 
-    // Image picker for start/end images
+    // WHAT: Invokes the native file dialog to choose start or end reference frames
+    // WHY: Allows specifying keyframes for image-to-video (I2V) and start-end interpolation workflows.
     const handlePickImage = async (clipId: string, field: 'startImagePath' | 'endImagePath') => {
         if (onPickImage) {
             onPickImage(clipId, field);
         }
     };
 
-    const handleUpdateClipLabel = (clipId: string, newLabel: string) => {
-        const updated = clips.map(c => c.id === clipId ? { ...c, label: newLabel } : c);
-        if (activeProject) {
-            onUpdateProject(activeProject.id, { clips: updated });
-        }
-    };
-
-    const handleUpdateClipPrompt = (clipId: string, newPrompt: string) => {
-        const updated = clips.map(c =>
-            c.id === clipId
-                ? { ...c, notes: { ...(c.notes || { action: '', dialogue: '', sound: '' }), action: newPrompt } }
-                : c
+    // WHAT: Modifies the semantic function assigned to an image slot on a timeline clip.
+    // WHY: Keeps the timeline table synchronized with storyboard image role configurations.
+    const handleUpdateClipRole = (clipId: string, slot: 'startImageFunction' | 'endImageFunction', role: ImageFunction) => {
+        const updated_clips = clips.map(clip_item =>
+            clip_item.id === clipId
+                ? { ...clip_item, [slot]: role }
+                : clip_item
         );
         if (activeProject) {
-            onUpdateProject(activeProject.id, { clips: updated });
+            onUpdateProject(activeProject.id, { clips: updated_clips });
         }
     };
 
+    // WHAT: Modifies a clip's user-facing text label
+    // WHY: Enables organizing narrative storyboards by scene name.
+    const handleUpdateClipLabel = (clipId: string, newLabel: string) => {
+        const updated_clips = clips.map(clip_item => clip_item.id === clipId ? { ...clip_item, label: newLabel } : clip_item);
+        if (activeProject) {
+            onUpdateProject(activeProject.id, { clips: updated_clips });
+        }
+    };
+
+    // WHAT: Updates the prompt action description in a clip's metadata
+    // WHY: Controls generative prompt generation for ComfyUI video tasks.
+    const handleUpdateClipPrompt = (clipId: string, newPrompt: string) => {
+        const updated_clips = clips.map(clip_item =>
+            clip_item.id === clipId
+                ? { ...clip_item, notes: { ...(clip_item.notes || { action: '', dialogue: '', sound: '' }), action: newPrompt } }
+                : clip_item
+        );
+        if (activeProject) {
+            onUpdateProject(activeProject.id, { clips: updated_clips });
+        }
+    };
+
+    // WHAT: Shifts a clip's start time and adjusts its end time to preserve duration
+    // WHY: Supports manual positioning and nudge operations on the timeline.
     const handleUpdateClipStartTime = (clipId: string, newStartTime: number) => {
-        const updated = clips.map(c => {
-            if (c.id === clipId) {
-                const duration = c.duration || (c.endTime - c.startTime);
+        const updated_clips = clips.map(clip_item => {
+            if (clip_item.id === clipId) {
+                const clip_duration = clip_item.duration || (clip_item.endTime - clip_item.startTime);
                 return {
-                    ...c,
+                    ...clip_item,
                     startTime: newStartTime,
-                    endTime: newStartTime + duration,
-                    duration: duration
+                    endTime: newStartTime + clip_duration,
+                    duration: clip_duration
                 };
             }
-            return c;
+            return clip_item;
         });
         if (activeProject) {
-            onUpdateProject(activeProject.id, { clips: updated });
+            onUpdateProject(activeProject.id, { clips: updated_clips });
         }
     };
 
+    // WHAT: Adjusts clip end time and ripples downstream clips to maintain continuous sequencing
+    // WHY: Maintains timing integrity across contiguous music video segments.
     const handleUpdateClipEndTime = (clipId: string, newEndTime: number) => {
-        const frameRate = activeProject?.frameRate || 20;
+        const project_frame_rate = activeProject?.frameRate || 20;
         onUpdateProject(activeProject!.id, (prev: BeatProject) => {
-            const currentClips = prev.clips || [];
-            const sorted = [...currentClips].sort((a, b) => a.startTime - b.startTime);
-            const clipIndex = sorted.findIndex(c => c.id === clipId);
-            if (clipIndex === -1) return prev;
-            const current = sorted[clipIndex];
-            if (newEndTime <= current.startTime) return prev;
-            const rawDuration = newEndTime - current.startTime;
-            const alignedDuration = getAlignedDuration(rawDuration, frameRate);
-            sorted[clipIndex] = { ...current, endTime: current.startTime + alignedDuration, duration: alignedDuration };
-            for (let i = clipIndex + 1; i < sorted.length; i++) {
-                const prevClip = sorted[i - 1];
-                const dur = sorted[i].duration || (sorted[i].endTime - sorted[i].startTime);
-                sorted[i] = { ...sorted[i], startTime: prevClip.endTime, endTime: prevClip.endTime + dur, duration: dur };
+            const current_clips = prev.clips || [];
+            const sorted_clips = [...current_clips].sort((clip_a, clip_b) => clip_a.startTime - clip_b.startTime);
+            const target_clip_index = sorted_clips.findIndex(clip_item => clip_item.id === clipId);
+            if (target_clip_index === -1) {
+                return prev;
             }
-            if (activeProject) onUpdateProject(activeProject.id, { clips: sorted });
-            return { clips: sorted };
+            const current_target_clip = sorted_clips[target_clip_index];
+            if (newEndTime <= current_target_clip.startTime) {
+                return prev;
+            }
+            const raw_duration = newEndTime - current_target_clip.startTime;
+            const aligned_duration = getAlignedDuration(raw_duration, project_frame_rate);
+            sorted_clips[target_clip_index] = { ...current_target_clip, endTime: current_target_clip.startTime + aligned_duration, duration: aligned_duration };
+            for (let cascade_index = target_clip_index + 1; cascade_index < sorted_clips.length; cascade_index++) {
+                const previous_clip = sorted_clips[cascade_index - 1];
+                const clip_duration = sorted_clips[cascade_index].duration || (sorted_clips[cascade_index].endTime - sorted_clips[cascade_index].startTime);
+                sorted_clips[cascade_index] = { ...sorted_clips[cascade_index], startTime: previous_clip.endTime, endTime: previous_clip.endTime + clip_duration, duration: clip_duration };
+            }
+            if (activeProject) {
+                onUpdateProject(activeProject.id, { clips: sorted_clips });
+            }
+            return { clips: sorted_clips };
         });
     };
 
-    // Render saved clip regions on the appropriate waveform whenever clips change
+    // WHAT: Attaches tooltip hover and context-menu listeners to a single WaveSurfer region element.
+    // WHY: Main-track and stem-track regions need identical interaction behavior (hover tooltip, mousemove tracking,
+    // mouseleave dismiss, right-click duration popup) — this shared helper eliminates duplicating 4 addEventListener
+    // calls and the tooltip JSX builder for each track type.
+    const attachRegionInteractionListeners = (
+        region_element: HTMLElement,
+        clip_item: VideoClip,
+        total_frames_count: number,
+        tooltip_accent_color: { border: string; text: string }
+    ) => {
+        region_element.addEventListener('mouseenter', (mouse_event: MouseEvent) => {
+            setTooltipState({
+                visible: true,
+                x: mouse_event.clientX,
+                y: mouse_event.clientY - 60,
+                content: (
+                    <div style={{ backgroundColor: '#11111e', border: `1px solid ${tooltip_accent_color.border}`, borderRadius: '8px', padding: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', fontSize: '10px', fontWeight: '700', pointerEvents: 'none' }}>
+                        <div style={{ color: tooltip_accent_color.text, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '2px' }}>{clip_item.label || 'Unnamed Clip'}</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '8px', color: '#94a3b8' }}>
+                            <span>START:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{formatTime(clip_item.startTime)}</span>
+                            <span>DUR:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{(clip_item.duration || (clip_item.endTime - clip_item.startTime)).toFixed(2)}s</span>
+                            <span>FRAMES:</span><span style={{ color: '#f59e0b', fontFamily: 'monospace', fontWeight: '800' }}>{total_frames_count}</span>
+                        </div>
+                    </div>
+                )
+            });
+        });
+        region_element.addEventListener('mousemove', (mouse_event: MouseEvent) => {
+            setTooltipState(previous_state => previous_state.visible ? { ...previous_state, x: mouse_event.clientX, y: mouse_event.clientY - 60 } : previous_state);
+        });
+        region_element.addEventListener('mouseleave', () => setTooltipState(previous_state => ({ ...previous_state, visible: false })));
+        region_element.addEventListener('contextmenu', (mouse_event: MouseEvent) => {
+            mouse_event.preventDefault();
+            setDurationPopup({
+                clipId: clip_item.id,
+                duration: clip_item.duration || (clip_item.endTime - clip_item.startTime),
+                startTime: clip_item.startTime,
+                x: mouse_event.clientX,
+                y: mouse_event.clientY,
+            });
+        });
+    };
+
+    // WHAT: Styles a WaveSurfer region element and wires up its interaction listeners.
+    // WHY: Both main-track and stem-track regions share identical visual styling (z-index, border, border-radius)
+    // and interaction behavior — this consolidates region setup into a single call site.
+    const styleAndBindRegion = (
+        region_element: HTMLElement,
+        clip_item: VideoClip,
+        region_color: string,
+        project_fps: number,
+        tooltip_accent_color: { border: string; text: string }
+    ) => {
+        region_element.style.zIndex = '10';
+        region_element.style.border = `1px solid ${region_color.replace('0.48', '0.8')}`;
+        region_element.style.borderRadius = '2px';
+        const total_frames_count = Math.round((clip_item.duration || (clip_item.endTime - clip_item.startTime)) * project_fps);
+        attachRegionInteractionListeners(region_element, clip_item, total_frames_count, tooltip_accent_color);
+    };
+
+    // WHAT: Visualizes saved clip regions over the main track and individual stem waveforms.
+    // WHY: Provides instant visual verification of timeline coverage against audio waveforms.
     useEffect(() => {
-        // Clear all existing pinned regions first
         const renderSavedRegions = () => {
-            const alternatingColors = [
-                'rgba(99, 102, 241, 0.48)', // More Vivid Indigo
-                'rgba(168, 85, 247, 0.48)'  // More Vivid Purple
+            const alternating_colors_palette = [
+                'rgba(99, 102, 241, 0.48)', // Vivid Indigo
+                'rgba(168, 85, 247, 0.48)'  // Vivid Purple
             ];
-            const fps = activeProject?.frameRate || 20;
+            const project_fps = activeProject?.frameRate || 20;
+
+            // WHAT: Accent color tokens for main-track vs stem-track tooltip chrome.
+            // WHY: Main-track regions use indigo accents while stem-track regions use purple accents,
+            // providing instant visual differentiation of which waveform layer a tooltip belongs to.
+            const main_track_accent = { border: 'rgba(99,102,241,0.3)', text: '#818cf8' };
+            const stem_track_accent = { border: 'rgba(167,139,250,0.3)', text: '#a78bfa' };
 
             // Render main-track clips
-            if (wsRegions.current) {
-                wsRegions.current.clearRegions();
-                const mainClips = clips.filter(c => c.source === 'main');
-                mainClips.forEach((c, idx) => {
-                    const region = wsRegions.current.addRegion({
-                        id: `saved-${c.id}`,
-                        start: c.startTime,
-                        end: c.endTime,
-                        color: alternatingColors[idx % alternatingColors.length],
+            const current_main_regions = wsRegions.current;
+            if (current_main_regions) {
+                current_main_regions.clearRegions();
+                const main_track_clips = clips.filter(clip_item => clip_item.source === 'main');
+                main_track_clips.forEach((clip_item, clip_index) => {
+                    const region_color = alternating_colors_palette[clip_index % alternating_colors_palette.length];
+                    const created_region = current_main_regions.addRegion({
+                        id: `saved-${clip_item.id}`,
+                        start: clip_item.startTime,
+                        end: clip_item.endTime,
+                        color: region_color,
                         drag: false,
                         resize: false,
                     });
-                    // Push behind waveform
-                    if (region.element) {
-                        region.element.style.zIndex = '10';
-                        region.element.style.border = `1px solid ${alternatingColors[idx % alternatingColors.length].replace('0.48', '0.8')}`;
-                        region.element.style.borderRadius = '2px';
-                        const frames = Math.round((c.duration || (c.endTime - c.startTime)) * fps);
-                        region.element.addEventListener('mouseenter', (e: MouseEvent) => {
-                            setTooltipState({
-                                visible: true,
-                                x: e.clientX,
-                                y: e.clientY - 60,
-                                content: (
-                                    <div style={{ backgroundColor: '#11111e', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '8px', padding: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', fontSize: '10px', fontWeight: '700', pointerEvents: 'none' }}>
-                                        <div style={{ color: '#818cf8', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '2px' }}>{c.label || 'Unnamed Clip'}</div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '8px', color: '#94a3b8' }}>
-                                            <span>START:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{formatTime(c.startTime)}</span>
-                                            <span>DUR:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{(c.duration || (c.endTime - c.startTime)).toFixed(2)}s</span>
-                                            <span>FRAMES:</span><span style={{ color: '#f59e0b', fontFamily: 'monospace', fontWeight: '800' }}>{frames}</span>
-                                        </div>
-                                    </div>
-                                )
-                            });
-                        });
-                        region.element.addEventListener('mousemove', (e: MouseEvent) => {
-                            setTooltipState(prev => prev.visible ? { ...prev, x: e.clientX, y: e.clientY - 60 } : prev);
-                        });
-                        region.element.addEventListener('mouseleave', () => setTooltipState(prev => ({ ...prev, visible: false })));
-                        region.element.addEventListener('contextmenu', (e: MouseEvent) => {
-                            e.preventDefault();
-                            setDurationPopup({
-                                clipId: c.id,
-                                duration: c.duration || (c.endTime - c.startTime),
-                                startTime: c.startTime,
-                                x: e.clientX,
-                                y: e.clientY,
-                            });
-                        });
+                    if (created_region.element) {
+                        styleAndBindRegion(created_region.element, clip_item, region_color, project_fps, main_track_accent);
                     }
                 });
             }
 
             // Render stem clips
-            stemRegionsRefs.current.forEach((reg, stemIdx) => {
-                reg.clearRegions();
-                const stemType = stems[stemIdx]?.type;
-                if (!stemType) return;
-                const stemClips = clips.filter(c => c.source === 'stem' && c.stemName === stemType);
-                stemClips.forEach((c, idx) => {
-                    const region = reg.addRegion({
-                        id: `saved-${c.id}`,
-                        start: c.startTime,
-                        end: c.endTime,
-                        color: alternatingColors[idx % alternatingColors.length],
+            stemRegionsRefs.current.forEach((stem_region_instance, stem_index) => {
+                stem_region_instance.clearRegions();
+                const stem_type_string = stems[stem_index]?.type;
+                if (!stem_type_string) {
+                    return;
+                }
+                const stem_matching_clips = clips.filter(clip_item => clip_item.source === 'stem' && clip_item.stemName === stem_type_string);
+                stem_matching_clips.forEach((clip_item, clip_index) => {
+                    const region_color = alternating_colors_palette[clip_index % alternating_colors_palette.length];
+                    const created_region = stem_region_instance.addRegion({
+                        id: `saved-${clip_item.id}`,
+                        start: clip_item.startTime,
+                        end: clip_item.endTime,
+                        color: region_color,
                         drag: false,
                         resize: false,
                     });
-                    // Push behind waveform
-                    if (region.element) {
-                        region.element.style.zIndex = '10';
-                        region.element.style.border = `1px solid ${alternatingColors[idx % alternatingColors.length].replace('0.48', '0.8')}`;
-                        region.element.style.borderRadius = '2px';
-                        const frames = Math.round((c.duration || (c.endTime - c.startTime)) * fps);
-                        region.element.addEventListener('mouseenter', (e: MouseEvent) => {
-                            setTooltipState({
-                                visible: true,
-                                x: e.clientX,
-                                y: e.clientY - 60,
-                                content: (
-                                    <div style={{ backgroundColor: '#11111e', border: '1px solid rgba(167,139,250,0.3)', borderRadius: '8px', padding: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', fontSize: '10px', fontWeight: '700', pointerEvents: 'none' }}>
-                                        <div style={{ color: '#a78bfa', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '2px' }}>{c.label || 'Unnamed Clip'}</div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto', gap: '8px', color: '#94a3b8' }}>
-                                            <span>START:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{formatTime(c.startTime)}</span>
-                                            <span>DUR:</span><span style={{ color: 'white', fontFamily: 'monospace' }}>{(c.duration || (c.endTime - c.startTime)).toFixed(2)}s</span>
-                                            <span>FRAMES:</span><span style={{ color: '#f59e0b', fontFamily: 'monospace', fontWeight: '800' }}>{frames}</span>
-                                        </div>
-                                    </div>
-                                )
-                            });
-                        });
-                        region.element.addEventListener('mousemove', (e: MouseEvent) => {
-                            setTooltipState(prev => prev.visible ? { ...prev, x: e.clientX, y: e.clientY - 60 } : prev);
-                        });
-                        region.element.addEventListener('mouseleave', () => setTooltipState(prev => ({ ...prev, visible: false })));
-                        region.element.addEventListener('contextmenu', (e: MouseEvent) => {
-                            e.preventDefault();
-                            setDurationPopup({
-                                clipId: c.id,
-                                duration: c.duration || (c.endTime - c.startTime),
-                                startTime: c.startTime,
-                                x: e.clientX,
-                                y: e.clientY,
-                            });
-                        });
+                    if (created_region.element) {
+                        styleAndBindRegion(created_region.element, clip_item, region_color, project_fps, stem_track_accent);
                     }
                 });
             });
         };
 
-        // Small delay to let WaveSurfer finish any pending updates
         const timer = setTimeout(renderSavedRegions, 250);
         return () => clearTimeout(timer);
     }, [clips, stems, duration, waveSurfersReady]);
 
+    // WHAT: Converts the active waveform selection directly into a video generation job
+    // WHY: Streamlines taking a selected musical bar or phrase directly to video generation.
     const handleGenerateClipFromRegion = async () => {
         if (!activeSelection) {
-            if (onStatusChange) onStatusChange("Please select a region on the waveform first.");
+            if (onStatusChange) {
+                onStatusChange("Please select a region on the waveform first.");
+            }
             return;
         }
 
-        const { start: startTime, end: endTime, source, stemIndex } = activeSelection;
-        const duration = endTime - startTime;
+        const { start: selection_start_time, end: selection_end_time, source, stemIndex } = activeSelection;
+        const segment_duration = selection_end_time - selection_start_time;
 
-        // Constraint Math matches Minimax template requirements
-        // Frame Count: (n * 8) + 1
-        // Dimensions: (n * 32) + 1
-        // These are handled by the shared handleGenerateVideo in App.tsx
+        const timeline_track_index = (clips.length % 2) + 1;
 
-        // Checkerboard Track Logic
-        const newIndex = clips.length;
-        const track = (newIndex % 2) + 1;
+        if (!activeProject) {
+            return;
+        }
 
-        if (!activeProject) return;
-
-        const newClip: VideoClip = {
+        const new_clip_item: VideoClip = {
             id: Date.now().toString(),
-            startTime,
-            endTime,
-            duration,
-            track,
+            startTime: selection_start_time,
+            endTime: selection_end_time,
+            duration: segment_duration,
+            track: timeline_track_index,
             status: 'pending',
             notes: {
                 action: "A cool music video scene, dynamic lighting, 4k",
@@ -1910,204 +2321,466 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             label: `clip_${clips.length}`
         };
 
-        const updatedClips = [...clips, newClip];
-        onUpdateProject(activeProject.id, { clips: updatedClips });
+        const updated_clips_collection = [...clips, new_clip_item];
+        onUpdateProject(activeProject.id, { clips: updated_clips_collection });
 
-        // Trigger shared queue generation
         if (onGenerateVideo) {
-            onGenerateVideo(newClip.id);
+            onGenerateVideo(new_clip_item.id);
         }
     };
 
-
+    // WHAT: Stages marker export Lua/Python script for DaVinci Resolve import
+    // WHY: Translates web beat detection data into native Resolve timeline markers.
     const handleExportMarkers = async () => {
         if (!activeProject) {
-            if (onStatusChange) onStatusChange('No project selected.');
+            if (onStatusChange) {
+                onStatusChange('No project selected.');
+            }
             return;
         }
 
-        // Collect all markers: main track + all stems
-        const allMarkers: any[] = [];
+        const aggregated_export_markers: ResolveExportMarker[] = [];
 
         // Main Track Markers
-        mainMarkers.forEach(m => {
-            allMarkers.push({
-                time: m.time,
-                timestamp: m.time, // stage-for-resolve expects timestamp
-                frame: Math.round(m.time * (activeProject.frameRate || 24)),
-                type: m.type,
-                color: m.color || (m.isDownbeat ? '#ff0000' : '#ffff00'),
-                note: m.isDownbeat ? 'DOWNBEAT' : 'BEAT',
-                duration_sec: 0.05 // Default duration for markers
+        mainMarkers.forEach(main_marker => {
+            aggregated_export_markers.push({
+                time: main_marker.time,
+                timestamp: main_marker.time,
+                frame: Math.round(main_marker.time * (activeProject.frameRate || 24)),
+                type: main_marker.type,
+                color: main_marker.color || (main_marker.isDownbeat ? '#ff0000' : '#ffff00'),
+                note: main_marker.isDownbeat ? 'DOWNBEAT' : 'BEAT',
+                duration_sec: 0.05
             });
         });
 
         // Stem Markers
-        stems.forEach(s => {
-            if (s.markers) {
-                s.markers.forEach(m => {
-                    allMarkers.push({
-                        time: m.time,
-                        timestamp: m.time,
-                        frame: Math.round(m.time * (activeProject.frameRate || 24)),
-                        type: m.type,
-                        color: s.color || '#00ff00',
-                        note: `${s.type.toUpperCase()}: ${m.type}`,
-                        duration_sec: 0.05 // Default duration for markers
+        stems.forEach(stem_item => {
+            if (stem_item.markers) {
+                stem_item.markers.forEach(stem_marker => {
+                    aggregated_export_markers.push({
+                        time: stem_marker.time,
+                        timestamp: stem_marker.time,
+                        frame: Math.round(stem_marker.time * (activeProject.frameRate || 24)),
+                        type: stem_marker.type,
+                        color: stem_item.color || '#00ff00',
+                        note: `${stem_item.type.toUpperCase()}: ${stem_marker.type}`,
+                        duration_sec: 0.05
                     });
                 });
             }
         });
 
-        if (allMarkers.length === 0) {
-            if (onStatusChange) onStatusChange('No markers found to export.');
+        if (aggregated_export_markers.length === 0) {
+            if (onStatusChange) {
+                onStatusChange('No markers found to export.');
+            }
             return;
         }
 
-        // @ts-ignore
-        const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
-        const path = window.require('path');
+        const ipcRenderer = getElectronIpc();
+        const pathModule = getNodePath();
 
-        // Resolve audio path to absolute
-        let resolvedAudioPath = activeProject.audioPath || (audioFile as any)?.path;
-        if (resolvedAudioPath && !path.isAbsolute(resolvedAudioPath) && activeProject.outputDir) {
-            resolvedAudioPath = path.resolve(activeProject.outputDir, resolvedAudioPath);
+        if (!ipcRenderer || !pathModule) {
+            if (onStatusChange) {
+                onStatusChange('Resolve export requires running in Electron.');
+            }
+            return;
         }
 
-        const exportData = {
+        let resolved_audio_path_string = activeProject.audioPath || audioFile?.path;
+        if (resolved_audio_path_string && !pathModule.isAbsolute(resolved_audio_path_string) && activeProject.outputDir) {
+            resolved_audio_path_string = pathModule.resolve(activeProject.outputDir, resolved_audio_path_string);
+        }
+
+        const export_data_payload = {
             projectName: activeProject.name || 'Untitled Project',
-            audioPath: resolvedAudioPath,
-            csvPath: '', // Embedded in script
-            markers: allMarkers
+            audioPath: resolved_audio_path_string,
+            csvPath: '',
+            markers: aggregated_export_markers
         };
 
-        if (onStatusChange) onStatusChange('Generating Resolve Markers script...');
-        const result = await ipcRenderer.invoke('stage-for-resolve', exportData);
+        if (onStatusChange) {
+            onStatusChange('Generating Resolve Markers script...');
+        }
+        const export_result = await ipcRenderer.invoke<{ success: boolean; scriptPath?: string; error?: string }>('stage-for-resolve', export_data_payload);
 
-        if (result.success) {
-            if (onStatusChange) onStatusChange(`Markers script generated: ${result.scriptPath}`);
+        if (export_result.success) {
+            if (onStatusChange) {
+                onStatusChange(`Markers script generated: ${export_result.scriptPath}`);
+            }
         } else {
-            if (onStatusChange) onStatusChange(`Marker export failed: ${result.error}`);
+            if (onStatusChange) {
+                onStatusChange(`Marker export failed: ${export_result.error}`);
+            }
         }
     };
 
+    // WHAT: Generates a script that imports audio and video files into the DaVinci Resolve Media Pool
+    // WHY: Media files must be indexed in Resolve before they can be sequenced onto tracks.
     const handleExportMediaOnly = async () => {
         if (!activeProject || !audioFile?.path) {
-            if (onStatusChange) onStatusChange('No project or audio file selected.');
+            if (onStatusChange) {
+                onStatusChange('No project or audio file selected.');
+            }
             return;
         }
 
-        // @ts-ignore
-        const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
-        const path = window.require('path');
+        const ipcRenderer = getElectronIpc();
+        const pathModule = getNodePath();
 
-        // Resolve paths to absolute
-        let resolvedAudioPath = activeProject.audioPath || (audioFile as any)?.path;
-        if (resolvedAudioPath && !path.isAbsolute(resolvedAudioPath) && activeProject.outputDir) {
-            resolvedAudioPath = path.resolve(activeProject.outputDir, resolvedAudioPath);
+        if (!ipcRenderer || !pathModule) {
+            if (onStatusChange) {
+                onStatusChange('Resolve media export requires running in Electron.');
+            }
+            return;
         }
 
-        const videoPaths = clips
-            .filter(c => c.videoPath)
-            .map(c => {
-                let vp = c.videoPath!;
-                if (!path.isAbsolute(vp) && activeProject.outputDir) {
-                    vp = path.resolve(activeProject.outputDir, vp);
+        let resolved_audio_path_string = activeProject.audioPath || audioFile?.path;
+        if (resolved_audio_path_string && !pathModule.isAbsolute(resolved_audio_path_string) && activeProject.outputDir) {
+            resolved_audio_path_string = pathModule.resolve(activeProject.outputDir, resolved_audio_path_string);
+        }
+
+        const absolute_video_paths_collection = clips
+            .filter(clip_item => clip_item.videoPath)
+            .map(clip_item => {
+                let video_path_string = clip_item.videoPath!;
+                if (!pathModule.isAbsolute(video_path_string) && activeProject.outputDir) {
+                    video_path_string = pathModule.resolve(activeProject.outputDir, video_path_string);
                 }
-                return vp;
+                return video_path_string;
             });
 
-        const exportData = {
+        const export_data_payload = {
             projectName: activeProject.name,
-            audioPath: resolvedAudioPath,
-            videoPaths,
-            beats: [] // No beats needed for pure import
+            audioPath: resolved_audio_path_string,
+            videoPaths: absolute_video_paths_collection,
+            beats: []
         };
 
-        if (onStatusChange) onStatusChange('Generating Resolve Load Media script...');
-        const result = await ipcRenderer.invoke('stage-video-sync', exportData);
+        if (onStatusChange) {
+            onStatusChange('Generating Resolve Load Media script...');
+        }
+        const export_result = await ipcRenderer.invoke<{ success: boolean; scriptPath?: string; error?: string }>('stage-video-sync', export_data_payload);
 
-        if (result.success) {
-            if (onStatusChange) onStatusChange(`Load Media script generated: ${result.scriptPath}`);
+        if (export_result.success) {
+            if (onStatusChange) {
+                onStatusChange(`Load Media script generated: ${export_result.scriptPath}`);
+            }
         } else {
-            if (onStatusChange) onStatusChange(`Load Media export failed: ${result.error}`);
+            if (onStatusChange) {
+                onStatusChange(`Load Media export failed: ${export_result.error}`);
+            }
         }
     };
 
+    // WHAT: Generates an assembly script to construct an entire edited timeline in Resolve
+    // WHY: Provides an offline fallback if live HTTP bridge is not currently running.
     const handleExportManifest = async () => {
         if (!activeProject) {
-            if (onStatusChange) onStatusChange('No project selected.');
+            if (onStatusChange) {
+                onStatusChange('No project selected.');
+            }
             return;
         }
 
-        const projectClips = clips.filter(c => c.videoPath);
-        if (projectClips.length === 0) {
-            if (onStatusChange) onStatusChange('No generated clips found in the timeline.');
+        const project_clips_with_video = clips.filter(clip_item => clip_item.videoPath);
+        if (project_clips_with_video.length === 0) {
+            if (onStatusChange) {
+                onStatusChange('No generated clips found in the timeline.');
+            }
             return;
         }
 
-        // @ts-ignore
-        const ipcRenderer = window.require ? window.require('electron').ipcRenderer : window.ipcRenderer;
-        const path = window.require('path');
+        const ipcRenderer = getElectronIpc();
+        const pathModule = getNodePath();
 
-        // Resolve paths to absolute
-        let resolvedAudioPath = activeProject.audioPath || (audioFile as any)?.path;
-        if (resolvedAudioPath && !path.isAbsolute(resolvedAudioPath) && activeProject.outputDir) {
-            resolvedAudioPath = path.resolve(activeProject.outputDir, resolvedAudioPath);
+        if (!ipcRenderer || !pathModule) {
+            if (onStatusChange) {
+                onStatusChange('Resolve timeline export requires running in Electron.');
+            }
+            return;
         }
 
-        const resolvedClips = projectClips.map(clip => {
-            let vp = clip.videoPath!;
-            if (!path.isAbsolute(vp) && activeProject.outputDir) {
-                vp = path.resolve(activeProject.outputDir, vp);
+        let resolved_audio_path_string = activeProject.audioPath || audioFile?.path;
+        if (resolved_audio_path_string && !pathModule.isAbsolute(resolved_audio_path_string) && activeProject.outputDir) {
+            resolved_audio_path_string = pathModule.resolve(activeProject.outputDir, resolved_audio_path_string);
+        }
+
+        const resolved_clips_collection = project_clips_with_video.map(clip_item => {
+            let video_path_string = clip_item.videoPath!;
+            if (!pathModule.isAbsolute(video_path_string) && activeProject.outputDir) {
+                video_path_string = pathModule.resolve(activeProject.outputDir, video_path_string);
             }
             return {
-                ...clip,
-                videoPath: vp,
-                path: vp // Ensure both keys are consistent for the handler
+                ...clip_item,
+                videoPath: video_path_string,
+                path: video_path_string
             };
         });
 
-        // Prepare data for reconstruction script
-        const exportData = {
+        const export_data_payload = {
             projectName: activeProject.name || 'Untitled Project',
-            audioPath: resolvedAudioPath,
+            audioPath: resolved_audio_path_string,
             frameRate: activeProject.frameRate || 24,
-            clips: resolvedClips
+            clips: resolved_clips_collection
         };
 
-        if (onStatusChange) onStatusChange('Generating Resolve export script...');
+        if (onStatusChange) {
+            onStatusChange('Generating Resolve export script...');
+        }
 
-        const result = await ipcRenderer.invoke('stage-timeline-to-resolve', exportData);
+        const export_result = await ipcRenderer.invoke<{ success: boolean; scriptPath?: string; error?: string }>('stage-timeline-to-resolve', export_data_payload);
 
-        if (result.success) {
-            if (onStatusChange) onStatusChange(`Resolve script generated: ${result.scriptPath}`);
-            // Optionally open the folder
+        if (export_result.success) {
+            if (onStatusChange) {
+                onStatusChange(`Resolve script generated: ${export_result.scriptPath}`);
+            }
         } else {
-            console.error('Export failed:', result.error);
-            if (onStatusChange) onStatusChange(`Export failed: ${result.error}`);
+            console.error('Export failed:', export_result.error);
+            if (onStatusChange) {
+                onStatusChange(`Export failed: ${export_result.error}`);
+            }
         }
     };
 
+    // ---------------------------------------------------------------------------
+    // DaVinci Resolve Live HTTP Bridge Handlers
+    // ---------------------------------------------------------------------------
+
+    // WHAT: Directly pushes beat, onset, and loudness markers into DaVinci Resolve's active timeline.
+    // WHY: Provides instant sub-second synchronization without writing scripts or manual clicking in Resolve.
+    const handleLivePushMarkers = async () => {
+        if (!activeProject) {
+            if (onStatusChange) {
+                onStatusChange('No active project selected.');
+            }
+            return;
+        }
+
+        const aggregated_markers_collection: ResolveExportMarker[] = [];
+        mainMarkers.forEach(main_marker => {
+            aggregated_markers_collection.push({
+                time: main_marker.time,
+                timestamp: main_marker.time,
+                frame: Math.round(main_marker.time * (activeProject.frameRate || 24)),
+                type: main_marker.type,
+                color: main_marker.color || (main_marker.isDownbeat ? '#ff0000' : '#ffff00'),
+                note: main_marker.isDownbeat ? 'DOWNBEAT' : 'BEAT',
+                duration_sec: 0.05
+            });
+        });
+
+        stems.forEach(stem_item => {
+            if (stem_item.markers) {
+                stem_item.markers.forEach(stem_marker => {
+                    aggregated_markers_collection.push({
+                        time: stem_marker.time,
+                        timestamp: stem_marker.time,
+                        frame: Math.round(stem_marker.time * (activeProject.frameRate || 24)),
+                        type: stem_marker.type,
+                        color: stem_item.color || '#00ff00',
+                        note: `${stem_item.type.toUpperCase()}: ${stem_marker.type}`,
+                        duration_sec: 0.05
+                    });
+                });
+            }
+        });
+
+        if (aggregated_markers_collection.length === 0) {
+            if (onStatusChange) {
+                onStatusChange('No markers found to push.');
+            }
+            return;
+        }
+
+        const ipcRenderer = getElectronIpc();
+        if (!ipcRenderer) {
+            if (onStatusChange) {
+                onStatusChange('Live Resolve Bridge requires running in Electron.');
+            }
+            return;
+        }
+
+        if (onStatusChange) {
+            onStatusChange('⚡ Pushing markers directly to DaVinci Resolve...');
+        }
+        try {
+            const push_result = await ipcRenderer.invoke<{ success: boolean; pushed_count?: number; timeline_name?: string; error?: string }>('resolve-bridge-push-markers', {
+                markers: aggregated_markers_collection
+            });
+
+            if (push_result.success) {
+                if (onStatusChange) {
+                    onStatusChange(`⚡ Successfully pushed ${push_result.pushed_count} markers to timeline: "${push_result.timeline_name}"!`);
+                }
+            } else {
+                if (onStatusChange) {
+                    onStatusChange(`Bridge Push Failed: ${push_result.error}. (Make sure resolve_bridge is running in Resolve)`);
+                }
+            }
+        } catch (push_error: unknown) {
+            const error_message_string = push_error instanceof Error ? push_error.message : String(push_error);
+            if (onStatusChange) {
+                onStatusChange(`Bridge Error: ${error_message_string}`);
+            }
+        }
+    };
+
+    // WHAT: Imports audio and generated video clips directly into Resolve's active Media Pool.
+    // WHY: Avoids manual media import steps through the bridge HTTP connection.
+    const handleLiveImportMedia = async () => {
+        if (!activeProject) {
+            if (onStatusChange) {
+                onStatusChange('No active project selected.');
+            }
+            return;
+        }
+
+        const ipcRenderer = getElectronIpc();
+        const pathModule = getNodePath();
+        if (!ipcRenderer || !pathModule) {
+            if (onStatusChange) {
+                onStatusChange('Live Resolve Bridge requires running in Electron.');
+            }
+            return;
+        }
+
+        let resolved_audio_path_string = activeProject.audioPath || audioFile?.path || '';
+        if (resolved_audio_path_string && !pathModule.isAbsolute(resolved_audio_path_string) && activeProject.outputDir) {
+            resolved_audio_path_string = pathModule.resolve(activeProject.outputDir, resolved_audio_path_string);
+        }
+
+        const absolute_video_paths_collection = clips
+            .filter(clip_item => clip_item.videoPath)
+            .map(clip_item => {
+                let video_path_string = clip_item.videoPath!;
+                if (!pathModule.isAbsolute(video_path_string) && activeProject.outputDir) {
+                    video_path_string = pathModule.resolve(activeProject.outputDir, video_path_string);
+                }
+                return video_path_string;
+            });
+
+        if (onStatusChange) {
+            onStatusChange('⚡ Importing media directly into DaVinci Resolve Media Pool...');
+        }
+        try {
+            const import_result = await ipcRenderer.invoke<{ success: boolean; audio_imported?: boolean; imported_video_count?: number; error?: string }>('resolve-bridge-import-media', {
+                audioPath: resolved_audio_path_string,
+                videoPaths: absolute_video_paths_collection
+            });
+
+            if (import_result.success) {
+                if (onStatusChange) {
+                    onStatusChange(`⚡ Media Imported: ${import_result.audio_imported ? 'Audio + ' : ''}${import_result.imported_video_count} video clips added to Media Pool!`);
+                }
+            } else {
+                if (onStatusChange) {
+                    onStatusChange(`Media Import Failed: ${import_result.error}`);
+                }
+            }
+        } catch (import_error: unknown) {
+            const error_message_string = import_error instanceof Error ? import_error.message : String(import_error);
+            if (onStatusChange) {
+                onStatusChange(`Bridge Error: ${error_message_string}`);
+            }
+        }
+    };
+
+    // WHAT: Reconstructs the complete video timeline with clips placed at designed start/end times.
+    // WHY: 1-click timeline assembly directly into the active Resolve project.
+    const handleLiveBuildTimeline = async () => {
+        if (!activeProject) {
+            if (onStatusChange) {
+                onStatusChange('No active project selected.');
+            }
+            return;
+        }
+
+        const timeline_clips_collection = clips.filter(clip_item => clip_item.videoPath);
+        if (timeline_clips_collection.length === 0) {
+            if (onStatusChange) {
+                onStatusChange('No generated video clips found on the timeline.');
+            }
+            return;
+        }
+
+        const ipcRenderer = getElectronIpc();
+        const pathModule = getNodePath();
+        if (!ipcRenderer || !pathModule) {
+            if (onStatusChange) {
+                onStatusChange('Live Resolve Bridge requires running in Electron.');
+            }
+            return;
+        }
+
+        let resolved_audio_path_string = activeProject.audioPath || audioFile?.path || '';
+        if (resolved_audio_path_string && !pathModule.isAbsolute(resolved_audio_path_string) && activeProject.outputDir) {
+            resolved_audio_path_string = pathModule.resolve(activeProject.outputDir, resolved_audio_path_string);
+        }
+
+        const resolved_timeline_clips = timeline_clips_collection.map(clip_item => {
+            let video_path_string = clip_item.videoPath!;
+            if (!pathModule.isAbsolute(video_path_string) && activeProject.outputDir) {
+                video_path_string = pathModule.resolve(activeProject.outputDir, video_path_string);
+            }
+            return {
+                ...clip_item,
+                videoPath: video_path_string,
+                path: video_path_string
+            };
+        });
+
+        if (onStatusChange) {
+            onStatusChange('⚡ Reconstructing timeline in DaVinci Resolve...');
+        }
+        try {
+            const build_result = await ipcRenderer.invoke<{ success: boolean; timeline_name?: string; placed_clips_count?: number; error?: string }>('resolve-bridge-reconstruct-timeline', {
+                projectName: activeProject.name || 'Untitled Project',
+                audioPath: resolved_audio_path_string,
+                frameRate: activeProject.frameRate || 24,
+                clips: resolved_timeline_clips
+            });
+
+            if (build_result.success) {
+                if (onStatusChange) {
+                    onStatusChange(`⚡ Timeline Built: "${build_result.timeline_name}" with ${build_result.placed_clips_count} clips placed!`);
+                }
+            } else {
+                if (onStatusChange) {
+                    onStatusChange(`Timeline Build Failed: ${build_result.error}`);
+                }
+            }
+        } catch (build_error: unknown) {
+            const error_message_string = build_error instanceof Error ? build_error.message : String(build_error);
+            if (onStatusChange) {
+                onStatusChange(`Bridge Error: ${error_message_string}`);
+            }
+        }
+    };
 
     const [isStemPlaying, setIsStemPlaying] = useState(false);
 
+    // WHAT: Starts playback of all stems in sync from timestamp zero
+    // WHY: Lets users audition isolated instrumental arrangements without the master track.
     const handlePlayStems = () => {
-        // Play all stems from the start — does NOT affect the main track
-        stemSurfers.current.forEach(s => {
-            s.setVolume(1);
-            s.setTime(0);
-            s.play();
+        stemSurfers.current.forEach(stem_surfer => {
+            stem_surfer.setVolume(1);
+            stem_surfer.setTime(0);
+            stem_surfer.play();
         });
         setIsStemPlaying(true);
     };
 
+    // WHAT: Pauses playback on all stem tracks simultaneously
+    // WHY: Stops multi-track stem auditioning.
     const handlePauseAll = () => {
-        // Pause all stems — does NOT affect the main track
-        stemSurfers.current.forEach(s => s.pause());
+        stemSurfers.current.forEach(stem_surfer => stem_surfer.pause());
         setIsStemPlaying(false);
     };
 
+    // WHAT: Resumes playback on the main master waveform
+    // WHY: Toggles main track auditioning and clears stem solo state.
     const handlePlayMain = () => {
         if (wavesurfer.current) {
             wavesurfer.current.setVolume(1);
@@ -2117,106 +2790,122 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         }
     };
 
+    // WHAT: Pauses playback on the main master waveform
+    // WHY: Halts playback without shifting playhead.
     const handlePauseMain = () => {
         if (wavesurfer.current) {
             wavesurfer.current.pause();
         }
     };
 
-    const handlePlayStem = (index: number) => {
-        const ws = stemSurfers.current[index];
-        if (ws) {
-            ws.play();
+    // WHAT: Plays an individual separated stem track by index
+    // WHY: Allows solo listening to individual instruments (e.g. Drums only or Bass only).
+    const handlePlayStem = (stemIndex: number) => {
+        const stem_surfer = stemSurfers.current[stemIndex];
+        if (stem_surfer) {
+            stem_surfer.play();
         }
     };
 
-    const handlePauseStem = (index: number) => {
-        const ws = stemSurfers.current[index];
-        if (ws) {
-            ws.pause();
+    // WHAT: Pauses an individual separated stem track by index
+    // WHY: Halts solo playback on a specific instrument track.
+    const handlePauseStem = (stemIndex: number) => {
+        const stem_surfer = stemSurfers.current[stemIndex];
+        if (stem_surfer) {
+            stem_surfer.pause();
         }
     };
 
-    const handleImportSubtitles = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file || !activeProject) return;
+    // WHAT: Parses standard SRT and VTT subtitle files into discrete timeline video clips
+    // WHY: Automates storyboard generation from transcribed speech or lyrics.
+    const handleImportSubtitles = (change_event: React.ChangeEvent<HTMLInputElement>) => {
+        const subtitle_file = change_event.target.files?.[0];
+        if (!subtitle_file || !activeProject) {
+            return;
+        }
 
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const text = event.target?.result as string;
-            if (!text) return;
+        const file_reader = new FileReader();
+        file_reader.onload = (file_read_event) => {
+            const raw_file_text = file_read_event.target?.result as string;
+            if (!raw_file_text) {
+                return;
+            }
             
-            const lines = text.split(/\r?\n/);
-            const newClips: VideoClip[] = [];
-            let trackIndex = 1;
+            const raw_lines = raw_file_text.split(/\r?\n/);
+            const imported_clips_collection: VideoClip[] = [];
+            let timeline_track_index = 1;
             
-            const timeRegex = /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/;
+            const time_match_regex = /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/;
             
-            for (let i = 0; i < lines.length; i++) {
-                const match = lines[i].match(timeRegex);
-                if (match) {
-                    let textLines = '';
-                    let j = i + 1;
-                    while (j < lines.length && lines[j].trim() !== '' && !lines[j].match(timeRegex)) {
-                        if (!/^\d+$/.test(lines[j].trim())) {
-                             textLines += lines[j].trim() + ' ';
+            for (let line_index = 0; line_index < raw_lines.length; line_index++) {
+                const regex_match = raw_lines[line_index].match(time_match_regex);
+                if (regex_match) {
+                    let text_accumulator = '';
+                    let subsequent_line_index = line_index + 1;
+                    while (subsequent_line_index < raw_lines.length && raw_lines[subsequent_line_index].trim() !== '' && !raw_lines[subsequent_line_index].match(time_match_regex)) {
+                        if (!/^\d+$/.test(raw_lines[subsequent_line_index].trim())) {
+                             text_accumulator += raw_lines[subsequent_line_index].trim() + ' ';
                         }
-                        j++;
+                        subsequent_line_index++;
                     }
-                    textLines = textLines.trim();
+                    text_accumulator = text_accumulator.trim();
                     
-                    if (textLines) {
-                        const startH = parseInt(match[1], 10);
-                        const startM = parseInt(match[2], 10);
-                        const startS = parseInt(match[3], 10);
-                        const startMs = parseInt(match[4], 10);
-                        const endH = parseInt(match[5], 10);
-                        const endM = parseInt(match[6], 10);
-                        const endS = parseInt(match[7], 10);
-                        const endMs = parseInt(match[8], 10);
+                    if (text_accumulator) {
+                        const start_hours = parseInt(regex_match[1], 10);
+                        const start_minutes = parseInt(regex_match[2], 10);
+                        const start_seconds = parseInt(regex_match[3], 10);
+                        const start_milliseconds = parseInt(regex_match[4], 10);
+                        const end_hours = parseInt(regex_match[5], 10);
+                        const end_minutes = parseInt(regex_match[6], 10);
+                        const end_seconds = parseInt(regex_match[7], 10);
+                        const end_milliseconds = parseInt(regex_match[8], 10);
                         
-                        const startTime = startH * 3600 + startM * 60 + startS + startMs / 1000;
-                        const endTime = endH * 3600 + endM * 60 + endS + endMs / 1000;
-                        let duration = endTime - startTime;
-                        if (duration <= 0) duration = 1;
+                        const parsed_start_time = start_hours * 3600 + start_minutes * 60 + start_seconds + start_milliseconds / 1000;
+                        const parsed_end_time = end_hours * 3600 + end_minutes * 60 + end_seconds + end_milliseconds / 1000;
+                        let clip_duration = parsed_end_time - parsed_start_time;
+                        if (clip_duration <= 0) {
+                            clip_duration = 1;
+                        }
                         
-                        const labelText = textLines.substring(0, 30) + (textLines.length > 30 ? '...' : '');
+                        const label_text = text_accumulator.substring(0, 30) + (text_accumulator.length > 30 ? '...' : '');
 
-                        const clip: VideoClip = {
+                        const new_subtitle_clip: VideoClip = {
                             id: `subtitle-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-                            startTime,
-                            duration,
-                            endTime,
-                            track: trackIndex,
+                            startTime: parsed_start_time,
+                            duration: clip_duration,
+                            endTime: parsed_end_time,
+                            track: timeline_track_index,
                             status: 'pending',
                             source: 'main',
-                            label: labelText || 'Subtitle',
+                            label: label_text || 'Subtitle',
                             notes: {
-                                action: textLines,
+                                action: text_accumulator,
                                 dialogue: '',
                                 sound: ''
                             }
                         };
-                        newClips.push(clip);
-                        trackIndex = trackIndex === 1 ? 2 : 1;
+                        imported_clips_collection.push(new_subtitle_clip);
+                        timeline_track_index = timeline_track_index === 1 ? 2 : 1;
                     }
                 }
             }
             
-            if (newClips.length > 0) {
-                onUpdateProject(activeProject.id, (prev) => {
-                    const merged = [...(prev.clips || []), ...newClips];
-                    // Sort by start time just to keep things organized
-                    merged.sort((a, b) => a.startTime - b.startTime);
-                    return { clips: merged };
+            if (imported_clips_collection.length > 0) {
+                onUpdateProject(activeProject.id, (previous_project_state) => {
+                    const merged_clips = [...(previous_project_state.clips || []), ...imported_clips_collection];
+                    merged_clips.sort((clip_a, clip_b) => clip_a.startTime - clip_b.startTime);
+                    return { clips: merged_clips };
                 });
-                if (onStatusChange) onStatusChange(`Imported ${newClips.length} subtitle clips.`);
+                if (onStatusChange) {
+                    onStatusChange(`Imported ${imported_clips_collection.length} subtitle clips.`);
+                }
             } else {
-                if (onStatusChange) onStatusChange(`No valid SRT/VTT subtitles found.`);
+                if (onStatusChange) {
+                    onStatusChange('No valid SRT/VTT subtitles found.');
+                }
             }
         };
-        reader.readAsText(file);
-        e.target.value = '';
+        file_reader.readAsText(subtitle_file);
     };
 
     return (
@@ -2331,8 +3020,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 <button
                                                     className="btn w-full btn-secondary justify-center border border-indigo-500/30 hover:border-indigo-500/80"
                                                     onClick={async () => {
-                                                        for (const s of stems) {
-                                                            await handleAnalyzeLocal(s.path, s.type);
+                                                        for (const stem_item of stems) {
+                                                            await handleAnalyzeLocal(stem_item.path, stem_item.type);
                                                         }
                                                     }}
                                                     disabled={isProcessing}
@@ -2342,16 +3031,16 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                             </span>
                                         </AppTooltip>
                                         <div className="grid grid-cols-2 gap-2">
-                                            {stems.map((stem, index) => (
-                                                <AppTooltip key={index} content={`Analyze ${stem.type} for beats and onsets.`} placement="top" offset={[0, 48]}>
+                                            {stems.map((stem_item, stem_index) => (
+                                                <AppTooltip key={stem_index} content={`Analyze ${stem_item.type} for beats and onsets.`} placement="top" offset={[0, 48]}>
                                                     <span>
                                                         <button
                                                             className="btn btn-secondary text-xs py-1 px-2 border border-gray-700 hover:border-indigo-500/50 flex justify-center items-center gap-2"
-                                                            onClick={() => handleAnalyzeLocal(stem.path, stem.type)}
+                                                            onClick={() => handleAnalyzeLocal(stem_item.path, stem_item.type)}
                                                             disabled={isProcessing}
                                                         >
-                                                            <span style={{ color: stem.color, fontSize: '8px' }}>⬤</span>
-                                                            {stem.type}
+                                                            <span style={{ color: stem_item.color, fontSize: '8px' }}>⬤</span>
+                                                            {stem_item.type}
                                                         </button>
                                                     </span>
                                                 </AppTooltip>
@@ -2378,7 +3067,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                     <label className="block text-xs text-gray-400 mb-2 uppercase">Beat Tracking Algorithm</label>
                                     <select
                                         value={algorithm}
-                                        onChange={(e) => setAlgorithm(e.target.value as BeatAlgorithm)}
+                                        onChange={(change_event) => setAlgorithm(change_event.target.value as BeatAlgorithm)}
                                         className="w-full bg-[var(--bg-elevated)] border border-[var(--border-color)] rounded py-3 px-3 text-base text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
                                     >
                                         <option value="degara">Degara (Complex rhythm)</option>
@@ -2392,7 +3081,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                         <input
                                             type="checkbox"
                                             checked={enableOnsets}
-                                            onChange={(e) => setEnableOnsets(e.target.checked)}
+                                            onChange={(change_event) => setEnableOnsets(change_event.target.checked)}
                                             className="accent-[var(--accent-primary)]"
                                         />
                                         Extract Onsets (Granular events)
@@ -2401,22 +3090,27 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                         <input
                                             type="checkbox"
                                             checked={enableLoudness}
-                                            onChange={(e) => setEnableLoudness(e.target.checked)}
+                                            onChange={(change_event) => setEnableLoudness(change_event.target.checked)}
                                             className="accent-[var(--accent-primary)]"
                                         />
                                         Extract Loudness Envelopes
                                     </label>
+                                </div>
+
+                                {/* Manual BPM Adjustment & Tap Tempo Engine */}
+                                <div className="pt-2 border-t border-white/5">
+                                    <label className="block text-xs text-gray-400 mb-2 uppercase">Tempo & Beat Grid</label>
+                                    <BpmTapControl
+                                        currentBpm={projectBpm}
+                                        onBpmChange={handleBpmChange}
+                                        onApplyGrid={handleApplyBeatGrid}
+                                    />
                                 </div>
                             </div>
                         </div>
                     </div>
                 </CollapsibleCard>
             </div>
-
-
-
-
-
 
             {/* Video Timeline — shown when video is loaded */}
             {videoFile && (
@@ -2431,9 +3125,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         videoInfo={videoFile.info}
                         thumbnails={videoThumbnails}
                         clips={clips}
-                        onSelectionChange={(sel) => setActiveSelection(sel)}
+                        onSelectionChange={(selection_state) => setActiveSelection(selection_state)}
                         onSaveFrame={handleSaveVideoFrame}
-                        onClipContextMenu={(id, duration, startTime, x, y) => setDurationPopup({ clipId: id, duration, startTime, x, y })}
+                        onClipContextMenu={(clip_id, clip_duration, clip_start_time, mouse_x, mouse_y) => setDurationPopup({ clipId: clip_id, duration: clip_duration, startTime: clip_start_time, x: mouse_x, y: mouse_y })}
                     />
                 </CollapsibleCard>
             )}
@@ -2484,7 +3178,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                     min={Math.floor(minZoom)}
                                     max="200"
                                     value={zoomLevel}
-                                    onChange={(e) => setZoomLevel(Number(e.target.value))}
+                                    onChange={(change_event) => setZoomLevel(Number(change_event.target.value))}
                                     className="accent-indigo-500 w-64 h-1.5 rounded-lg appearance-none bg-gray-700 cursor-pointer"
                                 />
                                 <button
@@ -2503,15 +3197,15 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Beat Source</label>
                             <select
                                 value={mainBeatSource}
-                                onChange={(e) => {
-                                    const val = e.target.value;
-                                    setMainBeatSource(val === 'main' ? 'main' : Number(val));
+                                onChange={(change_event) => {
+                                    const selected_source_value = change_event.target.value;
+                                    setMainBeatSource(selected_source_value === 'main' ? 'main' : Number(selected_source_value));
                                 }}
                                 className="bg-gray-800 text-white text-xs rounded border border-gray-600 outline-none focus:border-indigo-500 px-2 py-1"
                             >
                                 <option value="main">Main Track</option>
-                                {stems.map((s, i) => (
-                                    <option key={i} value={i}>Stem: {s.type}</option>
+                                {stems.map((stem_item, stem_index) => (
+                                    <option key={stem_index} value={stem_index}>Stem: {stem_item.type}</option>
                                 ))}
                             </select>
                         </div>
@@ -2525,9 +3219,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 min="1"
                                 max="60"
                                 value={activeProject?.frameRate || 20}
-                                onChange={(e) => {
+                                onChange={(change_event) => {
                                     if (activeProject) {
-                                        onUpdateProject(activeProject.id, { frameRate: Number(e.target.value) });
+                                        onUpdateProject(activeProject.id, { frameRate: Number(change_event.target.value) });
                                     }
                                 }}
                                 className="bg-gray-800 text-white text-xs rounded border border-gray-600 outline-none focus:border-indigo-500 w-12 px-2 py-1 text-center"
@@ -2549,7 +3243,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                         step="0.1"
                                         min="1"
                                         value={duration}
-                                        onChange={(e) => handleUpdateDuration(parseFloat(e.target.value) || 0)}
+                                        onChange={(change_event) => handleUpdateDuration(parseFloat(change_event.target.value) || 0)}
                                         className="bg-gray-800 text-indigo-300 text-xs font-mono rounded border border-gray-600 outline-none focus:border-indigo-500 w-20 px-2 py-0.5 text-right transition-all hover:border-indigo-500/50"
                                         title="Manually edit project duration (Blank projects only)"
                                     />
@@ -2558,6 +3252,23 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                             )}
                         </div>
                     </div>
+                </div>
+
+                {/* Section Boundaries Ribbon */}
+                <div className="mb-2">
+                    <SectionTimelineBar
+                        sections={projectSections}
+                        totalDuration={duration || activeProject?.duration || 0}
+                        currentTime={playbackCurrentTime}
+                        isDetecting={isDetectingSections}
+                        isPushingToResolve={isPushingSectionsToResolve}
+                        resolveOnline={resolveBridgeOnline}
+                        onDetectSections={handleDetectSections}
+                        onPushSectionsToResolve={handlePushSectionsToResolve}
+                        onUpdateSection={handleUpdateSection}
+                        onDeleteSection={handleDeleteSection}
+                        onSectionClick={(clicked_section) => handleSeekToSectionTime(clicked_section.startTime)}
+                    />
                 </div>
 
                 <div
@@ -2577,59 +3288,57 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 </div>
             </CollapsibleCard>
 
-
-
-
             {
                 (() => {
-                    const getCountData = (filterFn: (m: AudioMarker) => boolean) => {
-                        const data = [
-                            { label: 'Main Track', count: mainMarkers.filter(filterFn).length, color: '#fff' }
+                    // WHAT: Computes marker distribution counts across the main track and stems
+                    // WHY: Populates the hovering breakdown tooltip for downbeats, offbeats, onsets, and loudness.
+                    const getCountData = (filterPredicate: (marker_item: AudioMarker) => boolean) => {
+                        const aggregated_counts_data = [
+                            { label: 'Main Track', count: mainMarkers.filter(filterPredicate).length, color: '#fff' }
                         ];
-                        stems.forEach(stem => {
-                            data.push({
-                                label: stem.type,
-                                count: (stem.markers || []).filter(filterFn).length,
-                                color: stem.color || '#fff'
+                        stems.forEach(stem_item => {
+                            aggregated_counts_data.push({
+                                label: stem_item.type,
+                                count: (stem_item.markers || []).filter(filterPredicate).length,
+                                color: stem_item.color || '#fff'
                             });
                         });
-                        return data;
+                        return aggregated_counts_data;
                     };
 
-                    const downbeatData = getCountData(m => m.type === 'beat' && !!m.isDownbeat);
-                    const offbeatData = getCountData(m => m.type === 'beat' && !m.isDownbeat);
-                    const onsetData = getCountData(m => m.type === 'onset');
-                    const loudnessData = getCountData(m => m.type === 'loudness');
+                    const downbeatData = getCountData(marker_item => marker_item.type === 'beat' && !!marker_item.isDownbeat);
+                    const offbeatData = getCountData(marker_item => marker_item.type === 'beat' && !marker_item.isDownbeat);
+                    const onsetData = getCountData(marker_item => marker_item.type === 'onset');
+                    const loudnessData = getCountData(marker_item => marker_item.type === 'loudness');
 
-                    const renderTooltipContent = (title: string, data: { label: string, count: number, color: string }[]) => (
+                    const renderTooltipContent = (tooltip_title: string, tooltip_data_items: MarkerLegendTooltipItem[]) => (
                         <div className="flex flex-col gap-1 p-2 border border-gray-600 rounded shadow-2xl text-xs min-w-[120px] z-[9999]" style={{ backgroundColor: '#000000', opacity: 1 }}>
-                            <div className="font-bold text-gray-300 border-b border-gray-700 pb-1 mb-1">{title}</div>
-                            {data.map((item, i) => (
-                                <div key={i} className="flex justify-between items-center gap-4">
-                                    <span className="font-bold uppercase" style={{ color: item.color }}>{item.label}</span>
-                                    <span className="text-gray-300 font-mono">{item.count}</span>
+                            <div className="font-bold text-gray-300 border-b border-gray-700 pb-1 mb-1">{tooltip_title}</div>
+                            {tooltip_data_items.map((legend_item, legend_item_index) => (
+                                <div key={legend_item_index} className="flex justify-between items-center gap-4">
+                                    <span className="font-bold uppercase" style={{ color: legend_item.color }}>{legend_item.label}</span>
+                                    <span className="text-gray-300 font-mono">{legend_item.count}</span>
                                 </div>
                             ))}
                         </div>
                     );
 
-                    const handleMouseEnter = (e: React.MouseEvent, title: string, data: any) => {
+                    const handleMouseEnter = (mouse_event: React.MouseEvent, tooltip_title: string, tooltip_data_items: MarkerLegendTooltipItem[]) => {
                         setTooltipState({
                             visible: true,
-                            // Offset left by 128px and slightly up to prevent cursor blocking
-                            x: e.clientX - 128,
-                            y: e.clientY - 20,
-                            content: renderTooltipContent(title, data)
+                            x: mouse_event.clientX - 128,
+                            y: mouse_event.clientY - 20,
+                            content: renderTooltipContent(tooltip_title, tooltip_data_items)
                         });
                     };
 
-                    const handleMouseMove = (e: React.MouseEvent) => {
+                    const handleMouseMove = (mouse_event: React.MouseEvent) => {
                         if (tooltipState.visible) {
-                            setTooltipState(prev => ({ ...prev, x: e.clientX - 128, y: e.clientY - 20 }));
+                            setTooltipState(previous_state => ({ ...previous_state, x: mouse_event.clientX - 128, y: mouse_event.clientY - 20 }));
                         }
                     };
 
-                    const handleMouseLeave = () => setTooltipState(prev => ({ ...prev, visible: false }));
+                    const handleMouseLeave = () => setTooltipState(previous_state => ({ ...previous_state, visible: false }));
 
                     return (
                         <div className="stems-and-controls-wrapper">
@@ -2646,7 +3355,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                         <div style={{ display: 'flex', gap: '16px', marginBottom: '8px', padding: '6px 8px', fontSize: '12px', color: '#9ca3af', alignItems: 'center', background: 'rgba(0,0,0,0.2)', borderRadius: '6px' }}>
                                             <span style={{ fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Beat Key:</span>
                                             <div
-                                                onMouseEnter={(e) => handleMouseEnter(e, "Downbeats", downbeatData)}
+                                                onMouseEnter={(mouse_event) => handleMouseEnter(mouse_event, "Downbeats", downbeatData)}
                                                 onMouseMove={handleMouseMove}
                                                 onMouseLeave={handleMouseLeave}
                                                 style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
@@ -2655,7 +3364,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 <span>Downbeat</span>
                                             </div>
                                             <div
-                                                onMouseEnter={(e) => handleMouseEnter(e, "Offbeats", offbeatData)}
+                                                onMouseEnter={(mouse_event) => handleMouseEnter(mouse_event, "Offbeats", offbeatData)}
                                                 onMouseMove={handleMouseMove}
                                                 onMouseLeave={handleMouseLeave}
                                                 style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
@@ -2664,7 +3373,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 <span>Offbeat</span>
                                             </div>
                                             <div
-                                                onMouseEnter={(e) => handleMouseEnter(e, "Onsets", onsetData)}
+                                                onMouseEnter={(mouse_event) => handleMouseEnter(mouse_event, "Onsets", onsetData)}
                                                 onMouseMove={handleMouseMove}
                                                 onMouseLeave={handleMouseLeave}
                                                 style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
@@ -2673,7 +3382,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 <span>Onset</span>
                                             </div>
                                             <div
-                                                onMouseEnter={(e) => handleMouseEnter(e, "Loudness", loudnessData)}
+                                                onMouseEnter={(mouse_event) => handleMouseEnter(mouse_event, "Loudness", loudnessData)}
                                                 onMouseMove={handleMouseMove}
                                                 onMouseLeave={handleMouseLeave}
                                                 style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'help' }}
@@ -2686,22 +3395,22 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                             {mainMarkers.length > 0 && (
                                                 <div className="ml-auto flex items-center gap-3 text-xs text-gray-400 border-l border-gray-700 pl-4">
                                                     <span className="font-semibold text-gray-500 uppercase">Main Track:</span>
-                                                    {mainMarkers.filter(m => m.type === 'beat').length > 0 && (
+                                                    {mainMarkers.filter(marker_item => marker_item.type === 'beat').length > 0 && (
                                                         <span>
                                                             <span style={{ color: MARKER_COLORS.downbeat }}>⬤</span>
-                                                            {' '}{mainMarkers.filter(m => m.type === 'beat').length} beats
+                                                            {' '}{mainMarkers.filter(marker_item => marker_item.type === 'beat').length} beats
                                                         </span>
                                                     )}
-                                                    {mainMarkers.filter(m => m.type === 'onset').length > 0 && (
+                                                    {mainMarkers.filter(marker_item => marker_item.type === 'onset').length > 0 && (
                                                         <span>
                                                             <span style={{ color: MARKER_COLORS.onset }}>⬤</span>
-                                                            {' '}{mainMarkers.filter(m => m.type === 'onset').length} onsets
+                                                            {' '}{mainMarkers.filter(marker_item => marker_item.type === 'onset').length} onsets
                                                         </span>
                                                     )}
-                                                    {mainMarkers.filter(m => m.type === 'loudness').length > 0 && (
+                                                    {mainMarkers.filter(marker_item => marker_item.type === 'loudness').length > 0 && (
                                                         <span>
                                                             <span style={{ color: MARKER_COLORS.loudness }}>⬤</span>
-                                                            {' '}{mainMarkers.filter(m => m.type === 'loudness').length} loudness
+                                                            {' '}{mainMarkers.filter(marker_item => marker_item.type === 'loudness').length} loudness
                                                         </span>
                                                     )}
                                                 </div>
@@ -2741,28 +3450,28 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                 </div>
                                             </div>
 
-                                            {stems.map((stem, index) => (
-                                                <div key={index} className="stem-item bg-black/20 p-6 rounded border border-gray-800 pb-8">
+                                            {stems.map((stem_item, stem_index) => (
+                                                <div key={stem_index} className="stem-item bg-black/20 p-6 rounded border border-gray-800 pb-8">
                                                     <div className="flex justify-between items-center mb-1">
                                                         <div className="flex items-center gap-2">
-                                                            <div className="text-xs font-bold uppercase" style={{ color: stem.color }}>{stem.type}</div>
+                                                            <div className="text-xs font-bold uppercase" style={{ color: stem_item.color }}>{stem_item.type}</div>
                                                         </div>
                                                         <div className="flex gap-2">
-                                                            <AppTooltip content={`Listen to the ${stem.type} stem only.`} placement="top" offset={[0, 48]}>
+                                                            <AppTooltip content={`Listen to the ${stem_item.type} stem only.`} placement="top" offset={[0, 48]}>
                                                                 <span>
                                                                     <button
                                                                         className="text-xs bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                                                        onClick={() => handlePlayStem(index)}
+                                                                        onClick={() => handlePlayStem(stem_index)}
                                                                     >
                                                                         ▶ Play
                                                                     </button>
                                                                 </span>
                                                             </AppTooltip>
-                                                            <AppTooltip content={`Pause ${stem.type} preview.`} placement="top" offset={[0, 48]}>
+                                                            <AppTooltip content={`Pause ${stem_item.type} preview.`} placement="top" offset={[0, 48]}>
                                                                 <span>
                                                                     <button
                                                                         className="text-xs bg-yellow-600 hover:bg-yellow-500 px-2 py-0.5 rounded text-white font-bold flex items-center gap-1"
-                                                                        onClick={() => handlePauseStem(index)}
+                                                                        onClick={() => handlePauseStem(stem_index)}
                                                                     >
                                                                         ⏸ Pause
                                                                     </button>
@@ -2771,7 +3480,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                                         </div>
                                                     </div>
                                                     <div
-                                                        id={`stem-waveform-${index}`}
+                                                        id={`stem-waveform-${stem_index}`}
                                                         className="relative"
                                                         style={{ width: '100%', minHeight: '90px' }}
                                                     >
@@ -2809,6 +3518,47 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                         />
                                     </label>
                                 </AppTooltip>
+
+                                {/* Live Resolve Bridge Direct Actions */}
+                                <div className="flex gap-1.5 p-1 bg-emerald-950/40 border border-emerald-500/30 rounded-lg items-center">
+                                    <span className="text-[10px] font-bold text-emerald-400 px-1.5 flex items-center gap-1">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                                        BRIDGE
+                                    </span>
+                                    <AppTooltip content="Instant Live Sync: Directly import audio and video clips into DaVinci Resolve via HTTP Bridge" placement="top" offset={[0, 48]}>
+                                        <span>
+                                            <button
+                                                className="btn bg-emerald-700 hover:bg-emerald-600 text-white border-none rounded font-bold text-xs px-2.5 py-1.5 flex items-center gap-1"
+                                                onClick={handleLiveImportMedia}
+                                                disabled={clips.length === 0 && !audioFile}
+                                            >
+                                                ⚡ Live Load Media
+                                            </button>
+                                        </span>
+                                    </AppTooltip>
+                                    <AppTooltip content="Instant Live Sync: Place video clips on the active timeline in DaVinci Resolve via HTTP Bridge" placement="top" offset={[0, 48]}>
+                                        <span>
+                                            <button
+                                                className="btn bg-emerald-800 hover:bg-emerald-700 text-white border-none rounded font-bold text-xs px-2.5 py-1.5 flex items-center gap-1"
+                                                onClick={handleLiveBuildTimeline}
+                                                disabled={clips.length === 0}
+                                            >
+                                                ⚡ Live Place Clips
+                                            </button>
+                                        </span>
+                                    </AppTooltip>
+                                    <AppTooltip content="Instant Live Sync: Directly push all beat and onset markers to the Resolve timeline in real time" placement="top" offset={[0, 48]}>
+                                        <span>
+                                            <button
+                                                className="btn bg-emerald-600 hover:bg-emerald-500 text-white border-none rounded font-bold text-xs px-2.5 py-1.5 flex items-center gap-1"
+                                                onClick={handleLivePushMarkers}
+                                                disabled={mainMarkers.length === 0 && stems.length === 0}
+                                            >
+                                                ⚡ Live Push Markers
+                                            </button>
+                                        </span>
+                                    </AppTooltip>
+                                </div>
 
                                 <div className="flex gap-2">
                                     <AppTooltip content="Step 1: Load all media into Resolve bin (Audio & Video)" placement="top" offset={[0, 48]}>
@@ -2914,8 +3664,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                     onUpdateClipEndTime={handleUpdateClipEndTime}
                                     onRemoveClip={handleRemoveClip}
                                     onPickImage={handlePickImage}
+                                    onUpdateClipRole={handleUpdateClipRole}
                                     onGenerateClip={onGenerateVideo || (() => {})}
-                                    onError={(msg) => onStatusChange?.(msg)}
+                                    onError={(error_message_string) => onStatusChange?.(error_message_string)}
                                 />
                             </div>
 
@@ -2934,7 +3685,6 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                 </div>
                             )}
 
-
                         </div>
                     );
                 })()
@@ -2948,14 +3698,14 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     frameRate={activeProject?.frameRate || 20}
                     position={{ x: durationPopup.x, y: durationPopup.y }}
                     onClose={() => setDurationPopup(null)}
-                    onSave={(id, newDur) => {
-                        handleUpdateClipEndTime(id, durationPopup.startTime + newDur);
+                    onSave={(clip_id, updated_duration) => {
+                        handleUpdateClipEndTime(clip_id, durationPopup.startTime + updated_duration);
                         setDurationPopup(null);
                     }}
                 />
             )}
 
-        </div >
+        </div>
     );
 };
 

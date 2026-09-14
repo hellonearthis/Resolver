@@ -28,10 +28,11 @@ Your video generation prompt is built from three distinct layers:
 - **Tier 2: Clip Action** (Middle Box) — Your manual intent. This is where you describe *what happens* in the shot (e.g., "The figure turns and walks toward the sunset").
 - **Tier 3: AI Expanded Prompt** (Bottom Box) — The professional LTX target. Clicking **✨ Reword** combines Tiers 1 & 2 into a single, high-fidelity LTX cinematic prompt.
 
-### 2. Magic Expansion (✨ Reword)
-Use the **✨ Reword** button to trigger the expansion. This uses either your **Local NPU (Intel Vino)** or **LM Studio** backend to rewrite your scene into professional cinema-speak.
-- **Provider Icons**: Look for the **🍷 (Vino)** or **🏢 (LM Studio)** icons to see which engine is currently active.
-- **Tooltips**: Hover over the icons or the Reword button to see exactly which hardware device will be used.
+### 2. Magic Expansion (✨ Reword) & Multimodal Vision
+Use the **✨ Reword** button to trigger the expansion. This uses your local **llama-server** (e.g. Qwen 3.5 / 3.8) to rewrite your scene into professional cinema-speak.
+- **Provider Icons**: Look for the **🦙 (llama-server)** icon in Settings (with optional **🍷 Vino NPU** fallback).
+- **Vision Integration**: Clicking **Describe** on any image card uses the same resident multimodal vision projector (`mmproj`) without needing ComfyUI.
+- **VRAM Protection**: Resolver automatically unloads `llama-server` before ComfyUI video renders begin so your GPU has 100% memory, and auto-restarts on demand when you request prompt expansions or vision descriptions.
 
 ### 3. Locking (🔒/🔓)
 High-quality AI results are precious. 
