@@ -58,6 +58,13 @@ export interface StoryboardCard {
     // Timeline & Animatic Data
     calculatedDuration: number; // in seconds
     paceWpm: number; // Words Per Minute for the Script Timer
+
+    // Screenplay & Section Architecture
+    sectionId?: string;
+    sectionName?: string;
+    sectionType?: import('./sections').SectionType;
+    scriptNotes?: string[];
+    isMuted?: boolean;
 }
 
 /**

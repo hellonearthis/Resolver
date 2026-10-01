@@ -37,6 +37,7 @@ import {
   buildMiniMaxH3DirectBrief
 } from './services/qwenPromptService';
 import { TooltipProvider } from './components/ui/Tooltip';
+import { computeCardGenerativeFingerprint } from './services/revisionDiffService';
 
 import type { FileWithPath } from './components/DropZone';
 
@@ -597,11 +598,16 @@ function App() {
       handleUpdateProject(project.id, (prev: BeatProject) => {
         const finalClips = prev.clips?.map((c: VideoClip) => {
           if (c.id === clipId) {
-            return {
+            const updatedClip: VideoClip = {
               ...c,
               status: 'done' as const,
               videoPath: destPath,
               generatedVideos: [...(c.generatedVideos || []), destPath]
+            };
+            return {
+              ...updatedClip,
+              lastRenderedFingerprint: computeCardGenerativeFingerprint(updatedClip),
+              revisionState: 'unchanged' as const
             };
           }
           return c;

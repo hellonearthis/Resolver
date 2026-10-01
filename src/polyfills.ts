@@ -40,7 +40,6 @@ if (typeof Math.sumPrecise !== 'function') {
         
         return accumulated_sum;
     };
-    console.log('[Polyfill] Math.sumPrecise initialized with Kahan compensated summation.');
 }
 
 export {};

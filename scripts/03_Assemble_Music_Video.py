@@ -124,129 +124,53 @@ def main():
     resolve.OpenPage("Edit")
     
     for i, clip in enumerate(clips):
+        if clip.get('is_muted', False):
+            print(f"Skipping muted alternate take: {clip.get('id', i+1)}")
+            continue
+
         path_str = clip['path']
         if path_str not in media_map:
             continue
             
         media_item = media_map[path_str]
         
-        start_frame = int(clip['start_seconds'] * fps)
-        # Duration from manifest (based on audio slice)
-        # Note: The video file itself might be longer or shorter.
-        # We usually want the video to match the audio slice duration.
-        # But if the video is generated frame-perfect, we just use the whole clip?
-        # Let's assume user wants to place the whole generated clip at the start point.
+        clip_id = clip.get('id', f"clip_{i+1}")
+        scene_num = clip.get('scene_number', str(i+1))
+        clip_label = clip.get('label', f"Shot {scene_num}")
+        display_name = f"[{clip_id}] {clip_label}"
+
+        # Set persistent ID on MediaPool item property
+        try:
+            media_item.SetClipProperty("Clip Name", display_name)
+        except Exception:
+            pass
+
+        start_frame = int(round(clip.get('start_seconds', 0) * fps))
+        duration_frames = int(round((clip.get('duration') or (clip.get('end_seconds', 0) - clip.get('start_seconds', 0))) * fps))
+        if duration_frames <= 0:
+            duration_frames = int(4.0 * fps)
         
         track_index = clip.get('track', 1) # 1 or 2
         
-        # AppendToTimeline is limited. It appends to the END.
-        # customization of start time is hard with AppendToTimeline.
-        # We need `timeline.AppendToTimeline(clipInfo)` where clipInfo specifies record frame?
-        # The API for `AppendToTimeline` usually just takes MediaPoolItems.
-        
-        # KEY ISSUE: The Free Version / Basic API mostly supports "Append".
-        # "Insert" at specific time is tricky.
-        
-        # Workaround for Specific Time Placement:
-        # 1. Use `timeline.CreateItemFromDict` (Studio Only?) -> Likely.
-        # 2. Append all, then Move? -> Moving is hard via API.
-        
-        # WAIT. The user has DaVinci Resolve Free.
-        # "AppendToTimeline" adds to the end.
-        # If we just append them in chronological order, they will be back-to-back.
-        # But we want them at specific timestamps (synced to beats).
-        # And we want "Checkerboarding" (overlapping/alternating).
-        
-        # If the clips are generated *exactly* for the gap (Start -> End), 
-        # then appending them in order (Clip 1, Clip 2...) effectively builds the timeline correctly
-        # PROVIDED they are contiguous.
-        
-        # IF there are gaps (silence), we need to fill them or move the playhead?
-        # We can't move the playhead for Append.
-        
-        # ALTERNATIVE STRATEGY:
-        # If we can't place at absolute time, we can only do a "Cuts Only" edit list.
-        # This assumes the generated videos cover the ENTIRE duration continuously.
-        # If the user skips a section, there will be a gap.
-        
-        # For the Music Video Assembler, the user selects regions.
-        # If they select [0-4s], [4-8s], then appending works.
-        # If they select [0-4s], [10-14s], appending will put the second clip at 4s (wrong).
-        
-        # OPTION: Use `timeline.InsertGeneratorIntoTimeline` to add "Gap" / "Solid Color" for empty spaces?
-        # Complex to calculate.
-        
-        # Let's check `AppendToTimeline` arguments.
-        # Some versions accept `[items], targetTrack, recordFrame`.
-        # Let's try to use standard Append and assume the user generates contiguous,
-        # OR warn that gaps are not supported in Free version automation.
-        
-        # checkerboard logic:
-        # We want Track 1, then Track 2...
-        # Automation of "Target Track" for Append:
-        # `project.SetCurrentTimeline(timeline)`
-        # Is there a "SetTargetTrack"? 
-        # `timeline.SetTrackEnable(track_type, index, bool)` ? No.
-        
-        # WORKAROUND for Tracks:
-        # If we can't target tracks easily, we just put everything on Track 1.
-        # But the Requirement is "Checkerboarding".
-        
-        # Let's look for `mediaPool.CreateTimelineFromClips`?
-        # It takes a list of clips.
-        
-        # STUDIO API Check:
-        # `timeline.CreateTimelineFromClips` is robust.
-        
-        # Let's accept that for Free version, we might just append.
-        # BUT, if we can find a way to specify RecordIn...
-        
-        # If we cannot do precise placement, we will just Append and log a warning.
-        # The provided "Video Sync" script in `main.ts` (legacy) just Appends.
-        
-        # However, we can try to facilitate checkerboarding by:
-        # 1. Appending Item 1.
-        # 2. Creating a new Track.
-        # 3. But we can't "Append to Track 2" easily without targeting.
-        
-        # Let's write the script to TRY to use `AppendToTimeline` with advanced args if available,
-        # otherwise just standard append.
-        
-        # For "Checkerboarding" in a text/dict based import (EDL/XML)?
-        # Maybe generating an EDL/XML is better than a Python script for placement?
-        # Resolve accepts FCPXML or EDL.
-        # An FCPXML is just a text file.
-        # THIS IS THE BETTER WAY for precise placement in Free Version.
-        # We can generate an `.fcpxml` or `.xml` (Resolve format) instead of a Manifest+Python script.
-        
-        # The user requested a "Python script". I should stick to that if possible.
-        # But if Python API is too limited, I should mention it.
-        
-        # PROPOSAL: Use Python to Import Media, then construct an XML for the timeline?
-        # Or just try `AppendToTimeline`.
-        # I'll stick to a simple Append loop for now, as it's the most reliable "executable" action.
-        # I'll add a comment about XML for future improvement.
-        
         successful = False
         try:
-             # Try Studio/Advanced API for placement
-             # item_dict = {
-             #    "mediaPoolItem": media_item,
-             #    "startFrame": 0,
-             #    "endFrame": duration_frames,
-             #    "recordFrame": start_frame,
-             #    "trackIndex": track_index 
-             # }
-             # timeline.CreateItemFromDict(item_dict) 
-             # This is likely Studio only.
-             
-             # Fallback: Just Append
-             timeline.AppendToTimeline([media_item])
-             successful = True
+            # Fallback: AppendToTimeline
+            timeline.AppendToTimeline([media_item])
+            successful = True
+
+            # Add timeline marker identifying the stable ID and shot name
+            timeline.AddMarker(
+                start_frame,
+                "Blue",
+                clip_id,
+                f"{display_name} (Scene {scene_num})",
+                max(1, duration_frames),
+                ""
+            )
         except Exception as e:
-            print(f"Error placing clip {i}: {e}")
+            print(f"Error placing clip {clip_id}: {e}")
             
-    print("Assembly Complete. Note: Clips appended sequentially.")
+    print("Assembly Complete. Clips placed and tagged with stable IDs.")
     print("For precise timing and checkerboarding, manual adjustment or an XML/EDL workflow is recommended.")
 
 if __name__ == "__main__":

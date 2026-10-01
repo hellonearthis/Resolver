@@ -28,6 +28,9 @@ export interface MarkerPayloadItem {
 }
 
 export interface TimelineClipItem {
+    id?: string;
+    sceneNumber?: string;
+    shotLetter?: string;
     videoPath?: string;
     path?: string;
     startTime: number;

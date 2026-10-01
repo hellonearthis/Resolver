@@ -273,7 +273,13 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
             ref={cardRef}
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
-            className={`bg-[#1a1a2e] border rounded-xl shadow-2xl transition-all group flex flex-col h-full ${isHovered ? 'border-indigo-400 ring-1 ring-indigo-500/20 scale-[1.01]' : 'border-gray-700/50 hover:border-gray-600'}`}
+            className={`border rounded-xl shadow-2xl transition-all group flex flex-col h-full ${
+                card.isMuted
+                    ? 'bg-[#121222]/80 opacity-70 border-dashed border-gray-600 hover:opacity-90'
+                    : isHovered
+                    ? 'bg-[#1a1a2e] border-indigo-400 ring-1 ring-indigo-500/20 scale-[1.01]'
+                    : 'bg-[#1a1a2e] border-gray-700/50 hover:border-gray-600'
+            }`}
             style={{ padding: '5px', overflow: 'hidden' }}
         >
             {/* Header: Scene/Shot Info */}
@@ -287,16 +293,62 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         placeholder="UNNAMED SHOT"
                     />
                 </div>
-                <AppTooltip content="Remove this shot from the timeline." placement="top" offset={[0, 48]}>
-                    <span>
-                        <button 
-                            onClick={() => onDelete(card.id)}
-                            className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                <div className="flex items-center gap-1.5">
+                    {card.isMuted ? (
+                        <span 
+                            className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border bg-purple-950/80 text-purple-300 border-purple-500/50"
+                            title="Muted boneyard alternate take - excluded from assembly timeline and ComfyUI generation queue"
                         >
-                            ✕
-                        </button>
-                    </span>
-                </AppTooltip>
+                            🔇 Alt Take
+                        </span>
+                    ) : card.revisionState && (
+                        <span 
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${
+                                card.revisionState === 'new' 
+                                    ? 'bg-cyan-950/80 text-cyan-300 border-cyan-500/50' 
+                                    : card.revisionState === 'changed'
+                                    ? 'bg-amber-950/80 text-amber-300 border-amber-500/50'
+                                    : 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50'
+                            }`}
+                            title={
+                                card.revisionState === 'new'
+                                    ? 'New shot - not yet rendered (Resolve marker: Cyan)'
+                                    : card.revisionState === 'changed'
+                                    ? 'Changed prompt/optics since last render (Resolve marker: Yellow)'
+                                    : 'Up-to-date with last render (Resolve marker: Green)'
+                            }
+                        >
+                            {card.revisionState === 'new' ? '🔵 New' : card.revisionState === 'changed' ? '🟡 Changed' : '🟢 Clean'}
+                        </span>
+                    )}
+
+                    <AppTooltip content={card.isMuted ? "Unmute this take (include in assembly & batch queue)" : "Mute this take (mark as boneyard alternate take)"} placement="top" offset={[0, 48]}>
+                        <span>
+                            <button
+                                onClick={() => onUpdate(card.id, { isMuted: !card.isMuted })}
+                                className={`text-xs px-1.5 py-0.5 rounded transition-all ${
+                                    card.isMuted 
+                                        ? 'bg-purple-900/60 text-purple-300 hover:bg-purple-800/80' 
+                                        : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+                                }`}
+                                title={card.isMuted ? "Unmute take" : "Mute take"}
+                            >
+                                {card.isMuted ? '🔇' : '🔊'}
+                            </button>
+                        </span>
+                    </AppTooltip>
+
+                    <AppTooltip content="Remove this shot from the timeline." placement="top" offset={[0, 48]}>
+                        <span>
+                            <button 
+                                onClick={() => onDelete(card.id)}
+                                className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                                ✕
+                            </button>
+                        </span>
+                    </AppTooltip>
+                </div>
             </div>
 
             {/* Visual Previews & Video Selector */}

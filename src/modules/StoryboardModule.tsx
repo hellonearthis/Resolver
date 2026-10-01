@@ -14,6 +14,15 @@ import StoryboardCardComponent from '../components/storyboard/StoryboardCard';
 import AnimaticTimeline from '../components/storyboard/AnimaticTimeline';
 import StoryboardPaddingCard from '../components/storyboard/StoryboardPaddingCard';
 import type { BeatProject } from '../hooks/useProjectStorage';
+import { parseFountainScript } from '../services/fountainParser';
+import { SECTION_TYPE_COLOR_MAP } from '../types/sections';
+import { generateMusicVideoManifest } from '../services/manifestService';
+import { 
+    evaluateProjectRevisions, 
+    buildResolveRevisionMarkers, 
+    filterClipsForGeneration 
+} from '../services/revisionDiffService';
+import { ResolveBridgeClient } from '../services/resolveBridgeClient';
 
 // WHAT: Strict types for storyboard timeline items distinguishing active video shots from timeline gaps.
 // WHY: Replaces `any[]` with a type-safe discriminated union that feeds both the card grid and the bottom animatic bar.
@@ -47,9 +56,27 @@ interface NodePathModule {
     join: (...path_segments: string[]) => string;
 }
 
+interface ElectronIpcRenderer {
+    invoke: <T = unknown>(channel_name: string, ...arguments_list: unknown[]) => Promise<T>;
+}
+
 interface ElectronWindowExtended {
     require?: (module_name: string) => unknown;
+    ipcRenderer?: ElectronIpcRenderer;
 }
+
+const getElectronIpc = (): ElectronIpcRenderer | null => {
+    try {
+        const win = window as unknown as ElectronWindowExtended;
+        if (win.require) {
+            const electron_module = win.require('electron') as { ipcRenderer?: ElectronIpcRenderer } | null;
+            return electron_module?.ipcRenderer ?? null;
+        }
+        return win.ipcRenderer ?? null;
+    } catch {
+        return null;
+    }
+};
 
 interface StoryboardModuleProps {
     activeProject?: BeatProject;
@@ -85,8 +112,153 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
     const [, setSelectedCardId] = useState<string | null>(null);
     const [newStoryboardTitleInput, setNewStoryboardTitleInput] = useState<string>('');
     const [isCreatingStoryboardState, setIsCreatingStoryboardState] = useState<boolean>(false);
+    const [viewMode, setViewMode] = useState<'outline' | 'grid'>('outline');
+    const [importStatusMessage, setImportStatusMessage] = useState<string>('');
+    const fountainFileInputRef = React.useRef<HTMLInputElement>(null);
 
-    const storyboard_cards = (activeProject?.clips || []) as VideoClip[];
+    const handleImportFountainClick = () => {
+        fountainFileInputRef.current?.click();
+    };
+
+    const handleFountainFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        try {
+            const file_text = await file.text();
+            const parsed = parseFountainScript(file_text, {
+                frameRate: activeProject?.frameRate || 24,
+                existingClips: activeProject?.clips
+            });
+
+            if (activeProject) {
+                const updated_duration = parsed.clips.length > 0 
+                    ? parsed.clips[parsed.clips.length - 1].endTime 
+                    : (activeProject.duration || 0);
+
+                onUpdateProject(activeProject.id, {
+                    sections: parsed.sections,
+                    clips: parsed.clips,
+                    duration: Math.max(activeProject.duration || 0, updated_duration),
+                    name: (activeProject.name.startsWith('PRJ_') || activeProject.name === 'Untitled Project') && parsed.title !== 'Untitled Storyboard'
+                        ? parsed.title
+                        : activeProject.name
+                });
+                setImportStatusMessage(`Imported ${parsed.sections.length} sections and ${parsed.clips.length} shots from "${file.name}"`);
+                setTimeout(() => setImportStatusMessage(''), 5000);
+            } else if (onCreateBlankProject) {
+                const newProj = await onCreateBlankProject(parsed.title);
+                if (newProj) {
+                    const updated_duration = parsed.clips.length > 0 
+                        ? parsed.clips[parsed.clips.length - 1].endTime 
+                        : 0;
+                    onUpdateProject(newProj.id, {
+                        sections: parsed.sections,
+                        clips: parsed.clips,
+                        duration: updated_duration
+                    });
+                }
+            }
+        } catch (err: unknown) {
+            console.error('Failed to parse Fountain script:', err);
+            window.alert('Failed to parse Fountain screenplay: ' + (err instanceof Error ? err.message : String(err)));
+        } finally {
+            if (event.target) event.target.value = '';
+        }
+    };
+
+    const handleExportManifest = async () => {
+        if (!activeProject) return;
+        const manifest = generateMusicVideoManifest(activeProject, storyboard_cards);
+        
+        const ipcRenderer = getElectronIpc();
+        if (ipcRenderer) {
+            try {
+                const saveResult = await ipcRenderer.invoke<{ success: boolean; path?: string; error?: string }>('save-manifest', manifest);
+                if (saveResult && saveResult.success) {
+                    setImportStatusMessage(`Manifest exported with ${manifest.clips.length} stable-ID shots to ${saveResult.path}`);
+                    setTimeout(() => setImportStatusMessage(''), 5000);
+                    return;
+                }
+            } catch (err) {
+                console.error("IPC save-manifest failed, falling back to download:", err);
+            }
+        }
+
+        // Web download fallback
+        const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${activeProject.name || 'project'}_manifest.json`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+        setImportStatusMessage(`Manifest downloaded with ${manifest.clips.length} stable-ID shots`);
+        setTimeout(() => setImportStatusMessage(''), 5000);
+    };
+
+    const raw_storyboard_cards = (activeProject?.clips || []) as VideoClip[];
+
+    // WHAT: Evaluates revision states (new, changed, unchanged) for all storyboard cards dynamically.
+    // WHY: Enables visual status badges, selective GPU batch rendering, and DaVinci Resolve marker sync.
+    const revisionMap = React.useMemo(() => {
+        return evaluateProjectRevisions(raw_storyboard_cards);
+    }, [raw_storyboard_cards]);
+
+    const storyboard_cards = React.useMemo(() => {
+        return raw_storyboard_cards.map(clip => {
+            const rev = revisionMap.get(clip.id);
+            return rev ? { ...clip, revisionState: rev.state } : clip;
+        });
+    }, [raw_storyboard_cards, revisionMap]);
+
+    const generationPlan = React.useMemo(() => {
+        return filterClipsForGeneration(storyboard_cards, revisionMap);
+    }, [storyboard_cards, revisionMap]);
+
+    const [isPushingMarkers, setIsPushingMarkers] = useState<boolean>(false);
+
+    // WHAT: Pushes revision markers (Cyan = new, Yellow = changed, Green = unchanged) to DaVinci Resolve.
+    const handlePushRevisionMarkers = async () => {
+        if (!activeProject || storyboard_cards.length === 0) return;
+        setIsPushingMarkers(true);
+        try {
+            const markers = buildResolveRevisionMarkers(storyboard_cards, revisionMap, activeProject.frameRate || 24);
+            const client = new ResolveBridgeClient();
+            const result = await client.pushRevisionMarkers(markers);
+            if (result.success) {
+                const newCount = markers.filter(m => m.color === 'Cyan').length;
+                const changedCount = markers.filter(m => m.color === 'Yellow').length;
+                const cleanCount = markers.filter(m => m.color === 'Green').length;
+                setImportStatusMessage(`Synced ${result.pushed_count} markers to Resolve timeline "${result.timeline_name}" (🔵 ${newCount} new, 🟡 ${changedCount} changed, 🟢 ${cleanCount} clean)`);
+            } else {
+                setImportStatusMessage(`Resolve marker sync error: ${result.error || 'Bridge offline'}`);
+            }
+        } catch (err: unknown) {
+            setImportStatusMessage(`Resolve marker push failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+            setIsPushingMarkers(false);
+            setTimeout(() => setImportStatusMessage(''), 6000);
+        }
+    };
+
+    // WHAT: Queues only changed and new shots for ComfyUI video generation, skipping unchanged shots.
+    const handleQueueChangedShots = async () => {
+        if (!onGenerateVideo || storyboard_cards.length === 0) return;
+        const { clipsToGenerate, skippedClips } = generationPlan;
+        if (clipsToGenerate.length === 0) {
+            setImportStatusMessage(`All ${storyboard_cards.length} shots are clean & up to date! Nothing to render.`);
+            setTimeout(() => setImportStatusMessage(''), 5000);
+            return;
+        }
+
+        setImportStatusMessage(`Queuing ${clipsToGenerate.length} shots (skipping ${skippedClips.length} unchanged shots)...`);
+        for (const clip of clipsToGenerate) {
+            await onGenerateVideo(clip.id);
+        }
+        setImportStatusMessage(`Queued ${clipsToGenerate.length} shots for generation (saved GPU time by skipping ${skippedClips.length} unchanged shots)`);
+        setTimeout(() => setImportStatusMessage(''), 6000);
+    };
 
     // WHAT: Auto-heals legacy project schemas by relocating misplaced AI descriptions.
     // WHY: Early project versions placed image descriptions into `notes.action`. This migration ensures
@@ -454,6 +626,18 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                 <span>➕</span>
                                 {isCreatingStoryboardState ? 'Creating Storyboard...' : 'Create New Storyboard'}
                             </button>
+
+                            <div className="relative flex py-1 items-center">
+                                <div className="flex-grow border-t border-gray-800"></div>
+                                <span className="flex-shrink mx-2 text-[10px] text-gray-500 uppercase tracking-widest font-semibold">Or</span>
+                                <div className="flex-grow border-t border-gray-800"></div>
+                            </div>
+                            <button
+                                onClick={handleImportFountainClick}
+                                className="w-full py-2.5 px-4 bg-[#181825] hover:bg-indigo-950/40 text-indigo-300 hover:text-white border border-indigo-700/50 hover:border-indigo-500 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2"
+                            >
+                                <span>📜</span> Import Fountain Screenplay (.fountain)
+                            </button>
                         </div>
                     )}
 
@@ -514,6 +698,73 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                 </div>
 
                 <div className="flex items-center gap-3">
+                    {/* View Mode Toggle: Outline vs Flat Grid */}
+                    <div className="flex items-center bg-[#181825] border border-gray-800 rounded-lg p-0.5 text-xs">
+                        <button
+                            onClick={() => setViewMode('outline')}
+                            className={`px-2.5 py-1 rounded font-semibold transition-all ${viewMode === 'outline' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+                            title="Group cards by musical section outline"
+                        >
+                            📑 Outline
+                        </button>
+                        <button
+                            onClick={() => setViewMode('grid')}
+                            className={`px-2.5 py-1 rounded font-semibold transition-all ${viewMode === 'grid' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+                            title="Flat storyboard grid view"
+                        >
+                            🔲 Grid
+                        </button>
+                    </div>
+
+                    {/* Hidden Fountain File Input */}
+                    <input 
+                        ref={fountainFileInputRef}
+                        type="file"
+                        accept=".fountain,.txt"
+                        className="hidden"
+                        onChange={handleFountainFileChange}
+                    />
+
+                    {/* Import Fountain Screenplay Button */}
+                    <button 
+                        onClick={handleImportFountainClick}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 border border-indigo-700/50 hover:border-indigo-500 rounded-lg transition-all text-xs font-semibold"
+                        title="Import scenes, sections, and synopses from a Fountain screenplay file"
+                    >
+                        <span>📜</span> Import Fountain
+                    </button>
+
+                    {/* Export Manifest Button */}
+                    <button 
+                        onClick={handleExportManifest}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181825] hover:bg-gray-800 text-indigo-300 border border-gray-700/60 hover:border-indigo-500/50 rounded-lg transition-all text-xs font-semibold"
+                        title="Export music_video_manifest.json with stable clip IDs for DaVinci Resolve timeline assembly"
+                    >
+                        <span>💾</span> Export Manifest
+                    </button>
+
+                    {/* Push Revision Markers to DaVinci Resolve */}
+                    <button 
+                        onClick={handlePushRevisionMarkers}
+                        disabled={isPushingMarkers || storyboard_cards.length === 0}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181825] hover:bg-gray-800 disabled:opacity-50 text-indigo-300 border border-gray-700/60 hover:border-indigo-500/50 rounded-lg transition-all text-xs font-semibold"
+                        title="Push colored revision markers (Cyan: new, Yellow: changed, Green: clean) to DaVinci Resolve active timeline"
+                    >
+                        <span>📍</span> {isPushingMarkers ? 'Pushing...' : 'Push Markers'}
+                    </button>
+
+                    {/* Queue Changed & New Shots for Generation */}
+                    {onGenerateVideo && (
+                        <button 
+                            onClick={handleQueueChangedShots}
+                            disabled={generationPlan.clipsToGenerate.length === 0}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-950/60 hover:bg-amber-900/80 disabled:opacity-40 text-amber-300 border border-amber-700/50 hover:border-amber-500 rounded-lg transition-all text-xs font-semibold"
+                            title={`Queue only ${generationPlan.clipsToGenerate.length} changed or new shots for ComfyUI generation (skipping ${generationPlan.skippedClips.length} clean shots)`}
+                        >
+                            <span>⚡</span> Queue Changed ({generationPlan.clipsToGenerate.length})
+                        </button>
+                    )}
+
                     {/* Add Shot Button */}
                     <button 
                         onClick={handleAppendShot}
@@ -554,46 +805,181 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                 </div>
             </div>
 
+            {/* Import Status Message */}
+            {importStatusMessage && (
+                <div className="bg-indigo-950/90 border-b border-indigo-500/40 px-6 py-2 text-xs text-indigo-200 flex items-center justify-between">
+                    <span>✨ {importStatusMessage}</span>
+                    <button onClick={() => setImportStatusMessage('')} className="text-gray-400 hover:text-white font-bold ml-4">✕</button>
+                </div>
+            )}
+
             {/* Main Content Area */}
             <div className="flex-1 overflow-y-auto p-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-                    {interleaved_timeline_items.map((timeline_item, item_index) => {
-                        if (timeline_item.type === 'clip') {
-                            const current_item_index = sorted_clips_chronological.findIndex(candidate => candidate.id === timeline_item.clip.id);
-                            const previous_clip = sorted_clips_chronological[current_item_index - 1];
-                            const following_clip = sorted_clips_chronological[current_item_index + 1];
+                {viewMode === 'outline' && activeProject?.sections && activeProject.sections.length > 0 ? (
+                    <div className="space-y-8">
+                        {activeProject.sections.map((section) => {
+                            const section_clips = sorted_clips_chronological.filter(clip => 
+                                clip.sectionId === section.id || 
+                                clip.sectionName === section.name ||
+                                (!clip.sectionId && !clip.sectionName && clip.startTime >= section.startTime && clip.startTime < section.endTime)
+                            );
+                            const section_color = section.color || SECTION_TYPE_COLOR_MAP[section.type]?.border || '#6366f1';
+                            const badge_style = SECTION_TYPE_COLOR_MAP[section.type] || SECTION_TYPE_COLOR_MAP.verse;
+
                             return (
-                                <div key={timeline_item.clip.id} className="h-full">
-                                    <StoryboardCardComponent 
-                                        card={timeline_item.clip}
-                                        frameRate={activeProject?.frameRate || 20}
-                                        onUpdate={handleUpdateCard}
-                                        onDelete={handleDeleteCard}
-                                        onGenerateVideo={onGenerateVideo}
-                                        onPickImage={onPickImage}
-                                        onCopyImageFromNext={onCopyImageFromNext}
-                                        onCopyEndFrameFromPrev={onCopyEndFrameFromPrev}
-                                        onGetImageDescription={onGetImageDescription}
-                                        onRewordPrompt={onRewordPrompt}
-                                        llmProvider={llmProvider}
-                                        nextClipStartImage={following_clip?.startImagePath}
-                                        prevClipEndImage={previous_clip?.endImagePath}
-                                        comfyConnected={comfyConnected}
-                                    />
+                                <div key={section.id} className="bg-[#0e0e15] border border-gray-800/80 rounded-2xl p-5 shadow-lg">
+                                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-4 border-b border-gray-800/60">
+                                        <div className="flex items-center gap-3">
+                                            <span className="w-3.5 h-3.5 rounded-full shadow" style={{ backgroundColor: section_color }} />
+                                            <h3 className="text-lg font-bold text-white tracking-wide">{section.name}</h3>
+                                            <span 
+                                                className="text-[10px] font-bold uppercase px-2.5 py-0.5 rounded border tracking-wider"
+                                                style={{
+                                                    backgroundColor: badge_style.background,
+                                                    borderColor: badge_style.border,
+                                                    color: badge_style.text
+                                                }}
+                                            >
+                                                {section.type}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-4 text-xs font-mono text-gray-400">
+                                            <span>⏱️ {section.startTime.toFixed(2)}s – {section.endTime.toFixed(2)}s</span>
+                                            <span className="bg-[#181825] border border-gray-700/60 px-2.5 py-1 rounded text-[11px] text-gray-200 font-semibold">
+                                                {section_clips.length} {section_clips.length === 1 ? 'shot' : 'shots'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    
+                                    {section_clips.length === 0 ? (
+                                        <div className="py-6 text-center text-xs text-gray-500 italic bg-[#08080c] rounded-xl border border-dashed border-gray-800/60">
+                                            No shots in this section yet.
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                                            {section_clips.map((clip) => {
+                                                const current_item_index = sorted_clips_chronological.findIndex(c => c.id === clip.id);
+                                                const previous_clip = sorted_clips_chronological[current_item_index - 1];
+                                                const following_clip = sorted_clips_chronological[current_item_index + 1];
+                                                return (
+                                                    <div key={clip.id} className="h-full">
+                                                        <StoryboardCardComponent 
+                                                            card={clip}
+                                                            frameRate={activeProject?.frameRate || 20}
+                                                            onUpdate={handleUpdateCard}
+                                                            onDelete={handleDeleteCard}
+                                                            onGenerateVideo={onGenerateVideo}
+                                                            onPickImage={onPickImage}
+                                                            onCopyImageFromNext={onCopyImageFromNext}
+                                                            onCopyEndFrameFromPrev={onCopyEndFrameFromPrev}
+                                                            onGetImageDescription={onGetImageDescription}
+                                                            onRewordPrompt={onRewordPrompt}
+                                                            llmProvider={llmProvider}
+                                                            nextClipStartImage={following_clip?.startImagePath}
+                                                            prevClipEndImage={previous_clip?.endImagePath}
+                                                            comfyConnected={comfyConnected}
+                                                        />
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
                                 </div>
                             );
-                        } else {
+                        })}
+
+                        {/* Unassigned Shots if any exist */}
+                        {(() => {
+                            const unassigned_clips = sorted_clips_chronological.filter(clip => {
+                                return !activeProject.sections?.some(sec => 
+                                    clip.sectionId === sec.id || 
+                                    clip.sectionName === sec.name ||
+                                    (!clip.sectionId && !clip.sectionName && clip.startTime >= sec.startTime && clip.startTime < sec.endTime)
+                                );
+                            });
+                            if (unassigned_clips.length === 0) return null;
                             return (
-                                <StoryboardPaddingCard 
-                                    key={`padding-${item_index}-${timeline_item.startTime}`}
-                                    startTime={timeline_item.startTime}
-                                    duration={timeline_item.duration}
-                                    onAdd={handleFillPadding}
-                                />
+                                <div className="bg-[#0e0e15] border border-gray-800/80 rounded-2xl p-5 shadow-lg">
+                                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-4 border-b border-gray-800/60">
+                                        <div className="flex items-center gap-3">
+                                            <span className="w-3.5 h-3.5 rounded-full bg-gray-500" />
+                                            <h3 className="text-lg font-bold text-gray-300 tracking-wide">Additional / Unassigned Shots</h3>
+                                        </div>
+                                        <span className="bg-[#181825] border border-gray-700/60 px-2.5 py-1 rounded text-[11px] text-gray-200 font-semibold font-mono">
+                                            {unassigned_clips.length} {unassigned_clips.length === 1 ? 'shot' : 'shots'}
+                                        </span>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                                        {unassigned_clips.map((clip) => {
+                                            const current_item_index = sorted_clips_chronological.findIndex(c => c.id === clip.id);
+                                            const previous_clip = sorted_clips_chronological[current_item_index - 1];
+                                            const following_clip = sorted_clips_chronological[current_item_index + 1];
+                                            return (
+                                                <div key={clip.id} className="h-full">
+                                                    <StoryboardCardComponent 
+                                                        card={clip}
+                                                        frameRate={activeProject?.frameRate || 20}
+                                                        onUpdate={handleUpdateCard}
+                                                        onDelete={handleDeleteCard}
+                                                        onGenerateVideo={onGenerateVideo}
+                                                        onPickImage={onPickImage}
+                                                        onCopyImageFromNext={onCopyImageFromNext}
+                                                        onCopyEndFrameFromPrev={onCopyEndFrameFromPrev}
+                                                        onGetImageDescription={onGetImageDescription}
+                                                        onRewordPrompt={onRewordPrompt}
+                                                        llmProvider={llmProvider}
+                                                        nextClipStartImage={following_clip?.startImagePath}
+                                                        prevClipEndImage={previous_clip?.endImagePath}
+                                                        comfyConnected={comfyConnected}
+                                                    />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
                             );
-                        }
-                    })}
-                </div>
+                        })()}
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                        {interleaved_timeline_items.map((timeline_item, item_index) => {
+                            if (timeline_item.type === 'clip') {
+                                const current_item_index = sorted_clips_chronological.findIndex(candidate => candidate.id === timeline_item.clip.id);
+                                const previous_clip = sorted_clips_chronological[current_item_index - 1];
+                                const following_clip = sorted_clips_chronological[current_item_index + 1];
+                                return (
+                                    <div key={timeline_item.clip.id} className="h-full">
+                                        <StoryboardCardComponent 
+                                            card={timeline_item.clip}
+                                            frameRate={activeProject?.frameRate || 20}
+                                            onUpdate={handleUpdateCard}
+                                            onDelete={handleDeleteCard}
+                                            onGenerateVideo={onGenerateVideo}
+                                            onPickImage={onPickImage}
+                                            onCopyImageFromNext={onCopyImageFromNext}
+                                            onCopyEndFrameFromPrev={onCopyEndFrameFromPrev}
+                                            onGetImageDescription={onGetImageDescription}
+                                            onRewordPrompt={onRewordPrompt}
+                                            llmProvider={llmProvider}
+                                            nextClipStartImage={following_clip?.startImagePath}
+                                            prevClipEndImage={previous_clip?.endImagePath}
+                                            comfyConnected={comfyConnected}
+                                        />
+                                    </div>
+                                );
+                            } else {
+                                return (
+                                    <StoryboardPaddingCard 
+                                        key={`padding-${item_index}-${timeline_item.startTime}`}
+                                        startTime={timeline_item.startTime}
+                                        duration={timeline_item.duration}
+                                        onAdd={handleFillPadding}
+                                    />
+                                );
+                            }
+                        })}
+                    </div>
+                )}
             </div>
 
             {/* Persistent Animatic Timeline */}

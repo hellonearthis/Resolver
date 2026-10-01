@@ -97,6 +97,22 @@ export interface VideoClip {
     vfxNotes?: string;
     /** Words per minute used to auto-calculate duration from dialogue */
     paceWpm?: number;
+
+    // --- Screenplay & Section Architecture ---
+    /** ID of the MusicSection this shot belongs to */
+    sectionId?: string;
+    /** Human-readable section name (e.g., "Verse 1", "Chorus") */
+    sectionName?: string;
+    /** Musical form classification (e.g., "verse", "chorus", "bridge") */
+    sectionType?: import('./sections').SectionType;
+    /** Isolated director or crew notes parsed from [[ ]] brackets (kept out of AI prompt) */
+    scriptNotes?: string[];
+    /** Whether the shot is muted via Fountain boneyard /* *\/ */
+    isMuted?: boolean;
+    /** Deterministic fingerprint of the clip inputs when it was last rendered */
+    lastRenderedFingerprint?: string;
+    /** Current revision state relative to last render or baseline import */
+    revisionState?: 'new' | 'changed' | 'unchanged';
 }
 
 /**

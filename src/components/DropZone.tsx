@@ -69,8 +69,6 @@ const DropZone: React.FC<DropZoneProps> = ({
         const extended_window = getExtendedWindow();
         const web_utils_bridge = extended_window.electronWebUtils;
 
-        console.log("DropZone: Resolving paths. webUtils available:", Boolean(web_utils_bridge));
-
         if (web_utils_bridge) {
             files_to_resolve.forEach(file_item => {
                 if (!file_item.path) {
@@ -82,7 +80,6 @@ const DropZone: React.FC<DropZoneProps> = ({
                             } catch (assignment_error) {
                                 console.warn("DropZone: Simple assignment failed, complying...", assignment_error);
                             }
-                            console.log("DropZone: Resolved path:", resolved_disk_path);
                         }
                     } catch (resolution_error) {
                         console.warn("DropZone: Failed to resolve path for", file_item.name, resolution_error);
@@ -97,11 +94,6 @@ const DropZone: React.FC<DropZoneProps> = ({
         (drag_event: React.DragEvent<HTMLDivElement>) => {
             drag_event.preventDefault();
             drag_event.stopPropagation();
-
-            const extended_window = getExtendedWindow();
-            console.log("DropZone v2.2: Drop Event");
-            console.log("Electron version:", extended_window.process?.versions?.electron);
-            console.log("webUtils present:", Boolean(extended_window.electronWebUtils));
 
             let extracted_files: FileWithPath[] = Array.from(drag_event.dataTransfer.files) as FileWithPath[];
 
@@ -126,8 +118,6 @@ const DropZone: React.FC<DropZoneProps> = ({
                 }
                 return false;
             });
-
-            console.log("DropZone: Accepted files:", validated_files.length);
 
             if (validated_files.length > 0) {
                 onFilesDropped(validated_files);

@@ -341,6 +341,63 @@ export class ResolveBridgeClient {
         }
     }
 
+    // WHAT: Pushes revision state markers directly into DaVinci Resolve's active timeline.
+    // WHY: Sets marker colors (Cyan = new, Yellow = changed, Green = unchanged) with persistent card IDs.
+    public async pushRevisionMarkers(
+        revision_markers_collection: {
+            frame: number;
+            color: string;
+            name: string;
+            note: string;
+            duration_frames: number;
+        }[]
+    ): Promise<{
+        success: boolean;
+        pushed_count: number;
+        timeline_name: string;
+        error?: string;
+    }> {
+        try {
+            const resolve_app_handle = this.root;
+            const project_manager = await resolve_app_handle.GetProjectManager();
+            const current_project = await project_manager.GetCurrentProject();
+            if (!current_project) throw new Error('No project open in DaVinci Resolve.');
+
+            const current_timeline = await current_project.GetCurrentTimeline();
+            if (!current_timeline) throw new Error('No timeline open in DaVinci Resolve.');
+
+            const timeline_name_string = await current_timeline.GetName();
+            let successful_markers_count = 0;
+
+            for (const marker_item of revision_markers_collection) {
+                const add_marker_result = await current_timeline.AddMarker(
+                    marker_item.frame,
+                    marker_item.color,
+                    marker_item.name,
+                    marker_item.note,
+                    marker_item.duration_frames
+                );
+                if (add_marker_result) {
+                    successful_markers_count++;
+                }
+            }
+
+            return {
+                success: true,
+                pushed_count: successful_markers_count,
+                timeline_name: timeline_name_string
+            };
+        } catch (push_error: unknown) {
+            const error_message = push_error instanceof Error ? push_error.message : String(push_error);
+            return {
+                success: false,
+                pushed_count: 0,
+                timeline_name: '',
+                error: error_message
+            };
+        }
+    }
+
     // WHAT: Directly imports audio and video media files into the active project Media Pool.
     // WHY: Bypasses manual dragging or file staging scripts.
     public async importMediaIntoMediaPool(
