@@ -6,11 +6,14 @@ The **Video Assembler** is a central module of the **Resolve Tools Dashboard**. 
 
 ## Prerequisites
 
-1.  **ComfyUI Installed & Running**:
+1.  **DaVinci Resolve Installed**:
+    -   **Required Version**: **DaVinci Resolve 21.0.4.5** (or later) — supported on both Free and Studio editions.
+
+2.  **ComfyUI Installed & Running**:
     -   Install [ComfyUI](https://github.com/comfyanonymous/ComfyUI) and run it locally on the default port: `http://127.0.0.1:8188`.
     -   Install the **Audio-Loading-Nodes** (or equivalent) custom nodes in ComfyUI to support the `LoadAudio` and `SaveAudio` nodes.
 
-2.  **Workflow File**:
+3.  **Workflow File**:
     -   The application uses a bundled workflow: `comfyui_workflows/Extract_Stems.json`.
     -   This workflow uses the `htdemucs` model (or similar) for stem separation.
 

@@ -106,6 +106,10 @@ describe('StoryboardModule', () => {
         expect(screen.getByText('Chorus')).toBeTruthy();
         expect(screen.getByText('Bridge')).toBeTruthy();
 
+        // Verify block length indicators appear for sections
+        expect(screen.getAllByText('Length:').length).toBe(3);
+        expect(screen.getAllByText('4.00s').length).toBe(3);
+
         // Verify shot action prompts appear
         expect(screen.getByDisplayValue('Rain-soaked cyan pavement.')).toBeTruthy();
         expect(screen.getByDisplayValue('High energy strobe lights.')).toBeTruthy();

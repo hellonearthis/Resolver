@@ -81,21 +81,17 @@ interface WaveSurferRegionsPluginInstance {
     on: (event_name: string, callback_listener: (region_candidate: WaveSurferRegionLike) => void) => void;
 }
 
-export interface ResolveExportMarker {
-    time: number;
-    timestamp: number;
-    frame: number;
-    type: string;
-    color: string;
-    note: string;
-    duration_sec: number;
-}
-
-export interface MarkerLegendTooltipItem {
-    label: string;
-    count: number;
-    color: string;
-}
+export type { ResolveExportMarker, MarkerLegendTooltipItem } from '../utils/assemblerUtils';
+import {
+    extractMainMarkersFromProject,
+    buildResolveExportMarkers,
+    buildResolveSectionMarkers,
+    createClipFromSelection,
+    updateClipStartTime,
+    updateClipEndTimeWithRipple,
+    parseSrtSubtitlesToClips,
+    calculateMarkerLegendCounts
+} from '../utils/assemblerUtils';
 
 // WHAT: Safely retrieves the Electron IPC bridge when executing in a desktop container.
 // WHY: Prevents browser errors during SSR and pure web execution while enabling native Resolve RPC.
@@ -174,6 +170,7 @@ import {
     createSilentAudioBlob
 } from '../utils/timelineUtils';
 
+
 /**
  * The core module for assembling music videos.
  * Handles the display of the master track waveform and all associated instrument stems.
@@ -202,7 +199,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const wsRegions = useRef<WaveSurferRegionsPluginInstance | null>(null);
     const [audioFile, setAudioFile] = useState<{ name: string; path: string } | null>(null);
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
-    const [mainMarkers, setMainMarkers] = useState<AudioMarker[]>([]);
+    const [mainMarkers, setMainMarkers] = useState<AudioMarker[]>(() => extractMainMarkersFromProject(activeProject?.markers));
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const clips = (activeProject?.clips || []) as VideoClip[];
     const [stems, setStems] = useState<StemData[]>([]);
@@ -215,6 +212,12 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [activeSelection, setActiveSelection] = useState<SelectionState | null>(null);
     const lastProjectIdRef = useRef<string | null>(null);
     const stemRafRef = useRef<number | null>(null);
+
+    // Refs to break stale closures in WaveSurfer async callbacks (ready, redraw, zoom)
+    const mainMarkersRef = useRef<AudioMarker[]>(mainMarkers);
+    mainMarkersRef.current = mainMarkers;
+    const durationRef = useRef<number>(duration);
+    durationRef.current = duration;
 
     // --- Post-Generation Sync Logic ---
     const [outputDir, setOutputDir] = useState<string | null>(null);
@@ -244,6 +247,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     const [minZoom, setMinZoom] = useState(1);
     const [mainBeatSource, setMainBeatSource] = useState<'main' | number>('main'); // 'main' or index of stem
     const [waveSurfersReady, setWaveSurfersReady] = useState(0); // Trigger for re-rendering regions
+
+    const mainBeatSourceRef = useRef<'main' | number>(mainBeatSource);
+    mainBeatSourceRef.current = mainBeatSource;
+    const stemsRef = useRef<StemData[]>(stems);
+    stemsRef.current = stems;
 
     // BPM, Tap Tempo & Section Analysis State
     const [projectBpm, setProjectBpm] = useState<number>(activeProject?.bpm || 120);
@@ -943,21 +951,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
 
             // 3. Load Main Markers
-            const projectMarkersForMain = project.markers || [];
-            const mainProjectMarkers = projectMarkersForMain.filter(marker_item => !marker_item.note || marker_item.note === '');
+            const audioMarkers = extractMainMarkersFromProject(project.markers);
+            setMainMarkers(audioMarkers);
+            mainMarkersRef.current = audioMarkers;
 
-            if (mainProjectMarkers.length > 0) {
-                const audioMarkers: AudioMarker[] = mainProjectMarkers.map(marker_item => {
-                    return {
-                        time: marker_item.timestamp,
-                        type: marker_item.type,
-                        isDownbeat: marker_item.color === MARKER_COLORS.downbeat,
-                        color: marker_item.color
-                    };
-                });
-                setMainMarkers(audioMarkers);
-            } else {
-                setMainMarkers([]);
+            if (wavesurfer.current && audioMarkers.length > 0) {
+                const durToUse = duration || project.duration || wavesurfer.current.getDuration() || 0;
+                renderBeatMarkers(wavesurfer.current, audioMarkers, durToUse);
             }
 
             if (onStatusChange) onStatusChange("Ready.");
@@ -1038,13 +1038,20 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             const audioMarkers: AudioMarker[] = rawBeats.map((time_seconds, beat_index) => ({
                 time: time_seconds,
                 type: 'beat',
-                isDownbeat: beat_index % 4 === 0
+                isDownbeat: beat_index % 4 === 0,
+                color: beat_index % 4 === 0 ? MARKER_COLORS.downbeat : MARKER_COLORS.offbeat
             }));
 
             setMainMarkers(audioMarkers);
+            mainMarkersRef.current = audioMarkers;
             setProjectBpm(detected_master_tempo_bpm);
             setDetectionStatus(`Complete: ${rawBeats.length} beats @${detected_master_tempo_bpm} BPM.`);
             if (onStatusChange) onStatusChange("Main track beat analysis complete!");
+
+            if (wavesurfer.current) {
+                const totalDur = duration || activeProject.duration || wavesurfer.current.getDuration() || 0;
+                renderBeatMarkers(wavesurfer.current, audioMarkers, totalDur);
+            }
 
             // Save to project explicitly so it persists
             onUpdateProject(activeProject.id, {
@@ -1190,7 +1197,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             await audio_context_instance.close();
 
             if (onStatusChange) {
-                onStatusChange(`Detected ${detected_song_sections.length} song sections successfully!`);
+                onStatusChange(`Detected ${detected_song_sections.length} song sections! Click "➕ Add to Project Timeline" to populate clips.`);
             }
         } catch (section_detection_error) {
             console.error('Section detection failed:', section_detection_error);
@@ -1219,26 +1226,17 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         if (onStatusChange) onStatusChange('Pushing section markers to DaVinci Resolve...');
 
         try {
-            const frame_rate_value = activeProject.frameRate || 24;
-            const resolve_markers_payload = projectSections.map(section_item => {
-                const color_meta = SECTION_TYPE_COLOR_MAP[section_item.type];
-                return {
-                    frame: Math.round(section_item.startTime * frame_rate_value),
-                    timestamp: section_item.startTime,
-                    color: color_meta.resolveColor,
-                    note: `${section_item.name} (${section_item.type.toUpperCase()})`,
-                    type: 'chapter',
-                    duration_sec: Math.max(1, section_item.endTime - section_item.startTime)
-                };
-            });
+            const resolve_markers_payload = buildResolveSectionMarkers(projectSections, activeProject.frameRate || 24);
 
-            const result = await ipc_renderer_instance.invoke<{ success: boolean; error?: string }>(
+            const result = await ipc_renderer_instance.invoke<{ success: boolean; pushed_count?: number; timeline_name?: string; error?: string }>(
                 'resolve-bridge-push-markers',
-                resolve_markers_payload
+                { markers: resolve_markers_payload }
             );
 
             if (result && result.success) {
-                if (onStatusChange) onStatusChange(`Successfully pushed ${projectSections.length} sections to DaVinci Resolve!`);
+                if (onStatusChange) {
+                    onStatusChange(`⚡ Successfully pushed ${result.pushed_count ?? projectSections.length} sections to DaVinci Resolve "${result.timeline_name || 'Active'}"!`);
+                }
             } else {
                 const error_reason = result?.error || 'Unknown bridge response';
                 if (onStatusChange) onStatusChange(`Resolve push failed: ${error_reason}`);
@@ -1249,6 +1247,57 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             if (onStatusChange) onStatusChange(`Resolve bridge error: ${error_message}`);
         } finally {
             setIsPushingSectionsToResolve(false);
+        }
+    };
+
+    // WHAT: Converts detected song sections into discrete video clip segments on the Project Timeline.
+    // WHY: Provides an instant narrative storyboard foundation with aligned timings for all verses and choruses.
+    const handleAddSectionsToTimeline = () => {
+        if (!activeProject || projectSections.length === 0) {
+            if (onStatusChange) onStatusChange('No song sections available to add.');
+            return;
+        }
+
+        const project_fps = activeProject.frameRate || 20;
+        const new_clips_collection: VideoClip[] = projectSections.map((section_item, section_index) => {
+            const raw_duration = Math.max(0.1, section_item.endTime - section_item.startTime);
+            const aligned_duration = getAlignedDuration(raw_duration, project_fps);
+            const aligned_end_time = section_item.startTime + aligned_duration;
+            const track_number = (section_index % 2) + 1;
+
+            return {
+                id: `clip-section-${Date.now()}-${section_index}`,
+                startTime: section_item.startTime,
+                endTime: aligned_end_time,
+                duration: aligned_duration,
+                track: track_number,
+                status: 'pending',
+                source: 'main',
+                label: section_item.name || `${section_item.type.toUpperCase()} ${section_index + 1}`,
+                notes: {
+                    action: `${section_item.name} (${section_item.type.toUpperCase()}) - ${section_item.energyLevel > 0.6 ? 'High Energy' : 'Moderate Energy'}`,
+                    dialogue: '',
+                    sound: ''
+                }
+            };
+        });
+
+        // Merge with existing clips, avoiding exact start-time duplicates
+        const existing_clips = clips || [];
+        const existing_start_times = new Set(existing_clips.map(clip_item => Math.round(clip_item.startTime * 100)));
+        const non_duplicate_new_clips = new_clips_collection.filter(new_clip => !existing_start_times.has(Math.round(new_clip.startTime * 100)));
+
+        if (non_duplicate_new_clips.length === 0 && new_clips_collection.length > 0) {
+            if (onStatusChange) onStatusChange('Sections already exist on the Project Timeline.');
+            return;
+        }
+
+        const merged_clips_collection = [...existing_clips, ...non_duplicate_new_clips].sort((a, b) => a.startTime - b.startTime);
+
+        onUpdateProject(activeProject.id, { clips: merged_clips_collection });
+
+        if (onStatusChange) {
+            onStatusChange(`Added ${non_duplicate_new_clips.length} song section clips to Project Timeline!`);
         }
     };
 
@@ -1391,10 +1440,12 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             if (!wrapper) return;
             // Remove existing markers
             wrapper.querySelectorAll('.beat-marker').forEach(element_item => element_item.remove());
-            if (markerDuration <= 0) return;
+
+            const resolvedDuration = markerDuration > 0 ? markerDuration : (ws_instance.getDuration() || durationRef.current || 0);
+            if (resolvedDuration <= 0 || !markers || markers.length === 0) return;
 
             markers.forEach((marker_item) => {
-                const left = (marker_item.time / markerDuration) * 100;
+                const left = (marker_item.time / resolvedDuration) * 100;
                 if (left > 100) return;
 
                 let color = MARKER_COLORS.default;
@@ -1420,7 +1471,8 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 // Visual style tweaks based on type
                 const isDownbeat = marker_item.type === 'beat' && marker_item.isDownbeat;
                 const width = isDownbeat ? '2px' : '1px';
-                const opacity = marker_item.type === 'onset' ? '0.7' : '1';
+                const opacity = marker_item.type === 'onset' ? '0.75' : (marker_item.isDownbeat ? '1' : '0.85');
+                const zIndex = isDownbeat ? '32' : '30';
 
                 const div = document.createElement('div');
                 div.className = 'beat-marker';
@@ -1428,13 +1480,32 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                     position: absolute;
                     left: ${left}%;
                     top: 0;
-                    bottom: 0;
+                    height: 100%;
+                    min-height: 100%;
                     width: ${width};
                     background-color: ${color};
                     opacity: ${opacity};
                     pointer-events: none;
-                    z-index: 10;
+                    z-index: ${zIndex};
+                    box-shadow: ${isDownbeat ? `0 0 3px ${color}` : 'none'};
                 `;
+
+                if (isDownbeat) {
+                    const pip = document.createElement('div');
+                    pip.className = 'beat-marker-pip';
+                    pip.style.cssText = `
+                        position: absolute;
+                        top: 0;
+                        left: -3px;
+                        width: 8px;
+                        height: 4px;
+                        background-color: ${color};
+                        border-radius: 0 0 2px 2px;
+                        pointer-events: none;
+                    `;
+                    div.appendChild(pip);
+                }
+
                 wrapper.appendChild(div);
             });
         } catch (marker_render_error) {
@@ -1498,6 +1569,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         ws.on('ready', () => {
             const dur = ws.getDuration();
             setDuration(dur);
+            durationRef.current = dur;
 
             // Sync duration to project storage if it has changed
             if (activeProject && activeProject.duration !== dur) {
@@ -1516,12 +1588,28 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             } catch (zoom_error) {
                 console.warn("WaveSurfer initial zoom failed", zoom_error);
             }
-            // Render beat markers inside WaveSurfer wrapper
-            const currentMarkers = mainBeatSource === 'main' ? mainMarkers : (typeof mainBeatSource === 'number' && stems[mainBeatSource] ? stems[mainBeatSource].markers : []);
+            // Render beat markers inside WaveSurfer wrapper using refs to avoid stale closure
+            const source = mainBeatSourceRef.current;
+            const currentMarkers = source === 'main'
+                ? mainMarkersRef.current
+                : (typeof source === 'number' && stemsRef.current[source]
+                    ? stemsRef.current[source].markers
+                    : []);
             renderBeatMarkers(ws, currentMarkers, dur);
 
             // Trigger region render
             setWaveSurfersReady(prev => prev + 1);
+        });
+
+        ws.on('redraw', () => {
+            const dur = ws.getDuration() || durationRef.current;
+            const source = mainBeatSourceRef.current;
+            const currentMarkers = source === 'main'
+                ? mainMarkersRef.current
+                : (typeof source === 'number' && stemsRef.current[source]
+                    ? stemsRef.current[source].markers
+                    : []);
+            renderBeatMarkers(ws, currentMarkers, dur);
         });
 
         // Register Regions Plugin
@@ -1760,20 +1848,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         };
     }, [stemsFingerprint]);
 
-    // Auto-select Bass as main beat source if available
+    // Validate beat source if stems change
     useEffect(() => {
-        if (stems.length > 0) {
-            const bassIndex = stems.findIndex(stem_item => stem_item.type.toLowerCase() === 'bass');
-            if (bassIndex !== -1) {
-                console.log("Auto-selecting Bass as main beat source");
-                setMainBeatSource(bassIndex);
-            } else {
-                setMainBeatSource('main');
-            }
-        } else {
+        // If mainBeatSource was a stem index that no longer exists, reset to 'main'
+        if (typeof mainBeatSource === 'number' && (!stems[mainBeatSource] || stems.length === 0)) {
             setMainBeatSource('main');
         }
-    }, [stems]);
+    }, [stems, mainBeatSource]);
 
     // WHAT: Global keyboard listener for non-linear editor (NLE) playback navigation and clip markers.
     // WHY: Provides keyboard workflow parity with standard NLE suites (Space, J, K, L, I, O, C) for sub-frame beat editing.
@@ -1935,27 +2016,13 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             }
             return;
         }
-        const { start, end, source, stemIndex } = activeSelection;
-
-        // Snap duration UP to the nearest valid aligned frame boundary
-        const raw_duration = end - start;
         const project_fps = activeProject?.frameRate || 20;
-        const aligned_duration = getAlignedDuration(raw_duration, project_fps);
-        const aligned_end_time = start + aligned_duration;
-
-        const timeline_track_index = (clips.length % 2) + 1;
-
-        const new_clip_item: VideoClip = {
-            id: Date.now().toString(),
-            startTime: start,
-            endTime: aligned_end_time,
-            duration: aligned_duration,
-            track: timeline_track_index,
-            status: 'pending',
-            source,
-            stemName: source === 'stem' && stemIndex !== undefined ? stems[stemIndex]?.type : undefined,
-            label: `clip_${clips.length}`,
-        };
+        const new_clip_item = createClipFromSelection({
+            selection: activeSelection,
+            stems,
+            existingClipsCount: clips.length,
+            frameRate: project_fps
+        });
 
         onUpdateProject(activeProject!.id, (prev: BeatProject) => ({ clips: [...(prev.clips || []), new_clip_item] }) as Partial<BeatProject>);
         setActiveSelection(null);
@@ -1966,9 +2033,9 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         }
         stemRegionsRefs.current.forEach(region_instance => region_instance.clearRegions());
 
-        const total_aligned_frames = getValidMinimaxFrameCount(raw_duration, project_fps);
+        const total_aligned_frames = Math.round(new_clip_item.duration * project_fps);
         if (onStatusChange) {
-            onStatusChange(`Segment added: ${formatTime(start)} – ${formatTime(aligned_end_time)} (${total_aligned_frames} frames @ ${project_fps}fps, ${aligned_duration.toFixed(2)}s)`);
+            onStatusChange(`Segment added: ${formatTime(new_clip_item.startTime)} – ${formatTime(new_clip_item.endTime)} (${total_aligned_frames} frames @ ${project_fps}fps, ${new_clip_item.duration.toFixed(2)}s)`);
         }
 
         if (activeProject) {
@@ -2112,18 +2179,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
     // WHAT: Shifts a clip's start time and adjusts its end time to preserve duration
     // WHY: Supports manual positioning and nudge operations on the timeline.
     const handleUpdateClipStartTime = (clipId: string, newStartTime: number) => {
-        const updated_clips = clips.map(clip_item => {
-            if (clip_item.id === clipId) {
-                const clip_duration = clip_item.duration || (clip_item.endTime - clip_item.startTime);
-                return {
-                    ...clip_item,
-                    startTime: newStartTime,
-                    endTime: newStartTime + clip_duration,
-                    duration: clip_duration
-                };
-            }
-            return clip_item;
-        });
+        const updated_clips = updateClipStartTime(clips, clipId, newStartTime);
         if (activeProject) {
             onUpdateProject(activeProject.id, { clips: updated_clips });
         }
@@ -2135,27 +2191,11 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
         const project_frame_rate = activeProject?.frameRate || 20;
         onUpdateProject(activeProject!.id, (prev: BeatProject) => {
             const current_clips = prev.clips || [];
-            const sorted_clips = [...current_clips].sort((clip_a, clip_b) => clip_a.startTime - clip_b.startTime);
-            const target_clip_index = sorted_clips.findIndex(clip_item => clip_item.id === clipId);
-            if (target_clip_index === -1) {
-                return prev;
-            }
-            const current_target_clip = sorted_clips[target_clip_index];
-            if (newEndTime <= current_target_clip.startTime) {
-                return prev;
-            }
-            const raw_duration = newEndTime - current_target_clip.startTime;
-            const aligned_duration = getAlignedDuration(raw_duration, project_frame_rate);
-            sorted_clips[target_clip_index] = { ...current_target_clip, endTime: current_target_clip.startTime + aligned_duration, duration: aligned_duration };
-            for (let cascade_index = target_clip_index + 1; cascade_index < sorted_clips.length; cascade_index++) {
-                const previous_clip = sorted_clips[cascade_index - 1];
-                const clip_duration = sorted_clips[cascade_index].duration || (sorted_clips[cascade_index].endTime - sorted_clips[cascade_index].startTime);
-                sorted_clips[cascade_index] = { ...sorted_clips[cascade_index], startTime: previous_clip.endTime, endTime: previous_clip.endTime + clip_duration, duration: clip_duration };
-            }
+            const updated_clips = updateClipEndTimeWithRipple(current_clips, clipId, newEndTime, project_frame_rate);
             if (activeProject) {
-                onUpdateProject(activeProject.id, { clips: sorted_clips });
+                onUpdateProject(activeProject.id, { clips: updated_clips });
             }
-            return { clips: sorted_clips };
+            return { clips: updated_clips };
         });
     };
 
@@ -2339,37 +2379,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             return;
         }
 
-        const aggregated_export_markers: ResolveExportMarker[] = [];
-
-        // Main Track Markers
-        mainMarkers.forEach(main_marker => {
-            aggregated_export_markers.push({
-                time: main_marker.time,
-                timestamp: main_marker.time,
-                frame: Math.round(main_marker.time * (activeProject.frameRate || 24)),
-                type: main_marker.type,
-                color: main_marker.color || (main_marker.isDownbeat ? '#ff0000' : '#ffff00'),
-                note: main_marker.isDownbeat ? 'DOWNBEAT' : 'BEAT',
-                duration_sec: 0.05
-            });
-        });
-
-        // Stem Markers
-        stems.forEach(stem_item => {
-            if (stem_item.markers) {
-                stem_item.markers.forEach(stem_marker => {
-                    aggregated_export_markers.push({
-                        time: stem_marker.time,
-                        timestamp: stem_marker.time,
-                        frame: Math.round(stem_marker.time * (activeProject.frameRate || 24)),
-                        type: stem_marker.type,
-                        color: stem_item.color || '#00ff00',
-                        note: `${stem_item.type.toUpperCase()}: ${stem_marker.type}`,
-                        duration_sec: 0.05
-                    });
-                });
-            }
-        });
+        const aggregated_export_markers = buildResolveExportMarkers(mainMarkers, stems, activeProject.frameRate || 24);
 
         if (aggregated_export_markers.length === 0) {
             if (onStatusChange) {
@@ -2558,34 +2568,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             return;
         }
 
-        const aggregated_markers_collection: ResolveExportMarker[] = [];
-        mainMarkers.forEach(main_marker => {
-            aggregated_markers_collection.push({
-                time: main_marker.time,
-                timestamp: main_marker.time,
-                frame: Math.round(main_marker.time * (activeProject.frameRate || 24)),
-                type: main_marker.type,
-                color: main_marker.color || (main_marker.isDownbeat ? '#ff0000' : '#ffff00'),
-                note: main_marker.isDownbeat ? 'DOWNBEAT' : 'BEAT',
-                duration_sec: 0.05
-            });
-        });
-
-        stems.forEach(stem_item => {
-            if (stem_item.markers) {
-                stem_item.markers.forEach(stem_marker => {
-                    aggregated_markers_collection.push({
-                        time: stem_marker.time,
-                        timestamp: stem_marker.time,
-                        frame: Math.round(stem_marker.time * (activeProject.frameRate || 24)),
-                        type: stem_marker.type,
-                        color: stem_item.color || '#00ff00',
-                        note: `${stem_item.type.toUpperCase()}: ${stem_marker.type}`,
-                        duration_sec: 0.05
-                    });
-                });
-            }
-        });
+        const aggregated_markers_collection = buildResolveExportMarkers(mainMarkers, stems, activeProject.frameRate || 24);
 
         if (aggregated_markers_collection.length === 0) {
             if (onStatusChange) {
@@ -2746,6 +2729,24 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 if (onStatusChange) {
                     onStatusChange(`⚡ Timeline Built: "${build_result.timeline_name}" with ${build_result.placed_clips_count} clips placed!`);
                 }
+
+                // WHAT: Automatically push section markers and chapter points to the newly reconstructed Resolve timeline
+                if (projectSections.length > 0) {
+                    try {
+                        const frame_rate_val = activeProject.frameRate || 24;
+                        const auto_section_markers = projectSections.map(section_item => ({
+                            frame: Math.round(section_item.startTime * frame_rate_val),
+                            timestamp: section_item.startTime,
+                            color: SECTION_TYPE_COLOR_MAP[section_item.type]?.resolveColor || 'Blue',
+                            note: `${section_item.name} (${section_item.type.toUpperCase()})`,
+                            type: 'chapter',
+                            duration_sec: Math.max(1, section_item.endTime - section_item.startTime)
+                        }));
+                        await ipcRenderer.invoke('resolve-bridge-push-markers', { markers: auto_section_markers });
+                    } catch (auto_marker_error) {
+                        console.warn('Auto-pushing section markers to newly reconstructed timeline:', auto_marker_error);
+                    }
+                }
             } else {
                 if (onStatusChange) {
                     onStatusChange(`Timeline Build Failed: ${build_result.error}`);
@@ -2831,64 +2832,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 return;
             }
             
-            const raw_lines = raw_file_text.split(/\r?\n/);
-            const imported_clips_collection: VideoClip[] = [];
-            let timeline_track_index = 1;
-            
-            const time_match_regex = /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/;
-            
-            for (let line_index = 0; line_index < raw_lines.length; line_index++) {
-                const regex_match = raw_lines[line_index].match(time_match_regex);
-                if (regex_match) {
-                    let text_accumulator = '';
-                    let subsequent_line_index = line_index + 1;
-                    while (subsequent_line_index < raw_lines.length && raw_lines[subsequent_line_index].trim() !== '' && !raw_lines[subsequent_line_index].match(time_match_regex)) {
-                        if (!/^\d+$/.test(raw_lines[subsequent_line_index].trim())) {
-                             text_accumulator += raw_lines[subsequent_line_index].trim() + ' ';
-                        }
-                        subsequent_line_index++;
-                    }
-                    text_accumulator = text_accumulator.trim();
-                    
-                    if (text_accumulator) {
-                        const start_hours = parseInt(regex_match[1], 10);
-                        const start_minutes = parseInt(regex_match[2], 10);
-                        const start_seconds = parseInt(regex_match[3], 10);
-                        const start_milliseconds = parseInt(regex_match[4], 10);
-                        const end_hours = parseInt(regex_match[5], 10);
-                        const end_minutes = parseInt(regex_match[6], 10);
-                        const end_seconds = parseInt(regex_match[7], 10);
-                        const end_milliseconds = parseInt(regex_match[8], 10);
-                        
-                        const parsed_start_time = start_hours * 3600 + start_minutes * 60 + start_seconds + start_milliseconds / 1000;
-                        const parsed_end_time = end_hours * 3600 + end_minutes * 60 + end_seconds + end_milliseconds / 1000;
-                        let clip_duration = parsed_end_time - parsed_start_time;
-                        if (clip_duration <= 0) {
-                            clip_duration = 1;
-                        }
-                        
-                        const label_text = text_accumulator.substring(0, 30) + (text_accumulator.length > 30 ? '...' : '');
-
-                        const new_subtitle_clip: VideoClip = {
-                            id: `subtitle-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-                            startTime: parsed_start_time,
-                            duration: clip_duration,
-                            endTime: parsed_end_time,
-                            track: timeline_track_index,
-                            status: 'pending',
-                            source: 'main',
-                            label: label_text || 'Subtitle',
-                            notes: {
-                                action: text_accumulator,
-                                dialogue: '',
-                                sound: ''
-                            }
-                        };
-                        imported_clips_collection.push(new_subtitle_clip);
-                        timeline_track_index = timeline_track_index === 1 ? 2 : 1;
-                    }
-                }
-            }
+            const imported_clips_collection = parseSrtSubtitlesToClips(raw_file_text);
             
             if (imported_clips_collection.length > 0) {
                 onUpdateProject(activeProject.id, (previous_project_state) => {
@@ -3265,6 +3209,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                         resolveOnline={resolveBridgeOnline}
                         onDetectSections={handleDetectSections}
                         onPushSectionsToResolve={handlePushSectionsToResolve}
+                        onAddSectionsToTimeline={handleAddSectionsToTimeline}
                         onUpdateSection={handleUpdateSection}
                         onDeleteSection={handleDeleteSection}
                         onSectionClick={(clicked_section) => handleSeekToSectionTime(clicked_section.startTime)}
@@ -3292,24 +3237,10 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 (() => {
                     // WHAT: Computes marker distribution counts across the main track and stems
                     // WHY: Populates the hovering breakdown tooltip for downbeats, offbeats, onsets, and loudness.
-                    const getCountData = (filterPredicate: (marker_item: AudioMarker) => boolean) => {
-                        const aggregated_counts_data = [
-                            { label: 'Main Track', count: mainMarkers.filter(filterPredicate).length, color: '#fff' }
-                        ];
-                        stems.forEach(stem_item => {
-                            aggregated_counts_data.push({
-                                label: stem_item.type,
-                                count: (stem_item.markers || []).filter(filterPredicate).length,
-                                color: stem_item.color || '#fff'
-                            });
-                        });
-                        return aggregated_counts_data;
-                    };
-
-                    const downbeatData = getCountData(marker_item => marker_item.type === 'beat' && !!marker_item.isDownbeat);
-                    const offbeatData = getCountData(marker_item => marker_item.type === 'beat' && !marker_item.isDownbeat);
-                    const onsetData = getCountData(marker_item => marker_item.type === 'onset');
-                    const loudnessData = getCountData(marker_item => marker_item.type === 'loudness');
+                    const downbeatData = calculateMarkerLegendCounts(mainMarkers, stems, marker_item => marker_item.type === 'beat' && !!marker_item.isDownbeat);
+                    const offbeatData = calculateMarkerLegendCounts(mainMarkers, stems, marker_item => marker_item.type === 'beat' && !marker_item.isDownbeat);
+                    const onsetData = calculateMarkerLegendCounts(mainMarkers, stems, marker_item => marker_item.type === 'onset');
+                    const loudnessData = calculateMarkerLegendCounts(mainMarkers, stems, marker_item => marker_item.type === 'loudness');
 
                     const renderTooltipContent = (tooltip_title: string, tooltip_data_items: MarkerLegendTooltipItem[]) => (
                         <div className="flex flex-col gap-1 p-2 border border-gray-600 rounded shadow-2xl text-xs min-w-[120px] z-[9999]" style={{ backgroundColor: '#000000', opacity: 1 }}>

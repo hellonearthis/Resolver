@@ -136,3 +136,15 @@
         box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
     }
 }
+
+/* Beat Markers inside WaveSurfer waveform container */
+.beat-marker {
+    pointer-events: none;
+    user-select: none;
+    will-change: transform;
+}
+
+.beat-marker-pip {
+    pointer-events: none;
+    user-select: none;
+}

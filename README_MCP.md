@@ -2,6 +2,8 @@
 
 Resolver provides a native, official **Model Context Protocol (MCP)** server that exposes **DaVinci Resolve** (Free & Studio), **Resolver Storyboard & Project Management**, and **ComfyUI Workflows** to external AI agents including **Claude Desktop**, **Antigravity**, **Cursor**, **Zed**, and autonomous LangChain/Python agents.
 
+> 📌 **Prerequisite**: Requires **DaVinci Resolve 21.0.4.5** (or later). Compatible with both Free and Studio editions via the local loopback bridge.
+
 ---
 
 ## 🚀 Quick Setup (1-Click in Resolver)

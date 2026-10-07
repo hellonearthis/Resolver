@@ -28,8 +28,8 @@ Automatically lists all `.py` scripts found in your Resolve Scripts folder.
 
 ## Integration
 
-These scripts are what allow the **Free Version** of DaVinci Resolve to import markers.
-1. Generate script in **Beat Extraction**.
+These scripts are what allow the **Free Version** and Studio editions of **DaVinci Resolve** (version **21.0.4.5** or later) to import markers and timelines without external API gating.
+1. Generate script in **Beat Extraction** or **Video Assembler**.
 2. Go to **Workspace > Scripts** in Resolve.
 3. Click the script name to run it.
 4. Manage/Cleanup scripts here in the **Script Manager**.

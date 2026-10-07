@@ -372,13 +372,13 @@ export default function ScriptManagerModule() {
                         <ol style={{ margin: 0, paddingLeft: '20px', lineHeight: '1.6', color: 'var(--text-secondary)' }}>
                             <li>
                                 {bridgeStatus?.is_installed ? (
-                                    <span style={{ color: '#4ade80' }}>✅ Bridge script is installed in Resolve's Utility scripts folder.</span>
+                                    <span style={{ color: '#4ade80' }}>✅ Bridge script is installed in Resolve's scripts folder.</span>
                                 ) : (
-                                    <span>Click <b>"Install Bridge Script"</b> above to copy <code>resolve_bridge.py</code> to Resolve's Utility folder.</span>
+                                    <span>Click <b>"Install Bridge Script"</b> above to copy <code>resolve_bridge.py</code> to Resolve's scripts folder.</span>
                                 )}
                             </li>
                             <li>Open <b>DaVinci Resolve</b> and open or create any project.</li>
-                            <li>From DaVinci Resolve's menu: go to <b>Workspace ▸ Scripts ▸ Utility ▸ resolve_bridge</b>.</li>
+                            <li>From DaVinci Resolve's menu: go to <b>Workspace ▸ Scripts ▸ Comp ▸ resolve_bridge</b> (or <b>Edit ▸ resolve_bridge</b>).</li>
                             <li>Click <b>"Test Connection"</b> above. Once online, live marker pushing and timeline building are enabled!</li>
                         </ol>
                     </div>

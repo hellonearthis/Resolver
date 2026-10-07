@@ -826,6 +826,11 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                             const section_color = section.color || SECTION_TYPE_COLOR_MAP[section.type]?.border || '#6366f1';
                             const badge_style = SECTION_TYPE_COLOR_MAP[section.type] || SECTION_TYPE_COLOR_MAP.verse;
 
+                            // WHAT: Calculate the musical section duration and total frame count based on project FPS.
+                            // WHY: Displays exact block duration to help video editors pace and plan scene shot counts.
+                            const section_duration_seconds = Math.max(0, section.endTime - section.startTime);
+                            const section_frame_count = Math.round(section_duration_seconds * (activeProject?.frameRate || 20));
+
                             return (
                                 <div key={section.id} className="bg-[#0e0e15] border border-gray-800/80 rounded-2xl p-5 shadow-lg">
                                     <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-4 border-b border-gray-800/60">
@@ -843,8 +848,16 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                                 {section.type}
                                             </span>
                                         </div>
-                                        <div className="flex items-center gap-4 text-xs font-mono text-gray-400">
+                                        <div className="flex items-center gap-3 text-xs font-mono text-gray-400">
                                             <span>⏱️ {section.startTime.toFixed(2)}s – {section.endTime.toFixed(2)}s</span>
+                                            <span 
+                                                className="bg-[#181825] border border-indigo-500/30 px-2.5 py-1 rounded text-[11px] text-indigo-300 font-semibold flex items-center gap-1.5 shadow-sm"
+                                                title={`Block length: ${section_duration_seconds.toFixed(2)}s (${section_frame_count} frames @ ${activeProject?.frameRate || 20}fps)`}
+                                            >
+                                                <span className="text-gray-400 font-normal">Length:</span>
+                                                <span>{section_duration_seconds.toFixed(2)}s</span>
+                                                <span className="text-[10px] text-indigo-400/70 font-normal">({section_frame_count}f)</span>
+                                            </span>
                                             <span className="bg-[#181825] border border-gray-700/60 px-2.5 py-1 rounded text-[11px] text-gray-200 font-semibold">
                                                 {section_clips.length} {section_clips.length === 1 ? 'shot' : 'shots'}
                                             </span>
@@ -905,9 +918,32 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                             <span className="w-3.5 h-3.5 rounded-full bg-gray-500" />
                                             <h3 className="text-lg font-bold text-gray-300 tracking-wide">Additional / Unassigned Shots</h3>
                                         </div>
-                                        <span className="bg-[#181825] border border-gray-700/60 px-2.5 py-1 rounded text-[11px] text-gray-200 font-semibold font-mono">
-                                            {unassigned_clips.length} {unassigned_clips.length === 1 ? 'shot' : 'shots'}
-                                        </span>
+                                        <div className="flex items-center gap-3 text-xs font-mono text-gray-400">
+                                            {(() => {
+                                                // WHAT: Calculate the cumulative duration and frame count for all unassigned video clips.
+                                                // WHY: Informs the director how much auxiliary or B-roll footage exists outside structured beat blocks.
+                                                const total_unassigned_duration_seconds = unassigned_clips.reduce(
+                                                    (accumulated_duration_seconds, current_clip_candidate) => 
+                                                        accumulated_duration_seconds + (current_clip_candidate.duration || (current_clip_candidate.endTime - current_clip_candidate.startTime) || 0),
+                                                    0
+                                                );
+                                                const total_unassigned_frame_count = Math.round(total_unassigned_duration_seconds * (activeProject?.frameRate || 20));
+
+                                                return total_unassigned_duration_seconds > 0 ? (
+                                                    <span 
+                                                        className="bg-[#181825] border border-gray-700/60 px-2.5 py-1 rounded text-[11px] text-indigo-300 font-semibold flex items-center gap-1.5 shadow-sm"
+                                                        title={`Total unassigned length: ${total_unassigned_duration_seconds.toFixed(2)}s (${total_unassigned_frame_count} frames @ ${activeProject?.frameRate || 20}fps)`}
+                                                    >
+                                                        <span className="text-gray-400 font-normal">Length:</span>
+                                                        <span>{total_unassigned_duration_seconds.toFixed(2)}s</span>
+                                                        <span className="text-[10px] text-indigo-400/70 font-normal">({total_unassigned_frame_count}f)</span>
+                                                    </span>
+                                                ) : null;
+                                            })()}
+                                            <span className="bg-[#181825] border border-gray-700/60 px-2.5 py-1 rounded text-[11px] text-gray-200 font-semibold font-mono">
+                                                {unassigned_clips.length} {unassigned_clips.length === 1 ? 'shot' : 'shots'}
+                                            </span>
+                                        </div>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
                                         {unassigned_clips.map((clip) => {

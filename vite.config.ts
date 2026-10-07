@@ -13,6 +13,11 @@ export default defineConfig({
     ],
   },
   assetsInclude: ['**/*.wasm'],
+  // ES-format workers are required: the Essentia worker lazy-loads WASM via dynamic import(),
+  // which the default 'iife' worker format cannot code-split.
+  worker: {
+    format: 'es',
+  },
   test: {
     globals: true,
     environment: 'jsdom',

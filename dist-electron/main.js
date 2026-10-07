@@ -559,7 +559,10 @@ electron_1.ipcMain.handle('resolve-bridge-install', async () => {
 // WHY: Instant live synchronization without generating or manually executing Python scripts.
 electron_1.ipcMain.handle('resolve-bridge-push-markers', async (_event, incoming_payload) => {
     const resolve_bridge_client = new resolveBridge_1.ResolveBridgeClient();
-    return await resolve_bridge_client.pushMarkersToActiveTimeline(incoming_payload.markers || []);
+    const markers = Array.isArray(incoming_payload)
+        ? incoming_payload
+        : (incoming_payload?.markers || []);
+    return await resolve_bridge_client.pushMarkersToActiveTimeline(markers);
 });
 // WHAT: Directly imports audio and video files into DaVinci Resolve's active Media Pool.
 // WHY: Eliminates manual file import steps and executes in sub-100ms.
@@ -1032,10 +1035,12 @@ electron_1.ipcMain.handle('stage-timeline-to-resolve', async (_event, data) => {
         }
         const fps = data.frameRate || 24;
         const escapedAudio = (data.audioPath || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        // Escape clip paths and build a list for Python
+        // Escape clip paths and build a list for Python with stable IDs
         const clipEntries = data.clips.map(c => {
-            const vPath = (c.videoPath || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-            return `    {'path': '${vPath}', 'start': ${c.startTime}, 'end': ${c.endTime}, 'track': ${c.track}, 'label': '${c.label.replace(/'/g, "\\'")}'}`;
+            const vPath = (c.videoPath || c.path || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            const clipId = (c.id || '').replace(/'/g, "\\'");
+            const sceneNum = (c.sceneNumber || '').replace(/'/g, "\\'");
+            return `    {'id': '${clipId}', 'path': '${vPath}', 'start': ${c.startTime}, 'end': ${c.endTime}, 'track': ${c.track}, 'label': '${c.label.replace(/'/g, "\\'")}', 'scene': '${sceneNum}'}`;
         });
         const script = `#!/usr/bin/env python
 # Project: ${data.projectName.replace(/'/g, '')}
@@ -1167,6 +1172,13 @@ def main():
             print(f"  [SKIP] {c['label']} - MediaItem not available (file missing or import failed)")
             continue
         
+        # Set persistent display name on MediaPool item property
+        display_name = f"[{c['id']}] {c['label']}" if c.get('id') else c['label']
+        try:
+            media_item.SetClipProperty("Clip Name", display_name)
+        except Exception:
+            pass
+
         # Calculate target frame on timeline from project seconds
         record_frame = int(round(c['start'] * FPS)) + start_frame_offset
         duration_frames = int(round((c['end'] - c['start']) * FPS))
@@ -1184,8 +1196,22 @@ def main():
         try:
             success = mediapool.AppendToTimeline([clip_info])
             if success:
-                print(f"  [OK] {c['label']} -> Track {c['track']} @ {c['start']:.2f}s")
+                print(f"  [OK] {display_name} -> Track {c['track']} @ {c['start']:.2f}s")
                 success_count += 1
+                
+                # Add timeline marker identifying the persistent ID
+                if c.get('id'):
+                    try:
+                        timeline.AddMarker(
+                            record_frame,
+                            "Blue",
+                            c['id'],
+                            f"{display_name} (Scene {c.get('scene', '')})",
+                            max(1, duration_frames),
+                            ""
+                        )
+                    except Exception:
+                        pass
             else:
                 print(f"  [FAIL] Resolve rejected placement for {c['label']}")
         except Exception as e:
@@ -1708,7 +1734,7 @@ electron_1.ipcMain.handle('llm-benchmark', async () => {
         }
         const port = Number(loaded_config.llamaServerPort) || 8080;
         const llama_client = new llamaServerClient_1.LlamaServerClient(`http://127.0.0.1:${port}`);
-        let is_ready = await llama_client.discoverActiveLlamaServerModel();
+        const is_ready = await llama_client.discoverActiveLlamaServerModel();
         if (!is_ready) {
             const auto_start = await ensureLlamaServerRunning(port);
             if (!auto_start.success) {

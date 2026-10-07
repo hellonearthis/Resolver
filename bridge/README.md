@@ -2,6 +2,8 @@
 
 A local loopback JSON-RPC HTTP bridge that provides **real-time, external API control** over **DaVinci Resolve Free** and **Studio** editions.
 
+> ⚠️ **Requirement**: Requires **DaVinci Resolve 21.0.4.5** (or later). Compatible with both Free and Studio editions.
+
 ---
 
 ## 💡 How It Works & Why It Bypasses Free Edition Restrictions
@@ -9,7 +11,7 @@ A local loopback JSON-RPC HTTP bridge that provides **real-time, external API co
 | Traditional Scripting (`DaVinciResolveScript`) | External Control Bridge (`resolve_bridge.py`) |
 | :--- | :--- |
 | External Python process attempts `import DaVinciResolveScript`. | Python script runs **inside** DaVinci Resolve via menu. |
-| **Gated to Studio only**: Fails on Free edition. | **Works on Free & Studio**: Internal scripts receive the live `resolve` handle on all editions. |
+| **Gated to Studio only**: Fails on Free edition. | **Works on Free & Studio (v21.0.4.5+)**: Internal scripts receive the live `resolve` handle on all editions. |
 | Slow: Requires spawning Python processes and managing file handles. | **Fast**: Keeps a persistent, sub-50ms HTTP listener open on `127.0.0.1:8878`. |
 | Language locked: External scripts must run in Python with matching ABI. | **Language agnostic**: Controlled from Node.js, TypeScript, Python, cURL, or browser fetch! |
 

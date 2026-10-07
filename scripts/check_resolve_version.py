@@ -2,6 +2,7 @@
 DaVinci Resolve Version Checker
 
 Detects whether DaVinci Resolve Studio (paid) or Free is running.
+Requires DaVinci Resolve version 21.0.4.5 or later.
 The Free version does not support external scripting via the API,
 so this script helps users diagnose connectivity issues.
 

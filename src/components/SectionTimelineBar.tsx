@@ -21,6 +21,7 @@ interface SectionTimelineBarProps {
     onDeleteSection?: (section_identifier: string) => void;
     onDetectSections?: () => void;
     onPushSectionsToResolve?: () => void;
+    onAddSectionsToTimeline?: () => void;
     isDetecting?: boolean;
     isPushingToResolve?: boolean;
     resolveOnline?: boolean;
@@ -35,6 +36,7 @@ export const SectionTimelineBar: React.FC<SectionTimelineBarProps> = ({
     onDeleteSection,
     onDetectSections,
     onPushSectionsToResolve,
+    onAddSectionsToTimeline,
     isDetecting = false,
     isPushingToResolve = false,
     resolveOnline = false
@@ -89,6 +91,17 @@ export const SectionTimelineBar: React.FC<SectionTimelineBarProps> = ({
                             title="Analyze audio dynamics and stem activity to automatically detect verses and choruses"
                         >
                             <span>🔍</span> {isDetecting ? 'Detecting...' : 'Auto-Detect Sections'}
+                        </button>
+                    )}
+
+                    {onAddSectionsToTimeline && sections.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={onAddSectionsToTimeline}
+                            className="btn btn-secondary text-xs py-1 px-2.5 flex items-center gap-1 border border-emerald-500/40 hover:border-emerald-500/80 text-emerald-300"
+                            title="Add detected song sections as video clip segments to the Project Timeline"
+                        >
+                            <span>➕</span> Add to Project Timeline
                         </button>
                     )}
 

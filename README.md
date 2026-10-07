@@ -81,6 +81,8 @@ Or run `start-dashboard.bat` on Windows.
 ## DaVinci Resolve Setup
 
 > ⚠️ **Required before running any integrations**
+>
+> - **Required Resolve Version**: **DaVinci Resolve 21.0.4.5** (or later) — supported on both Free and Studio editions.
 
 1. Open **DaVinci Resolve** → **Preferences**.
 2. Go to **System** → **General**.

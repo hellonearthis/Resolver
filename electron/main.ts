@@ -622,9 +622,12 @@ ipcMain.handle('resolve-bridge-install', async () => {
 
 // WHAT: Pushes beat, onset, and loudness markers directly to Resolve's active timeline over HTTP.
 // WHY: Instant live synchronization without generating or manually executing Python scripts.
-ipcMain.handle('resolve-bridge-push-markers', async (_event, incoming_payload: { markers: MarkerPayloadItem[] }) => {
+ipcMain.handle('resolve-bridge-push-markers', async (_event, incoming_payload: { markers?: MarkerPayloadItem[] } | MarkerPayloadItem[]) => {
     const resolve_bridge_client = new ResolveBridgeClient();
-    return await resolve_bridge_client.pushMarkersToActiveTimeline(incoming_payload.markers || []);
+    const markers = Array.isArray(incoming_payload)
+        ? incoming_payload
+        : (incoming_payload?.markers || []);
+    return await resolve_bridge_client.pushMarkersToActiveTimeline(markers);
 });
 
 // WHAT: Directly imports audio and video files into DaVinci Resolve's active Media Pool.
@@ -1941,7 +1944,7 @@ ipcMain.handle('llm-benchmark', async () => {
         }
         const port = Number(loaded_config.llamaServerPort) || 8080;
         const llama_client = new LlamaServerClient(`http://127.0.0.1:${port}`);
-        let is_ready = await llama_client.discoverActiveLlamaServerModel();
+        const is_ready = await llama_client.discoverActiveLlamaServerModel();
         if (!is_ready) {
             const auto_start = await ensureLlamaServerRunning(port);
             if (!auto_start.success) {
