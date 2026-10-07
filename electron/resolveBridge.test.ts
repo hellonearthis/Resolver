@@ -10,15 +10,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import path from 'path';
 import fs from 'fs';
 import {
     getResolveUtilityScriptsDirectoryPath,
     isBridgeScriptInstalled,
     installBridgeScript,
-    ResolveBridgeClient,
-    DEFAULT_RESOLVER_BRIDGE_PORT,
-    DEFAULT_RESOLVER_BRIDGE_TOKEN
+    ResolveBridgeClient
 } from './resolveBridge';
 
 describe('electron/resolveBridge', () => {
@@ -258,7 +255,7 @@ describe('electron/resolveBridge', () => {
             });
 
             const result = await client.pushMarkersToActiveTimeline([
-                { frame: 0, timestamp: 0, color: 'blue', note: 'fail', type: 'beat' }
+                { frame: 0, timestamp: 0, color: 'blue', note: 'fail', type: 'beat', duration_sec: 0.1 }
             ]);
 
             expect(result.success).toBe(false);
@@ -363,14 +360,16 @@ describe('electron/resolveBridge', () => {
                     videoPath: 'C:/media/clip1.mp4',
                     startTime: 0,
                     endTime: 4.0,
-                    track: 1
+                    track: 1,
+                    label: 'Clip 1'
                 },
                 {
                     id: 'c2',
                     videoPath: 'C:/media/clip2.mp4',
                     startTime: 4.0,
                     endTime: 8.0,
-                    track: 2
+                    track: 2,
+                    label: 'Clip 2'
                 }
             ];
 
