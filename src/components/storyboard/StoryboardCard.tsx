@@ -291,7 +291,7 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
             style={{ padding: '5px', overflow: 'hidden' }}
         >
             {/* Header: Scene/Shot Info */}
-            <div className="px-4 py-3 bg-black/40 border-b border-gray-700/30 flex justify-between items-center shrink-0">
+            <div className="px-4 py-3 bg-black/40 border-b border-gray-700/30 flex justify-between items-center shrink-0 rounded-t-lg">
                 <div className="flex items-center gap-2">
                     <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest leading-none">Shot</span>
                     <input 
