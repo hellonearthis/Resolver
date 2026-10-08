@@ -350,5 +350,63 @@ describe('StoryboardModule', () => {
 
         unmount();
     });
+
+    it('divides card into 4 parts snapped to musical beats when beats exist', async () => {
+        const onUpdateProjectMock = vi.fn();
+        const projectWithBeats: BeatProject = {
+            ...mockProject,
+            markers: [
+                { id: 'b-1', timestamp: 0.95, label: 'Beat 1', type: 'beat' },
+                { id: 'b-2', timestamp: 2.05, label: 'Beat 2', type: 'beat' },
+                { id: 'b-3', timestamp: 3.02, label: 'Beat 3', type: 'beat' }
+            ]
+        };
+
+        const { unmount } = render(
+            <TooltipProvider>
+                <StoryboardModule
+                    activeProject={projectWithBeats}
+                    projects={[projectWithBeats]}
+                    onUpdateProject={onUpdateProjectMock}
+                />
+            </TooltipProvider>
+        );
+
+        const shot1Input = screen.getByDisplayValue('Shot 1');
+        const cardElement = shot1Input.closest('div[style*="overflow: hidden"]') || shot1Input;
+
+        fireEvent.contextMenu(cardElement, { clientX: 200, clientY: 200 });
+
+        expect(screen.getByText('Snap cuts to musical beats')).toBeTruthy();
+        expect(screen.getByText('3 beats')).toBeTruthy();
+
+        // Click "4 Parts"
+        const fourPartsBtn = screen.getByText('4 Parts');
+        fireEvent.click(fourPartsBtn);
+
+        expect(onUpdateProjectMock).toHaveBeenCalled();
+        const updateCall = onUpdateProjectMock.mock.calls[0];
+        const updatedClips = updateCall[1].clips as VideoClip[];
+
+        // Shot 1 divided into 4 pieces
+        expect(updatedClips.length).toBe(6); // 4 new + card-2 + card-3
+        expect(updatedClips[0].label).toBe('Shot 1A');
+        expect(updatedClips[1].label).toBe('Shot 1B');
+        expect(updatedClips[2].label).toBe('Shot 1C');
+        expect(updatedClips[3].label).toBe('Shot 1D');
+
+        // Snapped cuts at 0.95, 2.05, 3.02
+        expect(updatedClips[0].startTime).toBe(0);
+        expect(updatedClips[0].endTime).toBeCloseTo(0.95, 2);
+        expect(updatedClips[1].startTime).toBeCloseTo(0.95, 2);
+        expect(updatedClips[1].endTime).toBeCloseTo(2.05, 2);
+        expect(updatedClips[2].startTime).toBeCloseTo(2.05, 2);
+        expect(updatedClips[2].endTime).toBeCloseTo(3.02, 2);
+        expect(updatedClips[3].startTime).toBeCloseTo(3.02, 2);
+        expect(updatedClips[3].endTime).toBe(4.0);
+
+        unmount();
+    });
 });
+
 

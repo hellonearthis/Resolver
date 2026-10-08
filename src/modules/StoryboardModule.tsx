@@ -567,67 +567,109 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
         });
     };
 
-    // WHAT: Divides a card into N equal frame-aligned sections and replaces the original card in place.
+    // WHAT: Divides a card into N sections (or snapped to musical beats if cut points provided) and replaces the original card in place.
     // WHY: Allows directors to split a single overarching scene into smaller shots or cut points without disturbing subsequent clips.
-    const handleDivideCard = (cardToDivide: VideoClip, sectionsCount: number) => {
+    const handleDivideCard = (cardToDivide: VideoClip, sectionsCount: number, customCutPoints?: number[]) => {
         if (!activeProject || sectionsCount < 2) return;
         const timeline_frame_rate = activeProject.frameRate || 20;
         const total_duration = cardToDivide.duration || (cardToDivide.endTime - cardToDivide.startTime);
 
-        const total_frames = Math.round(total_duration * timeline_frame_rate);
-        if (total_frames < sectionsCount) {
-            setImportStatusMessage(`Cannot divide: Shot duration (${total_duration.toFixed(2)}s) is too short for ${sectionsCount} sections.`);
-            setTimeout(() => setImportStatusMessage(''), 4000);
-            return;
-        }
-
-        const base_frames = Math.floor(total_frames / sectionsCount);
-        const remainder_frames = total_frames % sectionsCount;
-
         const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
         const base_label = cardToDivide.label || 'Shot';
         const parent_notes = cardToDivide.notes || { action: '', dialogue: '', sound: '' };
-
         const new_clips: VideoClip[] = [];
-        let current_start_time = cardToDivide.startTime;
 
-        for (let i = 0; i < sectionsCount; i++) {
-            const part_frames = base_frames + (i < remainder_frames ? 1 : 0);
-            const part_duration = part_frames / timeline_frame_rate;
-            const part_end_time = current_start_time + part_duration;
+        if (customCutPoints && customCutPoints.length === sectionsCount - 1) {
+            const sorted_cuts = [...customCutPoints].sort((a, b) => a - b);
+            const cut_points = [cardToDivide.startTime, ...sorted_cuts, cardToDivide.endTime];
 
-            const sub_letter = i < alphabet.length ? alphabet[i] : String(i + 1);
-            let sub_label = `${base_label} (${i + 1}/${sectionsCount})`;
-            const digit_match = base_label.match(/^(.*?\d+)\s*$/);
-            if (digit_match) {
-                sub_label = `${digit_match[1]}${sub_letter}`;
+            for (let i = 0; i < cut_points.length - 1; i++) {
+                const start_t = cut_points[i];
+                const end_t = cut_points[i + 1];
+                const part_duration = Math.max(0.01, end_t - start_t);
+
+                const sub_letter = i < alphabet.length ? alphabet[i] : String(i + 1);
+                let sub_label = `${base_label} (${i + 1}/${sectionsCount})`;
+                const digit_match = base_label.match(/^(.*?\d+)\s*$/);
+                if (digit_match) {
+                    sub_label = `${digit_match[1]}${sub_letter}`;
+                }
+
+                const new_clip: VideoClip = {
+                    id: `card-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+                    startTime: start_t,
+                    duration: part_duration,
+                    endTime: end_t,
+                    track: cardToDivide.track || 1,
+                    status: 'pending',
+                    source: cardToDivide.source || 'main',
+                    label: sub_label,
+                    sceneNumber: cardToDivide.sceneNumber || '1',
+                    shotLetter: sub_letter,
+                    sectionId: cardToDivide.sectionId,
+                    sectionName: cardToDivide.sectionName,
+                    sectionType: cardToDivide.sectionType,
+                    paceWpm: cardToDivide.paceWpm || PacingBenchmarks.CONVERSATIONAL,
+                    startImagePath: i === 0 ? cardToDivide.startImagePath : undefined,
+                    startImageFunction: i === 0 ? cardToDivide.startImageFunction : undefined,
+                    endImagePath: i === sectionsCount - 1 ? cardToDivide.endImagePath : undefined,
+                    endImageFunction: i === sectionsCount - 1 ? cardToDivide.endImageFunction : undefined,
+                    actionDescription: i === 0 ? cardToDivide.actionDescription : '',
+                    notes: i === 0 ? { ...parent_notes } : { action: '', dialogue: '', sound: parent_notes.sound || '' }
+                };
+
+                new_clips.push(new_clip);
+            }
+        } else {
+            const total_frames = Math.round(total_duration * timeline_frame_rate);
+            if (total_frames < sectionsCount) {
+                setImportStatusMessage(`Cannot divide: Shot duration (${total_duration.toFixed(2)}s) is too short for ${sectionsCount} sections.`);
+                setTimeout(() => setImportStatusMessage(''), 4000);
+                return;
             }
 
-            const new_clip: VideoClip = {
-                id: `card-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
-                startTime: current_start_time,
-                duration: part_duration,
-                endTime: part_end_time,
-                track: cardToDivide.track || 1,
-                status: 'pending',
-                source: cardToDivide.source || 'main',
-                label: sub_label,
-                sceneNumber: cardToDivide.sceneNumber || '1',
-                shotLetter: sub_letter,
-                sectionId: cardToDivide.sectionId,
-                sectionName: cardToDivide.sectionName,
-                sectionType: cardToDivide.sectionType,
-                paceWpm: cardToDivide.paceWpm || PacingBenchmarks.CONVERSATIONAL,
-                startImagePath: i === 0 ? cardToDivide.startImagePath : undefined,
-                startImageFunction: i === 0 ? cardToDivide.startImageFunction : undefined,
-                endImagePath: i === sectionsCount - 1 ? cardToDivide.endImagePath : undefined,
-                endImageFunction: i === sectionsCount - 1 ? cardToDivide.endImageFunction : undefined,
-                actionDescription: i === 0 ? cardToDivide.actionDescription : '',
-                notes: i === 0 ? { ...parent_notes } : { action: '', dialogue: '', sound: parent_notes.sound || '' }
-            };
+            const base_frames = Math.floor(total_frames / sectionsCount);
+            const remainder_frames = total_frames % sectionsCount;
+            let current_start_time = cardToDivide.startTime;
 
-            new_clips.push(new_clip);
-            current_start_time = part_end_time;
+            for (let i = 0; i < sectionsCount; i++) {
+                const part_frames = base_frames + (i < remainder_frames ? 1 : 0);
+                const part_duration = part_frames / timeline_frame_rate;
+                const part_end_time = current_start_time + part_duration;
+
+                const sub_letter = i < alphabet.length ? alphabet[i] : String(i + 1);
+                let sub_label = `${base_label} (${i + 1}/${sectionsCount})`;
+                const digit_match = base_label.match(/^(.*?\d+)\s*$/);
+                if (digit_match) {
+                    sub_label = `${digit_match[1]}${sub_letter}`;
+                }
+
+                const new_clip: VideoClip = {
+                    id: `card-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+                    startTime: current_start_time,
+                    duration: part_duration,
+                    endTime: part_end_time,
+                    track: cardToDivide.track || 1,
+                    status: 'pending',
+                    source: cardToDivide.source || 'main',
+                    label: sub_label,
+                    sceneNumber: cardToDivide.sceneNumber || '1',
+                    shotLetter: sub_letter,
+                    sectionId: cardToDivide.sectionId,
+                    sectionName: cardToDivide.sectionName,
+                    sectionType: cardToDivide.sectionType,
+                    paceWpm: cardToDivide.paceWpm || PacingBenchmarks.CONVERSATIONAL,
+                    startImagePath: i === 0 ? cardToDivide.startImagePath : undefined,
+                    startImageFunction: i === 0 ? cardToDivide.startImageFunction : undefined,
+                    endImagePath: i === sectionsCount - 1 ? cardToDivide.endImagePath : undefined,
+                    endImageFunction: i === sectionsCount - 1 ? cardToDivide.endImageFunction : undefined,
+                    actionDescription: i === 0 ? cardToDivide.actionDescription : '',
+                    notes: i === 0 ? { ...parent_notes } : { action: '', dialogue: '', sound: parent_notes.sound || '' }
+                };
+
+                new_clips.push(new_clip);
+                current_start_time = part_end_time;
+            }
         }
 
         const current_clips_list = [...storyboard_cards];
@@ -636,7 +678,8 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
 
         current_clips_list.splice(target_clip_index, 1, ...new_clips);
         onUpdateProject(activeProject.id, { clips: current_clips_list });
-        setImportStatusMessage(`Divided "${cardToDivide.label}" into ${sectionsCount} sections (~${(total_duration / sectionsCount).toFixed(2)}s each)`);
+        const beatSnapNotice = customCutPoints && customCutPoints.length > 0 ? ' snapped to musical beats' : '';
+        setImportStatusMessage(`Divided "${cardToDivide.label}" into ${sectionsCount} sections${beatSnapNotice} (~${(total_duration / sectionsCount).toFixed(2)}s each)`);
         setTimeout(() => setImportStatusMessage(''), 4000);
         setContextMenu(null);
     };
@@ -644,7 +687,6 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
     // WHAT: Divides a card at musical beat timestamps occurring within its boundaries.
     const handleDivideCardAtBeats = (cardToDivide: VideoClip, beatTimestamps: number[]) => {
         if (!activeProject || beatTimestamps.length === 0) return;
-        const timeline_frame_rate = activeProject.frameRate || 20;
         const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
         const base_label = cardToDivide.label || 'Shot';
         const parent_notes = cardToDivide.notes || { action: '', dialogue: '', sound: '' };
@@ -656,8 +698,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
         for (let i = 0; i < cut_points.length - 1; i++) {
             const start_t = cut_points[i];
             const end_t = cut_points[i + 1];
-            const raw_dur = end_t - start_t;
-            const aligned_dur = getAlignedDuration(raw_dur, timeline_frame_rate);
+            const part_dur = Math.max(0.01, end_t - start_t);
             const sub_letter = i < alphabet.length ? alphabet[i] : String(i + 1);
 
             let sub_label = `${base_label} (${i + 1}/${cut_points.length - 1})`;
@@ -669,8 +710,8 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
             const new_clip: VideoClip = {
                 id: `card-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
                 startTime: start_t,
-                duration: aligned_dur,
-                endTime: start_t + aligned_dur,
+                duration: part_dur,
+                endTime: end_t,
                 track: cardToDivide.track || 1,
                 status: 'pending',
                 source: cardToDivide.source || 'main',
