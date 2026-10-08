@@ -1198,13 +1198,13 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                             </button>
                                         </div>
                                     ) : (
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                                        <div className="flex flex-col gap-3 w-full">
                                             {section_clips.map((clip) => {
                                                 const current_item_index = sorted_clips_chronological.findIndex(c => c.id === clip.id);
                                                 const previous_clip = sorted_clips_chronological[current_item_index - 1];
                                                 const following_clip = sorted_clips_chronological[current_item_index + 1];
                                                 return (
-                                                    <div key={clip.id} className="h-full">
+                                                    <div key={clip.id} className="w-full">
                                                         <StoryboardCardComponent 
                                                             card={clip}
                                                             frameRate={activeProject?.frameRate || 20}
@@ -1225,6 +1225,16 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                                     </div>
                                                 );
                                             })}
+
+                                            {/* Quick-add trailing button for this section in outline view */}
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddShotToSection(section)}
+                                                className="w-full py-2.5 border border-dashed border-gray-800 hover:border-indigo-500/50 rounded-xl bg-gray-900/20 hover:bg-indigo-950/20 text-gray-500 hover:text-indigo-300 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                                                title={`Append another shot to ${section.name}`}
+                                            >
+                                                <span>➕</span> Add Shot to {section.name}
+                                            </button>
                                         </div>
                                     )}
                                 </div>
@@ -1275,13 +1285,13 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                             </span>
                                         </div>
                                     </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                                    <div className="flex flex-col gap-3 w-full">
                                         {unassigned_clips.map((clip) => {
                                             const current_item_index = sorted_clips_chronological.findIndex(c => c.id === clip.id);
                                             const previous_clip = sorted_clips_chronological[current_item_index - 1];
                                             const following_clip = sorted_clips_chronological[current_item_index + 1];
                                             return (
-                                                <div key={clip.id} className="h-full">
+                                                <div key={clip.id} className="w-full">
                                                     <StoryboardCardComponent 
                                                         card={clip}
                                                         frameRate={activeProject?.frameRate || 20}

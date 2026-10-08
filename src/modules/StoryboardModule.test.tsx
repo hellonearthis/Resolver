@@ -118,6 +118,14 @@ describe('StoryboardModule', () => {
         expect(screen.getByDisplayValue('High energy strobe lights.')).toBeTruthy();
         expect(screen.getByDisplayValue('Solitary figure in amber light.')).toBeTruthy();
 
+        // Verify Outline view renders cards in full-width vertical list wrappers
+        const shot1Textarea = screen.getByDisplayValue('Rain-soaked cyan pavement.');
+        const cardRoot = shot1Textarea.closest('.group');
+        const cardOuterWrapper = cardRoot?.parentElement;
+        expect(cardOuterWrapper?.className).toContain('w-full');
+        const sectionListContainer = cardOuterWrapper?.parentElement;
+        expect(sectionListContainer?.className).toContain('flex-col');
+
         unmount();
     });
 
