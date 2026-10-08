@@ -185,5 +185,93 @@ describe('AnimaticTimeline', () => {
         fireEvent.click(divideButtons[0]);
         expect(onCardContextMenuMock).toHaveBeenCalledWith(expect.anything(), mockClips[0]);
     });
+
+    it('displays shot count badges on segments when segments contain multiple shots', () => {
+        const onSelectCardMock = vi.fn();
+
+        // 3 shots inside Verse 1
+        const multiShotClips: VideoClip[] = [
+            {
+                id: 'c-1',
+                startTime: 0,
+                duration: 4.0,
+                endTime: 4.0,
+                track: 1,
+                status: 'pending',
+                source: 'main',
+                label: 'Shot 1',
+                sectionName: 'Intro',
+                sectionType: 'intro'
+            },
+            {
+                id: 'c-2a',
+                startTime: 4.0,
+                duration: 2.0,
+                endTime: 6.0,
+                track: 1,
+                status: 'pending',
+                source: 'main',
+                label: 'Shot 2A',
+                sectionName: 'Verse 1',
+                sectionType: 'verse'
+            },
+            {
+                id: 'c-2b',
+                startTime: 6.0,
+                duration: 3.0,
+                endTime: 9.0,
+                track: 1,
+                status: 'pending',
+                source: 'main',
+                label: 'Shot 2B',
+                sectionName: 'Verse 1',
+                sectionType: 'verse'
+            },
+            {
+                id: 'c-2c',
+                startTime: 9.0,
+                duration: 3.0,
+                endTime: 12.0,
+                track: 1,
+                status: 'pending',
+                source: 'main',
+                label: 'Shot 2C',
+                sectionName: 'Verse 1',
+                sectionType: 'verse'
+            }
+        ];
+
+        const multiShotItems: StoryboardTimelineItem[] = multiShotClips.map(clip => ({
+            type: 'clip',
+            startTime: clip.startTime,
+            endTime: clip.endTime,
+            duration: clip.duration,
+            clip,
+            label: clip.label
+        }));
+
+        render(
+            <TooltipProvider>
+                <AnimaticTimeline
+                    items={multiShotItems}
+                    sections={mockSections}
+                    onSelectCard={onSelectCardMock}
+                />
+            </TooltipProvider>
+        );
+
+        // Header shows 4 Shots total
+        expect(screen.getByText('4 Shots')).toBeTruthy();
+
+        // Verse 1 button badge shows 3 shots
+        const verseBtn = screen.getByRole('button', { name: 'Verse 1' });
+        expect(verseBtn.textContent).toContain('3 shots');
+
+        // Verse 1 track block title shows 3 shots
+        const verseTrackItem = screen.getByTitle(/Verse 1 \(VERSE\) • 4.0s - 12.0s \(8.0s\) • 3 shots/);
+        expect(verseTrackItem).toBeTruthy();
+        expect(verseTrackItem.textContent).toContain('3 shots');
+    });
 });
+
 

@@ -104,6 +104,16 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
         container_element.scrollTo({ left: Math.max(0, target_pixel - 40), behavior: 'smooth' });
     };
 
+    const getShotsCountForSection = React.useCallback((sec: MusicSection) => {
+        return items.filter(
+            (it): it is TimelineClipItem => it.type === 'clip' && (
+                it.clip.sectionId === sec.id ||
+                it.clip.sectionName === sec.name ||
+                (!it.clip.sectionName && !it.clip.sectionId && it.clip.startTime >= sec.startTime && it.clip.startTime < sec.endTime)
+            )
+        ).length;
+    }, [items]);
+
     return (
         <div className={`flex flex-col h-full bg-[#050508] rounded-2xl border border-gray-800/80 overflow-hidden shadow-2xl ${className}`}>
             {/* Header / Stats & Segment Pills */}
@@ -120,7 +130,7 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
                         <>
                             <div className="h-3 w-px bg-gray-700" />
                             <span className="text-[11px] font-mono text-purple-300 flex items-center gap-1 font-semibold">
-                                <span>🎼</span> {displaySections.length} {displaySections.length === 1 ? 'Segment' : 'Segments'}
+                                <span>{displaySections.length} {displaySections.length === 1 ? 'Segment' : 'Segments'}</span>
                             </span>
                         </>
                     )}
@@ -131,21 +141,26 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
                     <div className="flex items-center gap-1.5 overflow-x-auto max-w-[55%] py-0.5">
                         {displaySections.map((sec) => {
                             const theme = SECTION_TYPE_COLOR_MAP[sec.type] || SECTION_TYPE_COLOR_MAP.verse;
+                            const count = getShotsCountForSection(sec);
                             return (
                                 <button
                                     key={sec.id}
                                     type="button"
+                                    aria-label={sec.name}
                                     onClick={() => scrollToTime(sec.startTime)}
-                                    className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border flex items-center gap-1 hover:brightness-125 transition-all shrink-0 cursor-pointer"
+                                    className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border flex items-center gap-1.5 hover:brightness-125 transition-all shrink-0 cursor-pointer"
                                     style={{
                                         backgroundColor: theme.background,
                                         borderColor: theme.border,
                                         color: theme.text
                                     }}
-                                    title={`Jump to ${sec.name} (${sec.startTime.toFixed(1)}s – ${sec.endTime.toFixed(1)}s)`}
+                                    title={`Jump to ${sec.name} (${count} shots • ${sec.startTime.toFixed(1)}s – ${sec.endTime.toFixed(1)}s)`}
                                 >
                                     <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: theme.border }} />
                                     <span>{sec.name}</span>
+                                    <span className="text-[8px] font-mono opacity-80 px-1 py-0.2 rounded bg-black/40">
+                                        {count} {count === 1 ? 'shot' : 'shots'}
+                                    </span>
                                 </button>
                             );
                         })}
@@ -197,6 +212,7 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
                                 const width = Math.max(30, (sec.endTime - sec.startTime) * 80);
                                 const theme = SECTION_TYPE_COLOR_MAP[sec.type] || SECTION_TYPE_COLOR_MAP.verse;
                                 const durationSec = (sec.endTime - sec.startTime).toFixed(1);
+                                const count = getShotsCountForSection(sec);
                                 return (
                                     <div
                                         key={sec.id}
@@ -210,12 +226,15 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
                                             borderLeft: `3px solid ${theme.border}`,
                                             boxShadow: `inset 0 1px 0 rgba(255,255,255,0.06)`
                                         }}
-                                        title={`${sec.name} (${sec.type.toUpperCase()}) • ${sec.startTime.toFixed(1)}s - ${sec.endTime.toFixed(1)}s (${durationSec}s)`}
+                                        title={`${sec.name} (${sec.type.toUpperCase()}) • ${sec.startTime.toFixed(1)}s - ${sec.endTime.toFixed(1)}s (${durationSec}s) • ${count} ${count === 1 ? 'shot' : 'shots'}`}
                                     >
                                         <div className="flex items-center gap-1.5 min-w-0 truncate">
                                             <span className="w-1.5 h-1.5 rounded-full shrink-0 shadow-sm" style={{ backgroundColor: theme.border }} />
                                             <span className="text-[10px] font-bold text-white tracking-wide truncate group-hover/sec:text-indigo-200">
                                                 {sec.name}
+                                            </span>
+                                            <span className="text-[8px] font-mono text-indigo-300 bg-black/60 px-1 py-0.2 rounded border border-white/10 shrink-0 font-medium leading-none">
+                                                {count} {count === 1 ? 'shot' : 'shots'}
                                             </span>
                                         </div>
                                         <div className="flex items-center gap-1 shrink-0 ml-1">
@@ -287,10 +306,14 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
                                                             stopPropagation: () => {}
                                                         } as React.MouseEvent, active_card);
                                                     }}
-                                                    className="opacity-0 group-hover:opacity-100 hover:scale-110 text-[9px] px-1 py-0.2 rounded bg-indigo-950/90 text-indigo-300 border border-indigo-500/40 transition-all cursor-pointer leading-none"
+                                                    className="opacity-0 group-hover:opacity-100 hover:scale-110 text-[9px] p-1 rounded bg-indigo-950/90 text-indigo-300 border border-indigo-500/40 transition-all cursor-pointer leading-none flex items-center justify-center"
                                                     title="Divide shot into smaller sections"
                                                 >
-                                                    ➗
+                                                    <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="currentColor">
+                                                        <circle cx="12" cy="5" r="2.5" />
+                                                        <rect x="4" y="11" width="16" height="2" rx="1" />
+                                                        <circle cx="12" cy="19" r="2.5" />
+                                                    </svg>
                                                 </button>
                                             )}
                                             <span className="text-[9px] text-indigo-500/70 font-mono">{(active_card.duration || 0).toFixed(1)}s</span>
@@ -306,7 +329,11 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
                                                 className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" 
                                             />
                                         ) : (
-                                            <span className="text-xl opacity-20">🖼️</span>
+                                            <svg className="w-6 h-6 text-gray-500 opacity-25" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                                <rect x="3" y="3" width="18" height="18" rx="2" />
+                                                <circle cx="8.5" cy="8.5" r="1.5" />
+                                                <path d="M21 15l-5-5L5 21" />
+                                            </svg>
                                         )}
                                     </div>
 
@@ -339,10 +366,12 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
                                                 click_event.stopPropagation();
                                                 onAddPadding?.(timeline_item.startTime, timeline_item.duration);
                                             }}
-                                            className="h-7 w-7 rounded-full bg-gray-900/50 text-gray-600 opacity-0 group-hover/gap:opacity-100 group-hover/gap:bg-indigo-900/20 group-hover/gap:text-indigo-400 transition-all flex items-center justify-center"
+                                            className="h-7 w-7 rounded-full bg-gray-900/50 text-gray-500 opacity-0 group-hover/gap:opacity-100 group-hover/gap:bg-indigo-900/20 group-hover/gap:text-indigo-400 transition-all flex items-center justify-center"
                                             title="Fill gap with new shot"
                                         >
-                                            <span className="text-xs">➕</span>
+                                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                                <path d="M12 5v14M5 12h14" />
+                                            </svg>
                                         </button>
                                     </div>
                                 </div>
@@ -404,8 +433,12 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
                                                 className="w-full h-full object-cover"
                                             />
                                         ) : (
-                                            <div className="w-full h-full flex items-center justify-center opacity-20">
-                                                <span>🖼️</span>
+                                            <div className="w-full h-full flex items-center justify-center opacity-25 text-gray-500">
+                                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                                                    <circle cx="8.5" cy="8.5" r="1.5" />
+                                                    <path d="M21 15l-5-5L5 21" />
+                                                </svg>
                                             </div>
                                         )}
                                     </div>
