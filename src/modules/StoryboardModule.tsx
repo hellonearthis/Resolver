@@ -12,11 +12,10 @@ import { PacingBenchmarks } from '../types/storyboard';
 import { getAlignedDuration } from '../utils/timelineUtils';
 import StoryboardCardComponent from '../components/storyboard/StoryboardCard';
 import AnimaticTimeline from '../components/storyboard/AnimaticTimeline';
-import StoryboardPaddingCard from '../components/storyboard/StoryboardPaddingCard';
 import StoryboardContextMenu from '../components/storyboard/StoryboardContextMenu';
 import type { BeatProject } from '../hooks/useProjectStorage';
 import { parseFountainScript } from '../services/fountainParser';
-import { SECTION_TYPE_COLOR_MAP } from '../types/sections';
+import { SECTION_TYPE_COLOR_MAP, type MusicSection } from '../types/sections';
 import { generateMusicVideoManifest } from '../services/manifestService';
 import { 
     evaluateProjectRevisions, 

@@ -27,11 +27,11 @@ describe('assemblerUtils', () => {
 
         it('filters out stem markers while retaining main track markers', () => {
             const markers: ProjectMarker[] = [
-                { timestamp: 0.5, type: 'beat', note: 'downbeat' },
-                { timestamp: 1.0, type: 'beat', note: 'drums' },
-                { timestamp: 1.5, type: 'beat', note: 'bass' },
-                { timestamp: 2.0, type: 'beat', note: 'grid' },
-                { timestamp: 2.5, type: 'onset', note: '' }
+                { timestamp: 0.5, frame: 12, color: '#3b82f6', duration_sec: 0, type: 'beat', note: 'downbeat' },
+                { timestamp: 1.0, frame: 24, color: '#3b82f6', duration_sec: 0, type: 'beat', note: 'drums' },
+                { timestamp: 1.5, frame: 36, color: '#3b82f6', duration_sec: 0, type: 'beat', note: 'bass' },
+                { timestamp: 2.0, frame: 48, color: '#3b82f6', duration_sec: 0, type: 'beat', note: 'grid' },
+                { timestamp: 2.5, frame: 60, color: '#3b82f6', duration_sec: 0, type: 'onset', note: '' }
             ];
 
             const result = extractMainMarkersFromProject(markers);
@@ -43,7 +43,7 @@ describe('assemblerUtils', () => {
 
         it('identifies downbeats by downbeat color', () => {
             const markers: ProjectMarker[] = [
-                { timestamp: 1.0, type: 'beat', color: MARKER_COLORS.downbeat }
+                { timestamp: 1.0, frame: 24, duration_sec: 0, note: '', type: 'beat', color: MARKER_COLORS.downbeat }
             ];
             const result = extractMainMarkersFromProject(markers);
             expect(result[0].isDownbeat).toBe(true);
@@ -108,8 +108,8 @@ describe('assemblerUtils', () => {
     describe('buildResolveSectionMarkers', () => {
         it('formats sections into chapter markers with correct resolve colors', () => {
             const sections: MusicSection[] = [
-                { id: '1', name: 'Intro', type: 'intro', startTime: 0, endTime: 10 },
-                { id: '2', name: 'Breakdown 1', type: 'breakdown', startTime: 10, endTime: 25 }
+                { id: '1', name: 'Intro', type: 'intro', startTime: 0, endTime: 10, color: '#10b981' },
+                { id: '2', name: 'Breakdown 1', type: 'breakdown', startTime: 10, endTime: 25, color: '#f59e0b' }
             ];
 
             const result = buildResolveSectionMarkers(sections, 30);

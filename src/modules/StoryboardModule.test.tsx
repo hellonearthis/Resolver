@@ -356,9 +356,9 @@ describe('StoryboardModule', () => {
         const projectWithBeats: BeatProject = {
             ...mockProject,
             markers: [
-                { id: 'b-1', timestamp: 0.95, label: 'Beat 1', type: 'beat' },
-                { id: 'b-2', timestamp: 2.05, label: 'Beat 2', type: 'beat' },
-                { id: 'b-3', timestamp: 3.02, label: 'Beat 3', type: 'beat' }
+                { timestamp: 0.95, frame: 23, color: '#3b82f6', note: 'Beat 1', type: 'beat', duration_sec: 0 },
+                { timestamp: 2.05, frame: 49, color: '#3b82f6', note: 'Beat 2', type: 'beat', duration_sec: 0 },
+                { timestamp: 3.02, frame: 72, color: '#3b82f6', note: 'Beat 3', type: 'beat', duration_sec: 0 }
             ]
         };
 
@@ -415,6 +415,9 @@ describe('StoryboardModule', () => {
             id: 'p-drift',
             name: 'Drifted Project',
             frameRate: 20,
+            stemType: 'vocals',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
             sections: [
                 { id: 's-intro', name: 'Intro', type: 'intro', startTime: 0, endTime: 41.0, color: '#10b981' },
                 { id: 's-verse', name: 'Verse 1', type: 'verse', startTime: 41.0, endTime: 114.0, color: '#3b82f6' }
@@ -480,6 +483,9 @@ describe('StoryboardModule', () => {
             id: 'p-multi',
             name: 'Multi Section Project',
             frameRate: 20,
+            stemType: 'vocals',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
             sections: [
                 { id: 's-intro', name: 'Intro', type: 'intro', startTime: 0, endTime: 20.0, color: '#10b981' },
                 { id: 's-verse', name: 'Verse 1', type: 'verse', startTime: 20.0, endTime: 40.0, color: '#3b82f6' }

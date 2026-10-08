@@ -27,7 +27,7 @@ import {
     type ComfyWorkflow
 } from '../services/comfyService';
 import workflowJsonTemplate from '../../comfyui_workflows/Extract_Stems.json';
-import { getValidMinimaxFrameCount, getAlignedDuration } from '../utils/timelineUtils';
+import { getAlignedDuration } from '../utils/timelineUtils';
 import type { BeatProject, ProjectMarker } from '../hooks/useProjectStorage';
 import ProjectTimelineTable from '../components/ProjectTimelineTable';
 import type { ImageFunction } from '../types/assembler';
@@ -81,7 +81,6 @@ interface WaveSurferRegionsPluginInstance {
     on: (event_name: string, callback_listener: (region_candidate: WaveSurferRegionLike) => void) => void;
 }
 
-export type { ResolveExportMarker, MarkerLegendTooltipItem } from '../utils/assemblerUtils';
 import {
     extractMainMarkersFromProject,
     buildResolveExportMarkers,
@@ -90,8 +89,11 @@ import {
     updateClipStartTime,
     updateClipEndTimeWithRipple,
     parseSrtSubtitlesToClips,
-    calculateMarkerLegendCounts
+    calculateMarkerLegendCounts,
+    type ResolveExportMarker,
+    type MarkerLegendTooltipItem
 } from '../utils/assemblerUtils';
+export type { ResolveExportMarker, MarkerLegendTooltipItem };
 
 // WHAT: Safely retrieves the Electron IPC bridge when executing in a desktop container.
 // WHY: Prevents browser errors during SSR and pure web execution while enabling native Resolve RPC.
@@ -1275,7 +1277,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                 source: 'main',
                 label: section_item.name || `${section_item.type.toUpperCase()} ${section_index + 1}`,
                 notes: {
-                    action: `${section_item.name} (${section_item.type.toUpperCase()}) - ${section_item.energyLevel > 0.6 ? 'High Energy' : 'Moderate Energy'}`,
+                    action: `${section_item.name} (${section_item.type.toUpperCase()}) - ${(section_item.energyLevel ?? 0) > 0.6 ? 'High Energy' : 'Moderate Energy'}`,
                     dialogue: '',
                     sound: ''
                 }
@@ -3597,7 +3599,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
                                     onPickImage={handlePickImage}
                                     onUpdateClipRole={handleUpdateClipRole}
                                     onGenerateClip={onGenerateVideo || (() => {})}
-                                    onError={(error_message_string) => onStatusChange?.(error_message_string)}
+                                    onError={(error_message_string: string) => onStatusChange?.(error_message_string)}
                                 />
                             </div>
 

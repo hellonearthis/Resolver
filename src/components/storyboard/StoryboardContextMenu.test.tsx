@@ -15,8 +15,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import StoryboardContextMenu, {
     calculateBeatIntervalCutPoints,
-    calculateSnappedBeatCutPoints,
-    BEAT_INTERVALS
+    calculateSnappedBeatCutPoints
 } from './StoryboardContextMenu';
 import type { VideoClip } from '../../types/assembler';
 

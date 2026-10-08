@@ -22,7 +22,6 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
     onSelectCard, 
     onCardContextMenu,
     onAddPadding, 
-    compact = false, 
     className = "" 
 }) => {
     const scrollContainerRef = React.useRef<HTMLDivElement>(null);
