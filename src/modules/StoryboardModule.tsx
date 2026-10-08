@@ -1120,7 +1120,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
             {/* Toolbar */}
             <div className="p-6 border-b border-gray-800/50 flex justify-between items-center bg-[#0d0d15]">
                 <div className="flex items-center gap-6">
-                    <div>
+                    <div className="mr-2">
                         <h2 className="text-2xl font-bold flex items-center gap-2">
                              <svg className="w-6 h-6 text-indigo-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                  <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
