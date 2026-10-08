@@ -1152,185 +1152,194 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                    {/* View Mode Toggle: Outline vs Flat Grid */}
-                    <div className="flex items-center bg-[#181825] border border-gray-800 rounded-lg p-0.5 text-xs">
-                        <button
-                            onClick={() => setViewMode('outline')}
-                            className={`px-2.5 py-1 rounded font-semibold transition-all flex items-center gap-1.5 ${viewMode === 'outline' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
-                            title="Group cards by musical section outline"
+                <div className="flex flex-col gap-2.5 items-end">
+                    {/* Row 1: View Controls & Primary Actions */}
+                    <div className="flex items-center gap-2">
+                        {/* View Mode Toggle: Outline vs Flat Grid */}
+                        <div className="flex items-center bg-[#181825] border border-gray-800 rounded-lg p-0.5 text-xs">
+                            <button
+                                onClick={() => setViewMode('outline')}
+                                className={`px-2.5 py-1 rounded font-semibold transition-all flex items-center gap-1.5 ${viewMode === 'outline' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+                                title="Group cards by musical section outline"
+                            >
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="8" y1="6" x2="21" y2="6" />
+                                    <line x1="8" y1="12" x2="21" y2="12" />
+                                    <line x1="8" y1="18" x2="21" y2="18" />
+                                    <circle cx="4" cy="6" r="1" fill="currentColor" />
+                                    <circle cx="4" cy="12" r="1" fill="currentColor" />
+                                    <circle cx="4" cy="18" r="1" fill="currentColor" />
+                                </svg>
+                                <span>Outline</span>
+                            </button>
+                            <button
+                                onClick={() => setViewMode('grid')}
+                                className={`px-2.5 py-1 rounded font-semibold transition-all flex items-center gap-1.5 ${viewMode === 'grid' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
+                                title="Flat storyboard grid view"
+                            >
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                                    <rect x="14" y="14" width="7" height="7" rx="1" />
+                                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                                </svg>
+                                <span>Grid</span>
+                            </button>
+                        </div>
+
+                        {/* Align Shots with Song Sections */}
+                        {activeProject?.sections && activeProject.sections.length > 0 && (
+                            <button
+                                onClick={handleResyncClipsWithSections}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181825] hover:bg-gray-800 text-cyan-300 border border-cyan-800/50 hover:border-cyan-500/60 rounded-lg transition-all text-xs font-semibold cursor-pointer"
+                                title="Realign all shot cards so their start times match song section boundaries"
+                            >
+                                <svg className="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="21" y1="6" x2="3" y2="6" />
+                                    <line x1="21" y1="12" x2="9" y2="12" />
+                                    <line x1="21" y1="18" x2="7" y2="18" />
+                                </svg>
+                                <span>Align with Sections</span>
+                            </button>
+                        )}
+
+                        {/* Queue Changed & New Shots for Generation */}
+                        {onGenerateVideo && (
+                            <button 
+                                onClick={handleQueueChangedShots}
+                                disabled={generationPlan.clipsToGenerate.length === 0}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-950/60 hover:bg-amber-900/80 disabled:opacity-40 text-amber-300 border border-amber-700/50 hover:border-amber-500 rounded-lg transition-all text-xs font-semibold"
+                                title={`Queue only ${generationPlan.clipsToGenerate.length} changed or new shots for ComfyUI generation (skipping ${generationPlan.skippedClips.length} clean shots)`}
+                            >
+                                <svg className="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                                </svg>
+                                <span>Queue Changed ({generationPlan.clipsToGenerate.length})</span>
+                            </button>
+                        )}
+
+                        {/* Add Shot Button */}
+                        <button 
+                            onClick={handleAppendShot}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow-md shadow-indigo-600/20 transition-all text-xs font-semibold"
+                            title="Append a new blank shot card to the end of this storyboard"
                         >
-                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <line x1="8" y1="6" x2="21" y2="6" />
-                                <line x1="8" y1="12" x2="21" y2="12" />
-                                <line x1="8" y1="18" x2="21" y2="18" />
-                                <circle cx="4" cy="6" r="1" fill="currentColor" />
-                                <circle cx="4" cy="12" r="1" fill="currentColor" />
-                                <circle cx="4" cy="18" r="1" fill="currentColor" />
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
                             </svg>
-                            <span>Outline</span>
+                            <span>Add Shot</span>
                         </button>
-                        <button
-                            onClick={() => setViewMode('grid')}
-                            className={`px-2.5 py-1 rounded font-semibold transition-all flex items-center gap-1.5 ${viewMode === 'grid' ? 'bg-indigo-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}
-                            title="Flat storyboard grid view"
-                        >
-                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <rect x="3" y="3" width="7" height="7" rx="1" />
-                                <rect x="14" y="3" width="7" height="7" rx="1" />
-                                <rect x="14" y="14" width="7" height="7" rx="1" />
-                                <rect x="3" y="14" width="7" height="7" rx="1" />
-                            </svg>
-                            <span>Grid</span>
-                        </button>
+
+                        {/* Quick New Storyboard Button */}
+                        {onCreateBlankProject && (
+                            <button
+                                onClick={async () => {
+                                    const requested_storyboard_title = window.prompt('Enter name for new storyboard:');
+                                    if (requested_storyboard_title !== null) {
+                                        await onCreateBlankProject(requested_storyboard_title.trim() || undefined);
+                                    }
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded-lg border border-gray-700/60 transition-all text-xs font-medium"
+                                title="Create another new storyboard"
+                            >
+                                <svg className="w-3.5 h-3.5 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                </svg>
+                                <span>New Storyboard</span>
+                            </button>
+                        )}
                     </div>
 
-                    {/* Hidden Fountain File Input */}
-                    <input 
-                        ref={fountainFileInputRef}
-                        type="file"
-                        accept=".fountain,.txt"
-                        className="hidden"
-                        onChange={handleFountainFileChange}
-                    />
+                    {/* Row 2: Pipeline, Screenplay & External Integrations */}
+                    <div className="flex items-center gap-2">
+                        {/* Hidden Fountain File Input */}
+                        <input 
+                            ref={fountainFileInputRef}
+                            type="file"
+                            accept=".fountain,.txt"
+                            className="hidden"
+                            onChange={handleFountainFileChange}
+                        />
 
-                    {/* Populate from Sections Button */}
-                    {activeProject?.sections && activeProject.sections.length > 0 && raw_storyboard_cards.length === 0 && (
+                        {/* Populate from Sections Button */}
+                        {activeProject?.sections && activeProject.sections.length > 0 && raw_storyboard_cards.length === 0 && (
+                            <button 
+                                onClick={handlePopulateShotsFromSections}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/50 hover:border-emerald-500 rounded-lg transition-all text-xs font-semibold"
+                                title={`Create storyboard cards for each of the ${activeProject.sections.length} detected song sections`}
+                            >
+                                <svg className="w-3.5 h-3.5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                                </svg>
+                                <span>Populate from Sections ({activeProject.sections.length})</span>
+                            </button>
+                        )}
+
+                        {/* Import Fountain Screenplay Button */}
                         <button 
-                            onClick={handlePopulateShotsFromSections}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/50 hover:border-emerald-500 rounded-lg transition-all text-xs font-semibold"
-                            title={`Create storyboard cards for each of the ${activeProject.sections.length} detected song sections`}
+                            onClick={handleImportFountainClick}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 border border-indigo-700/50 hover:border-indigo-500 rounded-lg transition-all text-xs font-semibold"
+                            title="Import scenes, sections, and synopses from a Fountain screenplay file"
                         >
-                            <svg className="w-3.5 h-3.5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                            <svg className="w-3.5 h-3.5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                                <line x1="16" y1="13" x2="8" y2="13" />
+                                <line x1="16" y1="17" x2="8" y2="17" />
                             </svg>
-                            <span>Populate from Sections ({activeProject.sections.length})</span>
+                            <span>Import Fountain</span>
                         </button>
-                    )}
 
-                    {/* Import Fountain Screenplay Button */}
-                    <button 
-                        onClick={handleImportFountainClick}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 border border-indigo-700/50 hover:border-indigo-500 rounded-lg transition-all text-xs font-semibold"
-                        title="Import scenes, sections, and synopses from a Fountain screenplay file"
-                    >
-                        <svg className="w-3.5 h-3.5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                            <polyline points="14 2 14 8 20 8" />
-                            <line x1="16" y1="13" x2="8" y2="13" />
-                            <line x1="16" y1="17" x2="8" y2="17" />
-                        </svg>
-                        <span>Import Fountain</span>
-                    </button>
-
-                    {/* Export Manifest Button */}
-                    <button 
-                        onClick={handleExportManifest}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181825] hover:bg-gray-800 text-indigo-300 border border-gray-700/60 hover:border-indigo-500/50 rounded-lg transition-all text-xs font-semibold"
-                        title="Export music_video_manifest.json with stable clip IDs for DaVinci Resolve timeline assembly"
-                    >
-                        <svg className="w-3.5 h-3.5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="7 10 12 15 17 10" />
-                            <line x1="12" y1="15" x2="12" y2="3" />
-                        </svg>
-                        <span>Export Manifest</span>
-                    </button>
-
-                    {/* Push Revision Markers to DaVinci Resolve */}
-                    <button 
-                        onClick={handlePushRevisionMarkers}
-                        disabled={isPushingMarkers || storyboard_cards.length === 0}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181825] hover:bg-gray-800 disabled:opacity-50 text-indigo-300 border border-gray-700/60 hover:border-indigo-500/50 rounded-lg transition-all text-xs font-semibold"
-                        title="Push colored revision markers (Cyan: new, Yellow: changed, Green: clean) to DaVinci Resolve active timeline"
-                    >
-                        <svg className="w-3.5 h-3.5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-                            <circle cx="12" cy="10" r="3" />
-                        </svg>
-                        <span>{isPushingMarkers ? 'Pushing...' : 'Push Markers'}</span>
-                    </button>
-
-                    {/* Queue Changed & New Shots for Generation */}
-                    {onGenerateVideo && (
+                        {/* Export Manifest Button */}
                         <button 
-                            onClick={handleQueueChangedShots}
-                            disabled={generationPlan.clipsToGenerate.length === 0}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-950/60 hover:bg-amber-900/80 disabled:opacity-40 text-amber-300 border border-amber-700/50 hover:border-amber-500 rounded-lg transition-all text-xs font-semibold"
-                            title={`Queue only ${generationPlan.clipsToGenerate.length} changed or new shots for ComfyUI generation (skipping ${generationPlan.skippedClips.length} clean shots)`}
+                            onClick={handleExportManifest}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181825] hover:bg-gray-800 text-indigo-300 border border-gray-700/60 hover:border-indigo-500/50 rounded-lg transition-all text-xs font-semibold"
+                            title="Export music_video_manifest.json with stable clip IDs for DaVinci Resolve timeline assembly"
                         >
-                            <svg className="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                            <svg className="w-3.5 h-3.5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
                             </svg>
-                            <span>Queue Changed ({generationPlan.clipsToGenerate.length})</span>
+                            <span>Export Manifest</span>
                         </button>
-                    )}
 
-                    {/* Align Shots with Song Sections */}
-                    {activeProject?.sections && activeProject.sections.length > 0 && (
-                        <button
-                            onClick={handleResyncClipsWithSections}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181825] hover:bg-gray-800 text-cyan-300 border border-cyan-800/50 hover:border-cyan-500/60 rounded-lg transition-all text-xs font-semibold cursor-pointer"
-                            title="Realign all shot cards so their start times match song section boundaries"
+                        {/* Push Revision Markers to DaVinci Resolve */}
+                        <button 
+                            onClick={handlePushRevisionMarkers}
+                            disabled={isPushingMarkers || storyboard_cards.length === 0}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181825] hover:bg-gray-800 disabled:opacity-50 text-indigo-300 border border-gray-700/60 hover:border-indigo-500/50 rounded-lg transition-all text-xs font-semibold"
+                            title="Push colored revision markers (Cyan: new, Yellow: changed, Green: clean) to DaVinci Resolve active timeline"
                         >
-                            <svg className="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <line x1="21" y1="6" x2="3" y2="6" />
-                                <line x1="21" y1="12" x2="9" y2="12" />
-                                <line x1="21" y1="18" x2="7" y2="18" />
+                            <svg className="w-3.5 h-3.5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                                <circle cx="12" cy="10" r="3" />
                             </svg>
-                            <span>Align with Sections</span>
+                            <span>{isPushingMarkers ? 'Pushing...' : 'Push Markers'}</span>
                         </button>
-                    )}
 
-                    {/* Add Shot Button */}
-                    <button 
-                        onClick={handleAppendShot}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow-md shadow-indigo-600/20 transition-all text-xs font-semibold"
-                        title="Append a new blank shot card to the end of this storyboard"
-                    >
-                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                            <line x1="12" y1="5" x2="12" y2="19" />
-                            <line x1="5" y1="12" x2="19" y2="12" />
-                        </svg>
-                        <span>Add Shot</span>
-                    </button>
-
-                    {/* Quick New Storyboard Button */}
-                    {onCreateBlankProject && (
-                        <button
-                            onClick={async () => {
-                                const requested_storyboard_title = window.prompt('Enter name for new storyboard:');
-                                if (requested_storyboard_title !== null) {
-                                    await onCreateBlankProject(requested_storyboard_title.trim() || undefined);
-                                }
-                            }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded-lg border border-gray-700/60 transition-all text-xs font-medium"
-                            title="Create another new storyboard"
+                        {/* Sync Videos Button */}
+                        <button 
+                            onClick={handleSyncGeneratedVideos}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-lg border border-indigo-500/30 transition-all text-[10px] font-bold uppercase tracking-widest"
                         >
-                            <svg className="w-3.5 h-3.5 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="23 4 23 10 17 10" />
+                                <polyline points="1 20 1 14 7 14" />
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                             </svg>
-                            <span>New Storyboard</span>
+                            <span>Sync Videos</span>
                         </button>
-                    )}
 
-                    <button 
-                        onClick={handleSyncGeneratedVideos}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-lg border border-indigo-500/30 transition-all text-[10px] font-bold uppercase tracking-widest"
-                    >
-                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="23 4 23 10 17 10" />
-                            <polyline points="1 20 1 14 7 14" />
-                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                        </svg>
-                        <span>Sync Videos</span>
-                    </button>
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-black/40 rounded-lg border border-gray-800/50">
-                        <div className={`w-2 h-2 rounded-full ${comfyConnected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'}`}></div>
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none">
-                            {comfyConnected ? 'Comfy Connected' : 'Comfy Offline'}
-                        </span>
+                        {/* Comfy Status Badge */}
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-black/40 rounded-lg border border-gray-800/50">
+                            <div className={`w-2 h-2 rounded-full ${comfyConnected ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'}`}></div>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none">
+                                {comfyConnected ? 'Comfy Connected' : 'Comfy Offline'}
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>
