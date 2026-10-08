@@ -92,6 +92,8 @@ interface StoryboardModuleProps {
     onRewordPrompt?: (clip_identifier: string) => Promise<void>;
     llmProvider?: 'llama-server' | 'vino';
     comfyConnected?: boolean;
+    showQueue?: boolean;
+    onToggleQueue?: () => void;
 }
 
 const StoryboardModule: React.FC<StoryboardModuleProps> = ({ 
@@ -107,7 +109,9 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
     onGetImageDescription,
     onRewordPrompt,
     llmProvider,
-    comfyConnected
+    comfyConnected,
+    showQueue = true,
+    onToggleQueue
 }) => {
     const [, setSelectedCardId] = useState<string | null>(null);
     const [newStoryboardTitleInput, setNewStoryboardTitleInput] = useState<string>('');
@@ -1248,6 +1252,25 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                                 </svg>
                                 <span>New Storyboard</span>
+                            </button>
+                        )}
+
+                        {/* Toggle Generation Queue Panel */}
+                        {onToggleQueue && (
+                            <button
+                                onClick={onToggleQueue}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all cursor-pointer ${
+                                    showQueue
+                                        ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/50 hover:bg-indigo-600/30 shadow-sm'
+                                        : 'bg-[#181825] text-gray-400 border-gray-700/60 hover:text-white hover:border-gray-500'
+                                }`}
+                                title={showQueue ? "Hide Generation Queue Panel (W-80 sidebar)" : "Show Generation Queue Panel (W-80 sidebar)"}
+                            >
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                                    <line x1="15" y1="3" x2="15" y2="21" />
+                                </svg>
+                                <span>{showQueue ? 'Hide Queue' : 'Show Queue'}</span>
                             </button>
                         )}
                     </div>

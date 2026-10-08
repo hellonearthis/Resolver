@@ -556,6 +556,47 @@ describe('StoryboardModule', () => {
 
         unmount();
     });
+
+    it('toggles the generation queue panel via toolbar Hide/Show Queue button', () => {
+        const handleUpdate = vi.fn();
+        const handleToggleQueue = vi.fn();
+
+        const { unmount, rerender } = render(
+            <TooltipProvider>
+                <StoryboardModule
+                    activeProject={mockProject}
+                    projects={[mockProject]}
+                    onUpdateProject={handleUpdate}
+                    showQueue={true}
+                    onToggleQueue={handleToggleQueue}
+                />
+            </TooltipProvider>
+        );
+
+        // When queue is shown, button should say Hide Queue
+        const hideQueueBtn = screen.getByRole('button', { name: /Hide Queue/i });
+        expect(hideQueueBtn).toBeTruthy();
+
+        fireEvent.click(hideQueueBtn);
+        expect(handleToggleQueue).toHaveBeenCalledTimes(1);
+
+        // When queue is hidden, button should say Show Queue
+        rerender(
+            <TooltipProvider>
+                <StoryboardModule
+                    activeProject={mockProject}
+                    projects={[mockProject]}
+                    onUpdateProject={handleUpdate}
+                    showQueue={false}
+                    onToggleQueue={handleToggleQueue}
+                />
+            </TooltipProvider>
+        );
+
+        expect(screen.getByRole('button', { name: /Show Queue/i })).toBeTruthy();
+
+        unmount();
+    });
 });
 
 

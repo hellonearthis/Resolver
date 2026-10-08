@@ -1232,6 +1232,8 @@ function App() {
             onRewordPrompt={handleRewordPrompt}
             llmProvider={llmProvider}
             comfyConnected={comfyConnected}
+            showQueue={panelVisibility.showQueue}
+            onToggleQueue={() => toggleVisibility('showQueue')}
           />
         );
       case 'music-video-assembler':
