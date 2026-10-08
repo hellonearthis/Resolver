@@ -32,6 +32,7 @@ interface CardProps {
     llmProvider?: 'llama-server' | 'vino';
     comfyConnected?: boolean;
     frameRate?: number;
+    onContextMenu?: (event: React.MouseEvent, card: VideoClip) => void;
 }
 
 const StoryboardCardComponent: React.FC<CardProps> = ({ 
@@ -48,7 +49,8 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
     prevClipEndImage,
     llmProvider,
     comfyConnected,
-    frameRate = 20
+    frameRate = 20,
+    onContextMenu
 }) => {
     const [isHovered, setIsHovered] = React.useState(false);
     const [isStartPopoverOpen, setIsStartPopoverOpen] = React.useState(false);
@@ -273,6 +275,12 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
             ref={cardRef}
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
+            onContextMenu={(event) => {
+                if (onContextMenu) {
+                    event.preventDefault();
+                    onContextMenu(event, card);
+                }
+            }}
             className={`border rounded-xl shadow-2xl transition-all group flex flex-col h-full ${
                 card.isMuted
                     ? 'bg-[#121222]/80 opacity-70 border-dashed border-gray-600 hover:opacity-90'
@@ -321,6 +329,33 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                             {card.revisionState === 'new' ? '🔵 New' : card.revisionState === 'changed' ? '🟡 Changed' : '🟢 Clean'}
                         </span>
                     )}
+
+                    <AppTooltip content="Divide this shot into smaller sections (or right-click anywhere on the card)" placement="top" offset={[0, 48]}>
+                        <span>
+                            <button
+                                type="button"
+                                onClick={(click_event) => {
+                                    click_event.stopPropagation();
+                                    if (onContextMenu) {
+                                        const target_rect = click_event.currentTarget.getBoundingClientRect();
+                                        onContextMenu(
+                                            {
+                                                clientX: target_rect.left,
+                                                clientY: target_rect.bottom + 8,
+                                                preventDefault: () => {},
+                                                stopPropagation: () => {}
+                                            } as React.MouseEvent,
+                                            card
+                                        );
+                                    }
+                                }}
+                                className="text-xs px-1.5 py-0.5 rounded transition-all text-indigo-400 hover:text-white bg-indigo-950/40 hover:bg-indigo-600/50 border border-indigo-500/30 hover:border-indigo-400 cursor-pointer flex items-center gap-1 font-bold"
+                                title="Divide shot into smaller sections"
+                            >
+                                <span>➗</span>
+                            </button>
+                        </span>
+                    </AppTooltip>
 
                     <AppTooltip content={card.isMuted ? "Unmute this take (include in assembly & batch queue)" : "Mute this take (mark as boneyard alternate take)"} placement="top" offset={[0, 48]}>
                         <span>
@@ -593,16 +628,14 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                             <textarea 
                                 className={`w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden ${card.isDescribing && (card.isDescribingSlot === 'startImagePath' || !card.isDescribingSlot) ? 'opacity-50' : ''}`}
                                 style={{ height: `${Math.min(200, Math.max(60, getTextHeight(card.actionDescription || card.startImageDescription || '', assumedWidth) + 16))}px` }}
-                                title="Right-click to open large editor"
+                                title="Double-click to open large editor, or right-click to divide shot"
                                 placeholder={`AI generated ${startConfig.displayName.toLowerCase()} description will appear here...`}
                                 value={card.actionDescription || card.startImageDescription || ''}
                                 onChange={(input_event) => onUpdate(card.id, { 
                                     actionDescription: input_event.target.value,
                                     startImageDescription: input_event.target.value
                                 })}
-                                onContextMenu={(context_menu_event) => {
-                                    context_menu_event.preventDefault();
-                                    context_menu_event.stopPropagation();
+                                onDoubleClick={() => {
                                     setEditorConfig({
                                         title: `Edit ${startConfig.displayName} Description`,
                                         initialValue: card.actionDescription || card.startImageDescription || '',
@@ -618,13 +651,11 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                             <textarea 
                                 className={`w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden ${card.isDescribing && card.isDescribingSlot === 'endImagePath' ? 'opacity-50' : ''}`}
                                 style={{ height: `${Math.min(200, Math.max(60, getTextHeight(card.endImageDescription || '', assumedWidth) + 16))}px` }}
-                                title="Right-click to open large editor"
+                                title="Double-click to open large editor, or right-click to divide shot"
                                 placeholder={`AI generated ${endConfig.displayName.toLowerCase()} description will appear here...`}
                                 value={card.endImageDescription || ''}
                                 onChange={(input_event) => onUpdate(card.id, { endImageDescription: input_event.target.value })}
-                                onContextMenu={(context_menu_event) => {
-                                    context_menu_event.preventDefault();
-                                    context_menu_event.stopPropagation();
+                                onDoubleClick={() => {
                                     setEditorConfig({
                                         title: `Edit ${endConfig.displayName} Description`,
                                         initialValue: card.endImageDescription || '',
@@ -693,15 +724,13 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                     <textarea 
                         className="w-full bg-black/20 border-none rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-indigo-500/30 p-2 leading-relaxed overflow-hidden"
                         style={{ height: `${Math.min(200, Math.max(60, getTextHeight(actionPromptValue, assumedWidth) + 16))}px` }}
-                        title="Right-click to open large editor"
+                        title="Double-click to open large editor, or right-click to divide shot"
                         placeholder="Describe the clip action for video generation..."
                         value={actionPromptValue}
                         onChange={(input_event) => onUpdate(card.id, { 
                             notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), action: input_event.target.value } 
                         })}
-                        onContextMenu={(context_menu_event) => {
-                            context_menu_event.preventDefault();
-                            context_menu_event.stopPropagation();
+                        onDoubleClick={() => {
                             setEditorConfig({
                                 title: "Edit Clip Action",
                                 initialValue: actionPromptValue,
@@ -740,13 +769,11 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         <textarea 
                             className={`w-full bg-purple-900/5 border border-purple-500/10 rounded-lg text-[12px] text-gray-300 min-h-[60px] resize-none focus:ring-1 focus:ring-purple-500/30 p-2 leading-relaxed overflow-hidden ${card.isExpanding ? 'opacity-50' : ''} ${card.expandedPromptLocked ? 'border-amber-500/20 bg-amber-900/5' : ''}`}
                             style={{ height: `${Math.min(250, Math.max(80, getTextHeight(card.aiExpandedPrompt || '', assumedWidth) + 16))}px` }}
-                            title="Right-click to open large editor"
+                            title="Double-click to open large editor, or right-click to divide shot"
                             placeholder="Rich cinematic expansion will appear here..."
                             value={card.aiExpandedPrompt || ''}
                             onChange={(input_event) => onUpdate(card.id, { aiExpandedPrompt: input_event.target.value })}
-                            onContextMenu={(context_menu_event) => {
-                                context_menu_event.preventDefault();
-                                context_menu_event.stopPropagation();
+                            onDoubleClick={() => {
                                 setEditorConfig({
                                     title: "Edit AI Expanded Prompt",
                                     initialValue: card.aiExpandedPrompt || '',
@@ -773,15 +800,13 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Dialogue</label>
                         <input 
                             className="w-full bg-black/20 border-none rounded-lg text-xs text-indigo-300 focus:ring-1 focus:ring-indigo-500/30 p-2"
-                            title="Right-click to open large editor"
+                            title="Double-click to open large editor, or right-click to divide shot"
                             placeholder="..." 
                             value={dialogueValue}
                             onChange={(input_event) => onUpdate(card.id, { 
                                 notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), dialogue: input_event.target.value } 
                             })}
-                            onContextMenu={(context_menu_event) => {
-                                context_menu_event.preventDefault();
-                                context_menu_event.stopPropagation();
+                            onDoubleClick={() => {
                                 setEditorConfig({
                                     title: "Edit Dialogue",
                                     initialValue: dialogueValue,
@@ -797,15 +822,13 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                         <label className="text-[9px] font-bold text-gray-600 uppercase tracking-widest pl-1">Sound Cues</label>
                         <input 
                             className="w-full bg-black/20 border-none rounded-lg text-xs text-amber-500/80 focus:ring-1 focus:ring-indigo-500/30 p-2"
-                            title="Right-click to open large editor"
+                            title="Double-click to open large editor, or right-click to divide shot"
                             placeholder="..." 
                             value={soundValue}
                             onChange={(input_event) => onUpdate(card.id, { 
                                 notes: { ...(card.notes || { action: '', dialogue: '', sound: '' }), sound: input_event.target.value } 
                             })}
-                            onContextMenu={(context_menu_event) => {
-                                context_menu_event.preventDefault();
-                                context_menu_event.stopPropagation();
+                            onDoubleClick={() => {
                                 setEditorConfig({
                                     title: "Edit Sound Cues",
                                     initialValue: soundValue,

@@ -211,4 +211,53 @@ describe('StoryboardCard', () => {
         expect(secondCall[0]).toBe('card-101');
         expect(secondCall[1].duration).toBeLessThan(baseMockCard.duration);
     });
+
+    it('triggers onContextMenu when right-clicking anywhere on the card', () => {
+        const onContextMenuMock = vi.fn();
+
+        const { container } = render(
+            <TooltipProvider>
+                <StoryboardCard card={baseMockCard} onUpdate={vi.fn()} onDelete={vi.fn()} onContextMenu={onContextMenuMock} />
+            </TooltipProvider>
+        );
+
+        const cardElement = container.querySelector('.rounded-xl')!;
+        expect(cardElement).toBeTruthy();
+
+        fireEvent.contextMenu(cardElement);
+        expect(onContextMenuMock).toHaveBeenCalledWith(expect.anything(), baseMockCard);
+    });
+
+    it('triggers onContextMenu when clicking the ➗ divide button in the card header', () => {
+        const onContextMenuMock = vi.fn();
+
+        render(
+            <TooltipProvider>
+                <StoryboardCard card={baseMockCard} onUpdate={vi.fn()} onDelete={vi.fn()} onContextMenu={onContextMenuMock} />
+            </TooltipProvider>
+        );
+
+        const divideButton = screen.getByTitle('Divide shot into smaller sections');
+        expect(divideButton).toBeTruthy();
+
+        fireEvent.click(divideButton);
+        expect(onContextMenuMock).toHaveBeenCalledWith(expect.anything(), baseMockCard);
+    });
+
+    it('allows context menu to bubble up when right-clicking on description textareas', () => {
+        const onContextMenuMock = vi.fn();
+
+        render(
+            <TooltipProvider>
+                <StoryboardCard card={baseMockCard} onUpdate={vi.fn()} onDelete={vi.fn()} onContextMenu={onContextMenuMock} />
+            </TooltipProvider>
+        );
+
+        const actionTextarea = screen.getByPlaceholderText('Describe the clip action for video generation...');
+        expect(actionTextarea).toBeTruthy();
+
+        fireEvent.contextMenu(actionTextarea);
+        expect(onContextMenuMock).toHaveBeenCalledWith(expect.anything(), baseMockCard);
+    });
 });
+

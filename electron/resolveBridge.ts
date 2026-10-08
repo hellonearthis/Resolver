@@ -165,31 +165,14 @@ export function installBridgeScript(): { success: boolean; target_path: string; 
 
         fs.copyFileSync(resolved_source_script_path, destination_script_file_path);
 
-        // WHAT: Also copy to Comp and Edit directories so resolve_bridge appears directly in Resolve's Workspace > Scripts menu
+        // WHAT: Clean up any obsolete duplicate resolve_bridge.py files from Comp and Edit folders
+        // WHY: Placing resolve_bridge in multiple folders causes DaVinci Resolve's Workspace > Scripts menu
+        // to show confusing duplicate entries across Comp, Edit, and Utility sub-menus. Utility is the standard Resolve location.
         const scripts_parent_dir = path.dirname(destination_directory_path);
-        const comp_scripts_dir = path.join(scripts_parent_dir, 'Comp');
-        if (fs.existsSync(comp_scripts_dir)) {
-            try { fs.copyFileSync(resolved_source_script_path, path.join(comp_scripts_dir, 'resolve_bridge.py')); } catch { /* ignore */ }
-        }
-        const edit_scripts_dir = path.join(scripts_parent_dir, 'Edit');
-        if (fs.existsSync(edit_scripts_dir)) {
-            try { fs.copyFileSync(resolved_source_script_path, path.join(edit_scripts_dir, 'resolve_bridge.py')); } catch { /* ignore */ }
-        }
-
-        // WHAT: Also copy into current user's AppData scripts directory (Comp, Edit, Utility)
-        const user_roaming_appdata = process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming');
-        const user_scripts_root = path.join(
-            user_roaming_appdata,
-            'Blackmagic Design',
-            'DaVinci Resolve',
-            'Support',
-            'Fusion',
-            'Scripts'
-        );
-        for (const subfolder of ['Comp', 'Edit', 'Utility']) {
-            const user_target_dir = path.join(user_scripts_root, subfolder);
-            if (fs.existsSync(user_target_dir)) {
-                try { fs.copyFileSync(resolved_source_script_path, path.join(user_target_dir, 'resolve_bridge.py')); } catch { /* ignore */ }
+        for (const legacy_subfolder of ['Comp', 'Edit']) {
+            const legacy_file_path = path.join(scripts_parent_dir, legacy_subfolder, 'resolve_bridge.py');
+            if (fs.existsSync(legacy_file_path)) {
+                try { fs.unlinkSync(legacy_file_path); } catch { /* ignore */ }
             }
         }
 

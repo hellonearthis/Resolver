@@ -378,7 +378,7 @@ export default function ScriptManagerModule() {
                                 )}
                             </li>
                             <li>Open <b>DaVinci Resolve</b> and open or create any project.</li>
-                            <li>From DaVinci Resolve's menu: go to <b>Workspace ▸ Scripts ▸ Comp ▸ resolve_bridge</b> (or <b>Edit ▸ resolve_bridge</b>).</li>
+                            <li>From DaVinci Resolve's menu: go to <b>Workspace ▸ Scripts ▸ Utility ▸ resolve_bridge</b>.</li>
                             <li>Click <b>"Test Connection"</b> above. Once online, live marker pushing and timeline building are enabled!</li>
                         </ol>
                     </div>

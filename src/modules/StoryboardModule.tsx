@@ -13,6 +13,7 @@ import { getAlignedDuration } from '../utils/timelineUtils';
 import StoryboardCardComponent from '../components/storyboard/StoryboardCard';
 import AnimaticTimeline from '../components/storyboard/AnimaticTimeline';
 import StoryboardPaddingCard from '../components/storyboard/StoryboardPaddingCard';
+import StoryboardContextMenu from '../components/storyboard/StoryboardContextMenu';
 import type { BeatProject } from '../hooks/useProjectStorage';
 import { parseFountainScript } from '../services/fountainParser';
 import { SECTION_TYPE_COLOR_MAP } from '../types/sections';
@@ -114,6 +115,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
     const [isCreatingStoryboardState, setIsCreatingStoryboardState] = useState<boolean>(false);
     const [viewMode, setViewMode] = useState<'outline' | 'grid'>('outline');
     const [importStatusMessage, setImportStatusMessage] = useState<string>('');
+    const [contextMenu, setContextMenu] = useState<{ card: VideoClip; position: { x: number; y: number } } | null>(null);
     const fountainFileInputRef = React.useRef<HTMLInputElement>(null);
 
     const handleImportFountainClick = () => {
@@ -454,6 +456,209 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
 
         onUpdateProject(activeProject.id, { clips: remaining_clips_list });
         setSelectedCardId(previous_selected_id => previous_selected_id === clip_identifier_to_delete ? null : previous_selected_id);
+    };
+
+    // WHAT: Opens the custom context menu popup on right-click over a storyboard card.
+    // WHY: Gives quick access to dividing cards, duplicating shots, or toggling boneyard takes.
+    const handleCardContextMenu = (event: React.MouseEvent, card: VideoClip) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setContextMenu({
+            card,
+            position: { x: event.clientX, y: event.clientY }
+        });
+    };
+
+    // WHAT: Divides a card into N equal frame-aligned sections and replaces the original card in place.
+    // WHY: Allows directors to split a single overarching scene into smaller shots or cut points without disturbing subsequent clips.
+    const handleDivideCard = (cardToDivide: VideoClip, sectionsCount: number) => {
+        if (!activeProject || sectionsCount < 2) return;
+        const timeline_frame_rate = activeProject.frameRate || 20;
+        const total_duration = cardToDivide.duration || (cardToDivide.endTime - cardToDivide.startTime);
+
+        const total_frames = Math.round(total_duration * timeline_frame_rate);
+        if (total_frames < sectionsCount) {
+            setImportStatusMessage(`Cannot divide: Shot duration (${total_duration.toFixed(2)}s) is too short for ${sectionsCount} sections.`);
+            setTimeout(() => setImportStatusMessage(''), 4000);
+            return;
+        }
+
+        const base_frames = Math.floor(total_frames / sectionsCount);
+        const remainder_frames = total_frames % sectionsCount;
+
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        const base_label = cardToDivide.label || 'Shot';
+        const parent_notes = cardToDivide.notes || { action: '', dialogue: '', sound: '' };
+
+        const new_clips: VideoClip[] = [];
+        let current_start_time = cardToDivide.startTime;
+
+        for (let i = 0; i < sectionsCount; i++) {
+            const part_frames = base_frames + (i < remainder_frames ? 1 : 0);
+            const part_duration = part_frames / timeline_frame_rate;
+            const part_end_time = current_start_time + part_duration;
+
+            const sub_letter = i < alphabet.length ? alphabet[i] : String(i + 1);
+            let sub_label = `${base_label} (${i + 1}/${sectionsCount})`;
+            const digit_match = base_label.match(/^(.*?\d+)\s*$/);
+            if (digit_match) {
+                sub_label = `${digit_match[1]}${sub_letter}`;
+            }
+
+            const new_clip: VideoClip = {
+                id: `card-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+                startTime: current_start_time,
+                duration: part_duration,
+                endTime: part_end_time,
+                track: cardToDivide.track || 1,
+                status: 'pending',
+                source: cardToDivide.source || 'main',
+                label: sub_label,
+                sceneNumber: cardToDivide.sceneNumber || '1',
+                shotLetter: sub_letter,
+                sectionId: cardToDivide.sectionId,
+                sectionName: cardToDivide.sectionName,
+                sectionType: cardToDivide.sectionType,
+                paceWpm: cardToDivide.paceWpm || PacingBenchmarks.CONVERSATIONAL,
+                startImagePath: i === 0 ? cardToDivide.startImagePath : undefined,
+                startImageFunction: i === 0 ? cardToDivide.startImageFunction : undefined,
+                endImagePath: i === sectionsCount - 1 ? cardToDivide.endImagePath : undefined,
+                endImageFunction: i === sectionsCount - 1 ? cardToDivide.endImageFunction : undefined,
+                actionDescription: i === 0 ? cardToDivide.actionDescription : '',
+                notes: i === 0 ? { ...parent_notes } : { action: '', dialogue: '', sound: parent_notes.sound || '' }
+            };
+
+            new_clips.push(new_clip);
+            current_start_time = part_end_time;
+        }
+
+        const current_clips_list = [...storyboard_cards];
+        const target_clip_index = current_clips_list.findIndex(c => c.id === cardToDivide.id);
+        if (target_clip_index === -1) return;
+
+        current_clips_list.splice(target_clip_index, 1, ...new_clips);
+        onUpdateProject(activeProject.id, { clips: current_clips_list });
+        setImportStatusMessage(`Divided "${cardToDivide.label}" into ${sectionsCount} sections (~${(total_duration / sectionsCount).toFixed(2)}s each)`);
+        setTimeout(() => setImportStatusMessage(''), 4000);
+        setContextMenu(null);
+    };
+
+    // WHAT: Divides a card at musical beat timestamps occurring within its boundaries.
+    const handleDivideCardAtBeats = (cardToDivide: VideoClip, beatTimestamps: number[]) => {
+        if (!activeProject || beatTimestamps.length === 0) return;
+        const timeline_frame_rate = activeProject.frameRate || 20;
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        const base_label = cardToDivide.label || 'Shot';
+        const parent_notes = cardToDivide.notes || { action: '', dialogue: '', sound: '' };
+
+        const sorted_beats = [...beatTimestamps].sort((a, b) => a - b);
+        const cut_points = [cardToDivide.startTime, ...sorted_beats, cardToDivide.endTime];
+        const new_clips: VideoClip[] = [];
+
+        for (let i = 0; i < cut_points.length - 1; i++) {
+            const start_t = cut_points[i];
+            const end_t = cut_points[i + 1];
+            const raw_dur = end_t - start_t;
+            const aligned_dur = getAlignedDuration(raw_dur, timeline_frame_rate);
+            const sub_letter = i < alphabet.length ? alphabet[i] : String(i + 1);
+
+            let sub_label = `${base_label} (${i + 1}/${cut_points.length - 1})`;
+            const digit_match = base_label.match(/^(.*?\d+)\s*$/);
+            if (digit_match) {
+                sub_label = `${digit_match[1]}${sub_letter}`;
+            }
+
+            const new_clip: VideoClip = {
+                id: `card-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+                startTime: start_t,
+                duration: aligned_dur,
+                endTime: start_t + aligned_dur,
+                track: cardToDivide.track || 1,
+                status: 'pending',
+                source: cardToDivide.source || 'main',
+                label: sub_label,
+                sceneNumber: cardToDivide.sceneNumber || '1',
+                shotLetter: sub_letter,
+                sectionId: cardToDivide.sectionId,
+                sectionName: cardToDivide.sectionName,
+                sectionType: cardToDivide.sectionType,
+                paceWpm: cardToDivide.paceWpm || PacingBenchmarks.CONVERSATIONAL,
+                startImagePath: i === 0 ? cardToDivide.startImagePath : undefined,
+                startImageFunction: i === 0 ? cardToDivide.startImageFunction : undefined,
+                endImagePath: i === cut_points.length - 2 ? cardToDivide.endImagePath : undefined,
+                endImageFunction: i === cut_points.length - 2 ? cardToDivide.endImageFunction : undefined,
+                actionDescription: i === 0 ? cardToDivide.actionDescription : '',
+                notes: i === 0 ? { ...parent_notes } : { action: '', dialogue: '', sound: parent_notes.sound || '' }
+            };
+            new_clips.push(new_clip);
+        }
+
+        const current_clips_list = [...storyboard_cards];
+        const target_clip_index = current_clips_list.findIndex(c => c.id === cardToDivide.id);
+        if (target_clip_index === -1) return;
+
+        current_clips_list.splice(target_clip_index, 1, ...new_clips);
+        onUpdateProject(activeProject.id, { clips: current_clips_list });
+        setImportStatusMessage(`Divided "${cardToDivide.label}" at ${beatTimestamps.length} musical beats (${new_clips.length} shots)`);
+        setTimeout(() => setImportStatusMessage(''), 4000);
+        setContextMenu(null);
+    };
+
+    // WHAT: Duplicates a card immediately downstream and ripples subsequent shots forward.
+    const handleDuplicateCard = (cardToDuplicate: VideoClip) => {
+        if (!activeProject) return;
+        const current_clips = [...storyboard_cards];
+        const target_index = current_clips.findIndex(c => c.id === cardToDuplicate.id);
+        if (target_index === -1) return;
+
+        const duplicated_clip: VideoClip = {
+            ...cardToDuplicate,
+            id: `card-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            label: `${cardToDuplicate.label || 'Shot'} (Copy)`,
+            startTime: cardToDuplicate.endTime,
+            endTime: cardToDuplicate.endTime + cardToDuplicate.duration,
+            status: 'pending'
+        };
+
+        current_clips.splice(target_index + 1, 0, duplicated_clip);
+
+        for (let i = target_index + 2; i < current_clips.length; i++) {
+            const prev = current_clips[i - 1];
+            current_clips[i] = {
+                ...current_clips[i],
+                startTime: prev.endTime,
+                endTime: prev.endTime + current_clips[i].duration
+            };
+        }
+
+        onUpdateProject(activeProject.id, { clips: current_clips });
+        setImportStatusMessage(`Duplicated "${cardToDuplicate.label}"`);
+        setTimeout(() => setImportStatusMessage(''), 3000);
+        setContextMenu(null);
+    };
+
+    // WHAT: Toggles alternate boneyard take (mute state) on a card.
+    const handleToggleMuteCard = (cardToToggle: VideoClip) => {
+        handleUpdateCard(cardToToggle.id, { isMuted: !cardToToggle.isMuted });
+        setContextMenu(null);
+    };
+
+    // WHAT: Discovers musical beat timestamps that fall inside a specific card's time window.
+    const getCardBeatTimestamps = (card: VideoClip): number[] => {
+        if (!activeProject) return [];
+        const timestamps: number[] = [];
+        if (activeProject.markers) {
+            activeProject.markers.forEach(m => {
+                if (m.type === 'beat' || !m.type) timestamps.push(m.timestamp);
+            });
+        }
+        if (activeProject.stems) {
+            activeProject.stems.forEach(stem => {
+                if (stem.beats) timestamps.push(...stem.beats);
+            });
+        }
+        const unique = Array.from(new Set(timestamps)).sort((a, b) => a - b);
+        return unique.filter(t => t > card.startTime + 0.15 && t < card.endTime - 0.15);
     };
 
     // WHAT: Discovers rendered video takes on disk and matches them with their parent storyboard shots.
@@ -891,6 +1096,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                                             nextClipStartImage={following_clip?.startImagePath}
                                                             prevClipEndImage={previous_clip?.endImagePath}
                                                             comfyConnected={comfyConnected}
+                                                            onContextMenu={handleCardContextMenu}
                                                         />
                                                     </div>
                                                 );
@@ -967,6 +1173,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                                         nextClipStartImage={following_clip?.startImagePath}
                                                         prevClipEndImage={previous_clip?.endImagePath}
                                                         comfyConnected={comfyConnected}
+                                                        onContextMenu={handleCardContextMenu}
                                                     />
                                                 </div>
                                             );
@@ -977,56 +1184,110 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                         })()}
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-                        {interleaved_timeline_items.map((timeline_item, item_index) => {
-                            if (timeline_item.type === 'clip') {
-                                const current_item_index = sorted_clips_chronological.findIndex(candidate => candidate.id === timeline_item.clip.id);
-                                const previous_clip = sorted_clips_chronological[current_item_index - 1];
-                                const following_clip = sorted_clips_chronological[current_item_index + 1];
-                                return (
-                                    <div key={timeline_item.clip.id} className="h-full">
-                                        <StoryboardCardComponent 
-                                            card={timeline_item.clip}
-                                            frameRate={activeProject?.frameRate || 20}
-                                            onUpdate={handleUpdateCard}
-                                            onDelete={handleDeleteCard}
-                                            onGenerateVideo={onGenerateVideo}
-                                            onPickImage={onPickImage}
-                                            onCopyImageFromNext={onCopyImageFromNext}
-                                            onCopyEndFrameFromPrev={onCopyEndFrameFromPrev}
-                                            onGetImageDescription={onGetImageDescription}
-                                            onRewordPrompt={onRewordPrompt}
-                                            llmProvider={llmProvider}
-                                            nextClipStartImage={following_clip?.startImagePath}
-                                            prevClipEndImage={previous_clip?.endImagePath}
-                                            comfyConnected={comfyConnected}
-                                        />
+                    <div className="space-y-6">
+                        {sorted_clips_chronological.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center p-16 text-center bg-[#0e0e15] border border-dashed border-gray-800/80 rounded-2xl">
+                                <span className="text-4xl mb-3">🎬</span>
+                                <h3 className="text-lg font-bold text-white mb-1">No Storyboard Shots Yet</h3>
+                                <p className="text-xs text-gray-400 max-w-sm mb-5">
+                                    {activeProject?.sections && activeProject.sections.length > 0
+                                        ? "Your project has musical sections defined, but no shot cards have been created yet. Switch to Outline view to see the section blocks, or add shots below."
+                                        : "Start planning your scene by adding shot cards or importing a Fountain screenplay."
+                                    }
+                                </p>
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={handleAppendShot}
+                                        className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-all shadow-lg flex items-center gap-2 cursor-pointer"
+                                    >
+                                        <span>➕</span> Add First Shot
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleImportFountainClick}
+                                        className="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold text-xs transition-all border border-gray-700 flex items-center gap-2 cursor-pointer"
+                                    >
+                                        <span>📜</span> Import Fountain
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                                {sorted_clips_chronological.map((clip, clip_index) => {
+                                    const previous_clip = sorted_clips_chronological[clip_index - 1];
+                                    const following_clip = sorted_clips_chronological[clip_index + 1];
+                                    return (
+                                        <div key={clip.id} className="h-full">
+                                            <StoryboardCardComponent 
+                                                card={clip}
+                                                frameRate={activeProject?.frameRate || 20}
+                                                onUpdate={handleUpdateCard}
+                                                onDelete={handleDeleteCard}
+                                                onGenerateVideo={onGenerateVideo}
+                                                onPickImage={onPickImage}
+                                                onCopyImageFromNext={onCopyImageFromNext}
+                                                onCopyEndFrameFromPrev={onCopyEndFrameFromPrev}
+                                                onGetImageDescription={onGetImageDescription}
+                                                onRewordPrompt={onRewordPrompt}
+                                                llmProvider={llmProvider}
+                                                nextClipStartImage={following_clip?.startImagePath}
+                                                prevClipEndImage={previous_clip?.endImagePath}
+                                                comfyConnected={comfyConnected}
+                                                onContextMenu={handleCardContextMenu}
+                                            />
+                                        </div>
+                                    );
+                                })}
+
+                                {/* Quick-Add Next Shot Card at end of grid */}
+                                <div 
+                                    onClick={handleAppendShot}
+                                    className="group aspect-[4/5] border-2 border-dashed border-gray-800 hover:border-indigo-500/50 rounded-xl bg-gray-900/10 hover:bg-indigo-950/10 flex flex-col items-center justify-center p-6 transition-all cursor-pointer min-h-[320px]"
+                                    title="Append a new shot to the end of the storyboard"
+                                >
+                                    <div className="w-12 h-12 rounded-full border border-gray-800 group-hover:border-indigo-500 group-hover:bg-indigo-600/20 flex items-center justify-center text-gray-600 group-hover:text-indigo-300 transition-all shadow-lg mb-2 group-hover:scale-110">
+                                        <span className="text-xl">➕</span>
                                     </div>
-                                );
-                            } else {
-                                return (
-                                    <StoryboardPaddingCard 
-                                        key={`padding-${item_index}-${timeline_item.startTime}`}
-                                        startTime={timeline_item.startTime}
-                                        duration={timeline_item.duration}
-                                        onAdd={handleFillPadding}
-                                    />
-                                );
-                            }
-                        })}
+                                    <p className="text-xs font-bold text-gray-500 group-hover:text-indigo-400 uppercase tracking-wider transition-colors">
+                                        Add Shot {sorted_clips_chronological.length + 1}
+                                    </p>
+                                    <span className="text-[10px] text-gray-600 mt-1">Append to end</span>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
 
             {/* Persistent Animatic Timeline */}
-            <div className="h-44 border-t border-gray-800/30 px-4 py-2 bg-[#050508]/50">
+            <div className="h-56 border-t border-gray-800/40 px-4 py-2 bg-[#050508]/80 shrink-0">
                 <AnimaticTimeline 
                     items={interleaved_timeline_items} 
+                    sections={activeProject.sections}
                     onSelectCard={setSelectedCardId}
+                    onCardContextMenu={handleCardContextMenu}
                     compact={true}
                     onAddPadding={handleFillPadding}
                 />
             </div>
+
+            {/* Storyboard Card Context Menu (Right-Click Popup) */}
+            {contextMenu && (
+                <StoryboardContextMenu
+                    key={`${contextMenu.card.id}-${contextMenu.position.x}-${contextMenu.position.y}`}
+                    card={contextMenu.card}
+                    position={contextMenu.position}
+                    onClose={() => setContextMenu(null)}
+                    onDivide={handleDivideCard}
+                    onDivideAtBeats={handleDivideCardAtBeats}
+                    onDuplicate={handleDuplicateCard}
+                    onDelete={handleDeleteCard}
+                    onToggleMute={handleToggleMuteCard}
+                    beatTimestamps={getCardBeatTimestamps(contextMenu.card)}
+                    frameRate={activeProject?.frameRate || 20}
+                />
+            )}
 
         </div>
     );

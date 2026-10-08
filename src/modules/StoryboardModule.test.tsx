@@ -102,9 +102,12 @@ describe('StoryboardModule', () => {
         expect(screen.getByRole('button', { name: /Import Fountain/ })).toBeTruthy();
 
         // Verify 3 section headers are displayed in Outline view
-        expect(screen.getByText('Verse 1')).toBeTruthy();
-        expect(screen.getByText('Chorus')).toBeTruthy();
-        expect(screen.getByText('Bridge')).toBeTruthy();
+        expect(screen.getByRole('heading', { level: 3, name: 'Verse 1' })).toBeTruthy();
+        expect(screen.getByRole('heading', { level: 3, name: 'Chorus' })).toBeTruthy();
+        expect(screen.getByRole('heading', { level: 3, name: 'Bridge' })).toBeTruthy();
+
+        // Verify storyboard animatic timeline lists segments
+        expect(screen.getByText(/3 Segments/)).toBeTruthy();
 
         // Verify block length indicators appear for sections
         expect(screen.getAllByText('Length:').length).toBe(3);
@@ -118,7 +121,7 @@ describe('StoryboardModule', () => {
         unmount();
     });
 
-    it('switches to flat grid view when Grid toggle is clicked', () => {
+    it('switches to flat grid view when Grid toggle is clicked and renders all cards plus trailing Add Shot card', () => {
         const handleUpdate = vi.fn();
 
         const { unmount } = render(
@@ -134,12 +137,56 @@ describe('StoryboardModule', () => {
         const gridButton = screen.getByText('🔲 Grid');
         fireEvent.click(gridButton);
 
-        // In flat grid view, section headers are hidden
-        expect(screen.queryByText('Verse 1')).toBeNull();
-        expect(screen.queryByText('Chorus')).toBeNull();
+        // In flat grid view, section outline headers are hidden
+        expect(screen.queryByRole('heading', { level: 3, name: 'Verse 1' })).toBeNull();
+        expect(screen.queryByRole('heading', { level: 3, name: 'Chorus' })).toBeNull();
 
-        // But cards remain rendered
+        // All storyboard cards remain rendered in the flat grid
         expect(screen.getByDisplayValue('Rain-soaked cyan pavement.')).toBeTruthy();
+        expect(screen.getByDisplayValue('High energy strobe lights.')).toBeTruthy();
+        expect(screen.getByDisplayValue('Solitary figure in amber light.')).toBeTruthy();
+
+        // Trailing Add Shot card is present
+        expect(screen.getByText('Add Shot 4')).toBeTruthy();
+
+        unmount();
+    });
+
+    it('renders informative empty state with Add First Shot button when in Grid view with 0 shots', () => {
+        const handleUpdate = vi.fn();
+        const emptyProject: BeatProject = {
+            ...mockProject,
+            clips: []
+        };
+
+        const { unmount } = render(
+            <TooltipProvider>
+                <StoryboardModule
+                    activeProject={emptyProject}
+                    projects={[emptyProject]}
+                    onUpdateProject={handleUpdate}
+                />
+            </TooltipProvider>
+        );
+
+        const gridButton = screen.getByText('🔲 Grid');
+        fireEvent.click(gridButton);
+
+        // Empty state is visible
+        expect(screen.getByText('No Storyboard Shots Yet')).toBeTruthy();
+        expect(screen.getByRole('button', { name: /Add First Shot/ })).toBeTruthy();
+        expect(screen.getAllByRole('button', { name: /Import Fountain/ }).length).toBe(2);
+
+        // Clicking Add First Shot appends a shot
+        fireEvent.click(screen.getByRole('button', { name: /Add First Shot/ }));
+        expect(handleUpdate).toHaveBeenCalledWith(
+            'proj-fountain-test',
+            expect.objectContaining({
+                clips: expect.arrayContaining([
+                    expect.objectContaining({ label: 'Shot 1' })
+                ])
+            })
+        );
 
         unmount();
     });
@@ -215,4 +262,52 @@ describe('StoryboardModule', () => {
 
         unmount();
     });
+
+    it('opens context menu on right click and divides card into smaller sections', async () => {
+        const onUpdateProjectMock = vi.fn();
+
+        const { unmount } = render(
+            <TooltipProvider>
+                <StoryboardModule
+                    activeProject={mockProject}
+                    projects={[mockProject]}
+                    onUpdateProject={onUpdateProjectMock}
+                />
+            </TooltipProvider>
+        );
+
+        // Find the input showing "Shot 1"
+        const shot1Input = screen.getByDisplayValue('Shot 1');
+        const cardElement = shot1Input.closest('div[style*="overflow: hidden"]') || shot1Input;
+
+        // Right-click on the card
+        fireEvent.contextMenu(cardElement, { clientX: 200, clientY: 200 });
+
+        // Popup should appear with divide options
+        expect(screen.getByText('Divide Shot 1')).toBeTruthy();
+        expect(screen.getByText('Quick Divide Presets')).toBeTruthy();
+
+        // Click "2 Parts" to divide
+        const twoPartsBtn = screen.getByText('2 Parts');
+        fireEvent.click(twoPartsBtn);
+
+        // Verify onUpdateProject was called with replacement clips
+        expect(onUpdateProjectMock).toHaveBeenCalled();
+        const updateCall = onUpdateProjectMock.mock.calls[0];
+        expect(updateCall[0]).toBe('proj-fountain-test');
+        expect(updateCall[1].clips).toBeDefined();
+
+        const updatedClips = updateCall[1].clips as VideoClip[];
+        // Original 3 clips -> card 1 divided into 2 = 4 clips total
+        expect(updatedClips.length).toBe(4);
+        expect(updatedClips[0].label).toBe('Shot 1A');
+        expect(updatedClips[1].label).toBe('Shot 1B');
+        expect(updatedClips[0].startTime).toBe(0);
+        expect(updatedClips[0].endTime).toBeCloseTo(2.0, 1);
+        expect(updatedClips[1].startTime).toBeCloseTo(2.0, 1);
+        expect(updatedClips[1].endTime).toBeCloseTo(4.0, 1);
+
+        unmount();
+    });
 });
+
