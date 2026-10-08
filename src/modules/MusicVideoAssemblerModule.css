@@ -1,8 +1,19 @@
 .video-assembler-container {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 2px;
     height: 100%;
+}
+
+.video-assembler-container > .card,
+.video-assembler-container > .mt-4,
+.video-assembler-container > div.mt-4 {
+    margin-top: 2px !important;
+    margin-bottom: 2px !important;
+}
+
+.video-assembler-container > .module-header {
+    margin-bottom: 8px;
 }
 
 .waveform-container {

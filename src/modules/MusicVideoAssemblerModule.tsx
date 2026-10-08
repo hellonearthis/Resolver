@@ -2864,7 +2864,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             {/* Project Selection / Creation */}
             <CollapsibleCard
                 title="Load Audio Source"
-                className="mt-4"
+                className="my-0.5"
                 isOpen={panelVisibility?.showAudioSource}
                 onToggle={() => onToggleVisibility?.('showAudioSource')}
             >
@@ -2878,7 +2878,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
             <CollapsibleCard
                 title="Load Video Source"
-                className="mt-4"
+                className="my-0.5"
                 isOpen={panelVisibility?.showVideoSource}
                 onToggle={() => onToggleVisibility?.('showVideoSource')}
             >
@@ -2891,7 +2891,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
 
             <CollapsibleCard
                 title="Select Project"
-                className="mt-4"
+                className="my-0.5"
                 isOpen={panelVisibility?.showProjectSelection}
                 onToggle={() => onToggleVisibility?.('showProjectSelection')}
             >
@@ -2906,7 +2906,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             </CollapsibleCard>
 
             {/* Consolidated Audio Analysis & Stem Generation */}
-            <div className="mt-4">
+            <div className="my-0.5">
                 <CollapsibleCard
                     title="Audio Analysis & Stem Generation"
                     isOpen={panelVisibility?.showAudioAnalysis}
@@ -3081,7 +3081,7 @@ const MusicVideoAssemblerModule: React.FC<MusicVideoAssemblerModuleProps> = ({
             {/* Main Track Section */}
             <CollapsibleCard
                 title="🌊 Main Track"
-                className="mt-4"
+                className="my-0.5"
                 isOpen={panelVisibility?.showMainTrack}
                 onToggle={() => onToggleVisibility?.('showMainTrack')}
             >

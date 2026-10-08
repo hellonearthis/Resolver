@@ -33,7 +33,8 @@ const CollapsibleCard: React.FC<CollapsibleCardProps & { isOpen?: boolean; onTog
             className={`card ${className}`}
             style={{
                 padding: isOpen ? '24px' : '14px',
-                marginBottom: isOpen ? '24px' : '4px'
+                marginTop: '2px',
+                marginBottom: '2px'
             }}
         >
             <div
