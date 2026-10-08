@@ -201,18 +201,116 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
 
     const raw_storyboard_cards = (activeProject?.clips || []) as VideoClip[];
 
+    // WHAT: Synthesizes initial storyboard cards from detected musical sections if no explicit clips exist yet.
+    // WHY: Guarantees that users immediately see interactive storyboard cards in both Outline and Flat Grid views
+    // matching the verses, choruses, and bridges detected from their music audio.
+    const synthesized_section_cards: VideoClip[] = React.useMemo(() => {
+        if (!activeProject?.sections || activeProject.sections.length === 0) return [];
+        const project_fps = activeProject.frameRate || 20;
+        return activeProject.sections.map((section, index) => {
+            const raw_duration = Math.max(0.1, section.endTime - section.startTime);
+            const aligned_duration = getAlignedDuration(raw_duration, project_fps);
+            return {
+                id: `clip-section-${section.id || index}`,
+                startTime: section.startTime,
+                endTime: section.startTime + aligned_duration,
+                duration: aligned_duration,
+                track: 1,
+                status: 'pending' as const,
+                source: 'main' as const,
+                label: section.name || `Shot ${index + 1}`,
+                sceneNumber: `${index + 1}`,
+                shotLetter: 'A',
+                sectionId: section.id,
+                sectionName: section.name,
+                sectionType: section.type,
+                notes: {
+                    action: `${section.name} (${section.type.toUpperCase()})`,
+                    dialogue: '',
+                    sound: ''
+                },
+                paceWpm: PacingBenchmarks.CONVERSATIONAL
+            };
+        });
+    }, [activeProject?.sections, activeProject?.frameRate]);
+
+    const effective_raw_clips = raw_storyboard_cards.length > 0
+        ? raw_storyboard_cards
+        : synthesized_section_cards;
+
+    // Auto-persist initial section cards to project storage so user edits, divisions, and image assignments persist
+    React.useEffect(() => {
+        if (
+            activeProject &&
+            activeProject.sections &&
+            activeProject.sections.length > 0 &&
+            (!activeProject.clips || activeProject.clips.length === 0) &&
+            synthesized_section_cards.length > 0
+        ) {
+            onUpdateProject(activeProject.id, { clips: synthesized_section_cards });
+        }
+    }, [activeProject?.id, activeProject?.sections, activeProject?.clips, synthesized_section_cards, onUpdateProject]);
+
+    // WHAT: Adds a new shot card directly within a specific musical section outline.
+    // WHY: Lets creators add coverage, B-roll, or close-ups directly into Verse 1 or Chorus without manual time arithmetic.
+    const handleAddShotToSection = (section: MusicSection) => {
+        if (!activeProject) return;
+        const timeline_frame_rate = activeProject.frameRate || 20;
+        const section_duration = Math.max(0.1, section.endTime - section.startTime);
+        const default_duration = Math.min(4.0, section_duration);
+        const aligned_duration = getAlignedDuration(default_duration, timeline_frame_rate);
+        
+        const existing_section_clips = storyboard_cards.filter(c => 
+            c.sectionId === section.id || 
+            c.sectionName === section.name ||
+            (!c.sectionId && !c.sectionName && c.startTime >= section.startTime && c.startTime < section.endTime)
+        );
+        const last_clip = existing_section_clips[existing_section_clips.length - 1];
+        const start_time = last_clip ? last_clip.endTime : section.startTime;
+        const next_index = existing_section_clips.length + 1;
+        const next_letter = String.fromCharCode(65 + ((next_index - 1) % 26));
+
+        const new_card: VideoClip = {
+            id: `card-${Date.now()}`,
+            startTime: start_time,
+            duration: aligned_duration,
+            endTime: start_time + aligned_duration,
+            track: 1,
+            status: 'pending',
+            source: 'main',
+            label: `${section.name} Shot ${next_index}`,
+            sceneNumber: section.name,
+            shotLetter: next_letter,
+            sectionId: section.id,
+            sectionName: section.name,
+            sectionType: section.type,
+            notes: { action: `${section.name} action`, dialogue: '', sound: '' },
+            paceWpm: PacingBenchmarks.CONVERSATIONAL
+        };
+
+        const updated_cards = [...storyboard_cards, new_card].sort((a, b) => a.startTime - b.startTime);
+        onUpdateProject(activeProject.id, { clips: updated_cards });
+    };
+
+    const handlePopulateShotsFromSections = () => {
+        if (!activeProject || !activeProject.sections || activeProject.sections.length === 0) return;
+        onUpdateProject(activeProject.id, { clips: synthesized_section_cards });
+        setImportStatusMessage(`Populated ${synthesized_section_cards.length} storyboard cards from song sections`);
+        setTimeout(() => setImportStatusMessage(''), 4000);
+    };
+
     // WHAT: Evaluates revision states (new, changed, unchanged) for all storyboard cards dynamically.
     // WHY: Enables visual status badges, selective GPU batch rendering, and DaVinci Resolve marker sync.
     const revisionMap = React.useMemo(() => {
-        return evaluateProjectRevisions(raw_storyboard_cards);
-    }, [raw_storyboard_cards]);
+        return evaluateProjectRevisions(effective_raw_clips);
+    }, [effective_raw_clips]);
 
     const storyboard_cards = React.useMemo(() => {
-        return raw_storyboard_cards.map(clip => {
+        return effective_raw_clips.map(clip => {
             const rev = revisionMap.get(clip.id);
             return rev ? { ...clip, revisionState: rev.state } : clip;
         });
-    }, [raw_storyboard_cards, revisionMap]);
+    }, [effective_raw_clips, revisionMap]);
 
     const generationPlan = React.useMemo(() => {
         return filterClipsForGeneration(storyboard_cards, revisionMap);
@@ -930,6 +1028,17 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                         onChange={handleFountainFileChange}
                     />
 
+                    {/* Populate from Sections Button */}
+                    {activeProject?.sections && activeProject.sections.length > 0 && raw_storyboard_cards.length === 0 && (
+                        <button 
+                            onClick={handlePopulateShotsFromSections}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/50 hover:border-emerald-500 rounded-lg transition-all text-xs font-semibold"
+                            title={`Create storyboard cards for each of the ${activeProject.sections.length} detected song sections`}
+                        >
+                            <span>✨</span> Populate from Sections ({activeProject.sections.length})
+                        </button>
+                    )}
+
                     {/* Import Fountain Screenplay Button */}
                     <button 
                         onClick={handleImportFountainClick}
@@ -1066,12 +1175,27 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                             <span className="bg-[#181825] border border-gray-700/60 px-2.5 py-1 rounded text-[11px] text-gray-200 font-semibold">
                                                 {section_clips.length} {section_clips.length === 1 ? 'shot' : 'shots'}
                                             </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddShotToSection(section)}
+                                                className="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 rounded text-[11px] font-semibold flex items-center gap-1 transition-all cursor-pointer"
+                                                title={`Add a new shot card inside ${section.name}`}
+                                            >
+                                                <span>➕</span> Add Shot
+                                            </button>
                                         </div>
                                     </div>
                                     
                                     {section_clips.length === 0 ? (
-                                        <div className="py-6 text-center text-xs text-gray-500 italic bg-[#08080c] rounded-xl border border-dashed border-gray-800/60">
-                                            No shots in this section yet.
+                                        <div className="py-6 text-center text-xs text-gray-500 italic bg-[#08080c] rounded-xl border border-dashed border-gray-800/60 flex flex-col items-center justify-center gap-2">
+                                            <span>No shots in this section yet.</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddShotToSection(section)}
+                                                className="px-3 py-1 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow"
+                                            >
+                                                <span>➕</span> Add First Shot to {section.name}
+                                            </button>
                                         </div>
                                     ) : (
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">

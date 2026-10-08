@@ -152,10 +152,11 @@ describe('StoryboardModule', () => {
         unmount();
     });
 
-    it('renders informative empty state with Add First Shot button when in Grid view with 0 shots', () => {
+    it('renders informative empty state with Add First Shot button when in Grid view with 0 shots and no sections', () => {
         const handleUpdate = vi.fn();
         const emptyProject: BeatProject = {
             ...mockProject,
+            sections: [],
             clips: []
         };
 
@@ -187,6 +188,38 @@ describe('StoryboardModule', () => {
                 ])
             })
         );
+
+        unmount();
+    });
+
+    it('renders section cards in Grid view when project has sections but no initial clips', () => {
+        const handleUpdate = vi.fn();
+        const sectionOnlyProject: BeatProject = {
+            ...mockProject,
+            clips: []
+        };
+
+        const { unmount } = render(
+            <TooltipProvider>
+                <StoryboardModule
+                    activeProject={sectionOnlyProject}
+                    projects={[sectionOnlyProject]}
+                    onUpdateProject={handleUpdate}
+                />
+            </TooltipProvider>
+        );
+
+        const gridButton = screen.getByText('🔲 Grid');
+        fireEvent.click(gridButton);
+
+        // Section cards are visible in the flat grid
+        expect(screen.getAllByDisplayValue(/Verse 1/).length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByDisplayValue(/Chorus/).length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByDisplayValue(/Bridge/).length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByText('Add Shot 4')).toBeTruthy();
+
+        // Populate button is in toolbar
+        expect(screen.getByRole('button', { name: /Populate from Sections/ })).toBeTruthy();
 
         unmount();
     });
