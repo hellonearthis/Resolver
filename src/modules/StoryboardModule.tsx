@@ -299,6 +299,73 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
         setTimeout(() => setImportStatusMessage(''), 4000);
     };
 
+    // WHAT: Re-aligns all storyboard shot cards with their assigned musical song sections.
+    // WHY: Guarantees that card start times match section start times (e.g., Intro at 0s, Verse 1 at 41s)
+    // even after complex cut divisions, duration nudges, or legacy timing drift.
+    const handleResyncClipsWithSections = React.useCallback(() => {
+        if (!activeProject || !activeProject.sections || activeProject.sections.length === 0) return;
+        
+        const aligned_clips: VideoClip[] = [];
+        const sections_list = [...activeProject.sections].sort((a, b) => a.startTime - b.startTime);
+        
+        sections_list.forEach(section => {
+            const matching_clips = effective_raw_clips.filter(c => 
+                c.sectionId === section.id || 
+                c.sectionName === section.name
+            ).sort((a, b) => a.startTime - b.startTime);
+            
+            if (matching_clips.length === 0) return;
+            
+            let cursor = section.startTime;
+            matching_clips.forEach(clip => {
+                const dur = clip.duration || Math.max(0.1, clip.endTime - clip.startTime);
+                aligned_clips.push({
+                    ...clip,
+                    sectionId: section.id,
+                    sectionName: section.name,
+                    sectionType: section.type,
+                    startTime: cursor,
+                    duration: dur,
+                    endTime: cursor + dur
+                });
+                cursor += dur;
+            });
+        });
+        
+        // Include any clips not matching any section
+        const unassigned_clips = effective_raw_clips.filter(c => 
+            !activeProject.sections?.some(s => s.id === c.sectionId || s.name === c.sectionName)
+        );
+        aligned_clips.push(...unassigned_clips);
+        aligned_clips.sort((a, b) => a.startTime - b.startTime);
+        
+        onUpdateProject(activeProject.id, { clips: aligned_clips });
+        setImportStatusMessage(`Aligned ${aligned_clips.length} shot cards to song sections`);
+        setTimeout(() => setImportStatusMessage(''), 4000);
+    }, [activeProject, effective_raw_clips, onUpdateProject]);
+
+    // Auto-heal section timing desynchronizations (e.g., if a section clip drifted to 0)
+    React.useEffect(() => {
+        if (!activeProject?.sections || activeProject.sections.length === 0 || effective_raw_clips.length === 0) return;
+        
+        let needs_heal = false;
+        for (const section of activeProject.sections) {
+            const section_clips = effective_raw_clips.filter(c => c.sectionId === section.id);
+            if (section_clips.length > 0) {
+                const sorted = [...section_clips].sort((a, b) => a.startTime - b.startTime);
+                // If a section that begins at > 0 has its first clip starting at 0, or before the section starts:
+                if (section.startTime > 0 && sorted[0].startTime < section.startTime - 0.05) {
+                    needs_heal = true;
+                    break;
+                }
+            }
+        }
+        
+        if (needs_heal) {
+            handleResyncClipsWithSections();
+        }
+    }, [activeProject?.id, activeProject?.sections, effective_raw_clips, handleResyncClipsWithSections]);
+
     // WHAT: Evaluates revision states (new, changed, unchanged) for all storyboard cards dynamically.
     // WHY: Enables visual status badges, selective GPU batch rendering, and DaVinci Resolve marker sync.
     const revisionMap = React.useMemo(() => {
@@ -521,38 +588,74 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
         finalized_updated_clip.endTime = finalized_updated_clip.startTime + finalized_updated_clip.duration;
         updated_clips_list[target_clip_index] = finalized_updated_clip;
 
-        // Ripple forward through contiguous downstream clips
+        // Ripple forward through contiguous downstream clips without violating section boundaries
         for (let ripple_index = target_clip_index + 1; ripple_index < updated_clips_list.length; ripple_index++) {
             const preceding_clip = updated_clips_list[ripple_index - 1];
-            updated_clips_list[ripple_index] = {
-                ...updated_clips_list[ripple_index],
-                startTime: preceding_clip.endTime,
-                endTime: preceding_clip.endTime + updated_clips_list[ripple_index].duration
-            };
+            const current_clip = updated_clips_list[ripple_index];
+
+            // If current_clip belongs to a designated section, ensure it never starts before that section
+            const current_section = activeProject.sections?.find(s => s.id === current_clip.sectionId || s.name === current_clip.sectionName);
+            const min_start_time = current_section ? current_section.startTime : 0;
+
+            const is_same_section = preceding_clip.sectionId && current_clip.sectionId && preceding_clip.sectionId === current_clip.sectionId;
+
+            if (is_same_section || preceding_clip.endTime > current_clip.startTime) {
+                const new_start = Math.max(min_start_time, preceding_clip.endTime);
+                updated_clips_list[ripple_index] = {
+                    ...current_clip,
+                    startTime: new_start,
+                    endTime: new_start + current_clip.duration
+                };
+            } else {
+                // Preserved gap between sections
+                break;
+            }
         }
         
         onUpdateProject(activeProject.id, { clips: updated_clips_list });
     };
 
-    // WHAT: Removes a shot card from the timeline and closes the temporal gap.
-    // WHY: Deleting a shot pulls subsequent shots backward so the edit maintains contiguous playback.
+    // WHAT: Removes a shot card from the timeline and closes the temporal gap within its section.
+    // WHY: Deleting a shot pulls subsequent shots in that section backward without clobbering other musical sections.
     const handleDeleteCard = (clip_identifier_to_delete: string) => {
         if (!activeProject) return;
-        let remaining_clips_list = storyboard_cards.filter(candidate_clip => candidate_clip.id !== clip_identifier_to_delete);
-        
-        // Ripple effect: Recalculate start and end times to eliminate the empty slot
-        let current_playback_time = 0;
-        remaining_clips_list = remaining_clips_list.map(candidate_clip => {
-            const compacted_clip = {
-                ...candidate_clip,
-                startTime: current_playback_time,
-                endTime: current_playback_time + candidate_clip.duration
-            };
-            current_playback_time = compacted_clip.endTime;
-            return compacted_clip;
+        const clip_to_delete = storyboard_cards.find(candidate_clip => candidate_clip.id === clip_identifier_to_delete);
+        if (!clip_to_delete) return;
+
+        const remaining_clips_list = storyboard_cards.filter(candidate_clip => candidate_clip.id !== clip_identifier_to_delete);
+        const deleted_section_id = clip_to_delete.sectionId;
+        const deleted_duration = clip_to_delete.duration || (clip_to_delete.endTime - clip_to_delete.startTime);
+
+        // Shift subsequent clips within the same section backward, preserving section boundaries
+        const updated_clips = remaining_clips_list.map(candidate_clip => {
+            if (candidate_clip.startTime < clip_to_delete.startTime) {
+                return candidate_clip;
+            }
+
+            if (deleted_section_id && candidate_clip.sectionId === deleted_section_id) {
+                const section = activeProject.sections?.find(s => s.id === deleted_section_id);
+                const min_start = section ? section.startTime : 0;
+                const new_start = Math.max(min_start, candidate_clip.startTime - deleted_duration);
+                return {
+                    ...candidate_clip,
+                    startTime: new_start,
+                    endTime: new_start + candidate_clip.duration
+                };
+            }
+
+            if (!deleted_section_id && !candidate_clip.sectionId) {
+                const new_start = Math.max(0, candidate_clip.startTime - deleted_duration);
+                return {
+                    ...candidate_clip,
+                    startTime: new_start,
+                    endTime: new_start + candidate_clip.duration
+                };
+            }
+
+            return candidate_clip;
         });
 
-        onUpdateProject(activeProject.id, { clips: remaining_clips_list });
+        onUpdateProject(activeProject.id, { clips: updated_clips });
         setSelectedCardId(previous_selected_id => previous_selected_id === clip_identifier_to_delete ? null : previous_selected_id);
     };
 
@@ -878,7 +981,9 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
 
     // WHAT: Computes an interleaved array of video shot cards and empty timeline intervals.
     // WHY: Gives visual pacing to the director, showing where clips align against the musical beat duration.
-    const project_total_duration_seconds = activeProject?.duration || 0;
+    const max_section_end = (activeProject?.sections || []).reduce((max, s) => Math.max(max, s.endTime || 0), 0);
+    const max_clip_end = storyboard_cards.reduce((max, c) => Math.max(max, c.endTime || 0), 0);
+    const project_total_duration_seconds = Math.max(activeProject?.duration || 0, max_section_end, max_clip_end);
     const sorted_clips_chronological = [...storyboard_cards].sort((first_clip, second_clip) => first_clip.startTime - second_clip.startTime);
     
     const interleaved_timeline_items: StoryboardTimelineItem[] = [];
@@ -1162,6 +1267,22 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                         </button>
                     )}
 
+                    {/* Align Shots with Song Sections */}
+                    {activeProject?.sections && activeProject.sections.length > 0 && (
+                        <button
+                            onClick={handleResyncClipsWithSections}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#181825] hover:bg-gray-800 text-cyan-300 border border-cyan-800/50 hover:border-cyan-500/60 rounded-lg transition-all text-xs font-semibold cursor-pointer"
+                            title="Realign all shot cards so their start times match song section boundaries"
+                        >
+                            <svg className="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="21" y1="6" x2="3" y2="6" />
+                                <line x1="21" y1="12" x2="9" y2="12" />
+                                <line x1="21" y1="18" x2="7" y2="18" />
+                            </svg>
+                            <span>Align with Sections</span>
+                        </button>
+                    )}
+
                     {/* Add Shot Button */}
                     <button 
                         onClick={handleAppendShot}
@@ -1218,7 +1339,7 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
             {/* Import Status Message */}
             {importStatusMessage && (
                 <div className="bg-indigo-950/90 border-b border-indigo-500/40 px-6 py-2 text-xs text-indigo-200 flex items-center justify-between">
-                    <span>✨ {importStatusMessage}</span>
+                    <span>{importStatusMessage}</span>
                     <button onClick={() => setImportStatusMessage('')} className="text-gray-400 hover:text-white font-bold ml-4">✕</button>
                 </div>
             )}
@@ -1259,7 +1380,13 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                             </span>
                                         </div>
                                         <div className="flex items-center gap-3 text-xs font-mono text-gray-400">
-                                            <span>⏱️ {section.startTime.toFixed(2)}s – {section.endTime.toFixed(2)}s</span>
+                                            <span className="flex items-center gap-1">
+                                                <svg className="w-3 h-3 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                    <circle cx="12" cy="12" r="10" />
+                                                    <polyline points="12 6 12 12 16 14" />
+                                                </svg>
+                                                <span>{section.startTime.toFixed(2)}s – {section.endTime.toFixed(2)}s</span>
+                                            </span>
                                             <span 
                                                 className="bg-[#181825] border border-indigo-500/30 px-2.5 py-1 rounded text-[11px] text-indigo-300 font-semibold flex items-center gap-1.5 shadow-sm"
                                                 title={`Block length: ${section_duration_seconds.toFixed(2)}s (${section_frame_count} frames @ ${activeProject?.frameRate || 20}fps)`}
@@ -1274,10 +1401,14 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                             <button
                                                 type="button"
                                                 onClick={() => handleAddShotToSection(section)}
-                                                className="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 rounded text-[11px] font-semibold flex items-center gap-1 transition-all cursor-pointer"
+                                                className="px-2.5 py-1 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
                                                 title={`Add a new shot card inside ${section.name}`}
                                             >
-                                                <span>➕</span> Add Shot
+                                                <svg className="w-3 h-3 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                                    <line x1="12" y1="5" x2="12" y2="19" />
+                                                    <line x1="5" y1="12" x2="19" y2="12" />
+                                                </svg>
+                                                <span>Add Shot</span>
                                             </button>
                                         </div>
                                     </div>
@@ -1290,7 +1421,11 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                                 onClick={() => handleAddShotToSection(section)}
                                                 className="px-3 py-1 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow"
                                             >
-                                                <span>➕</span> Add First Shot to {section.name}
+                                                <svg className="w-3.5 h-3.5 text-indigo-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                                    <line x1="12" y1="5" x2="12" y2="19" />
+                                                    <line x1="5" y1="12" x2="19" y2="12" />
+                                                </svg>
+                                                <span>Add First Shot to {section.name}</span>
                                             </button>
                                         </div>
                                     ) : (
@@ -1329,7 +1464,11 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                                 className="w-full py-2.5 border border-dashed border-gray-800 hover:border-indigo-500/50 rounded-xl bg-gray-900/20 hover:bg-indigo-950/20 text-gray-500 hover:text-indigo-300 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
                                                 title={`Append another shot to ${section.name}`}
                                             >
-                                                <span>➕</span> Add Shot to {section.name}
+                                                <svg className="w-3.5 h-3.5 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                                    <line x1="12" y1="5" x2="12" y2="19" />
+                                                    <line x1="5" y1="12" x2="19" y2="12" />
+                                                </svg>
+                                                <span>Add Shot to {section.name}</span>
                                             </button>
                                         </div>
                                     )}
@@ -1417,7 +1556,18 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                     <div className="space-y-6">
                         {sorted_clips_chronological.length === 0 ? (
                             <div className="flex flex-col items-center justify-center p-16 text-center bg-[#0e0e15] border border-dashed border-gray-800/80 rounded-2xl">
-                                <span className="text-4xl mb-3">🎬</span>
+                                <div className="w-12 h-12 rounded-xl bg-indigo-600/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 mb-3">
+                                    <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
+                                        <line x1="7" y1="2" x2="7" y2="22" />
+                                        <line x1="17" y1="2" x2="17" y2="22" />
+                                        <line x1="2" y1="12" x2="22" y2="12" />
+                                        <line x1="2" y1="7" x2="7" y2="7" />
+                                        <line x1="2" y1="17" x2="7" y2="17" />
+                                        <line x1="17" y1="17" x2="22" y2="17" />
+                                        <line x1="17" y1="7" x2="22" y2="7" />
+                                    </svg>
+                                </div>
                                 <h3 className="text-lg font-bold text-white mb-1">No Storyboard Shots Yet</h3>
                                 <p className="text-xs text-gray-400 max-w-sm mb-5">
                                     {activeProject?.sections && activeProject.sections.length > 0
@@ -1431,14 +1581,24 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                                         onClick={handleAppendShot}
                                         className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-all shadow-lg flex items-center gap-2 cursor-pointer"
                                     >
-                                        <span>➕</span> Add First Shot
+                                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                            <line x1="12" y1="5" x2="12" y2="19" />
+                                            <line x1="5" y1="12" x2="19" y2="12" />
+                                        </svg>
+                                        <span>Add First Shot</span>
                                     </button>
                                     <button
                                         type="button"
                                         onClick={handleImportFountainClick}
                                         className="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold text-xs transition-all border border-gray-700 flex items-center gap-2 cursor-pointer"
                                     >
-                                        <span>📜</span> Import Fountain
+                                        <svg className="w-3.5 h-3.5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                            <polyline points="14 2 14 8 20 8" />
+                                            <line x1="16" y1="13" x2="8" y2="13" />
+                                            <line x1="16" y1="17" x2="8" y2="17" />
+                                        </svg>
+                                        <span>Import Fountain</span>
                                     </button>
                                 </div>
                             </div>

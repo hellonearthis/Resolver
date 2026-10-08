@@ -255,7 +255,7 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
                     )}
 
                     {/* Clips Container */}
-                    <div className="flex items-end gap-1 relative flex-1">
+                    <div className="flex items-end relative flex-1">
                     {items.map((timeline_item, item_index) => {
                         const pixel_width = (timeline_item.duration || 0.1) * 80;
                         
@@ -276,8 +276,8 @@ const AnimaticTimeline: React.FC<AnimaticTimelineProps> = ({
                                             onCardContextMenu(event, active_card);
                                         }
                                     }}
-                                    className="group relative flex flex-col h-full transition-all cursor-pointer shrink-0"
-                                    style={{ width: `${pixel_width}px`, minWidth: '120px' }}
+                                    className="group relative flex flex-col h-full transition-all cursor-pointer shrink-0 border-r border-indigo-950/60"
+                                    style={{ width: `${pixel_width}px`, minWidth: `${Math.min(60, pixel_width)}px` }}
                                 >
                                     {/* Thumbnail Label with Shot & Segment tag */}
                                     <div className="absolute top-0 left-0 right-0 bg-indigo-500/10 border-l border-indigo-500/30 px-2 py-1 flex justify-between items-center z-10">

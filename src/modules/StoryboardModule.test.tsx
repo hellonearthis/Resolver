@@ -407,6 +407,149 @@ describe('StoryboardModule', () => {
 
         unmount();
     });
+
+    it('auto-aligns clips with section start times when a section clip has drifted', async () => {
+        const onUpdateProjectMock = vi.fn();
+        // Project where Verse 1 starts at 41s, but card-verse drifted to 0s
+        const driftedProject: BeatProject = {
+            id: 'p-drift',
+            name: 'Drifted Project',
+            frameRate: 20,
+            sections: [
+                { id: 's-intro', name: 'Intro', type: 'intro', startTime: 0, endTime: 41.0, color: '#10b981' },
+                { id: 's-verse', name: 'Verse 1', type: 'verse', startTime: 41.0, endTime: 114.0, color: '#3b82f6' }
+            ],
+            clips: [
+                {
+                    id: 'c-verse-drifted',
+                    startTime: 0, // Drifted!
+                    duration: 73.0,
+                    endTime: 73.0,
+                    track: 1,
+                    status: 'pending',
+                    source: 'main',
+                    label: 'Verse 1',
+                    sectionId: 's-verse',
+                    sectionName: 'Verse 1',
+                    sectionType: 'verse'
+                },
+                {
+                    id: 'c-intro-1',
+                    startTime: 0,
+                    duration: 41.0,
+                    endTime: 41.0,
+                    track: 1,
+                    status: 'pending',
+                    source: 'main',
+                    label: 'Intro Shot 1',
+                    sectionId: 's-intro',
+                    sectionName: 'Intro',
+                    sectionType: 'intro'
+                }
+            ]
+        };
+
+        const { unmount } = render(
+            <TooltipProvider>
+                <StoryboardModule
+                    activeProject={driftedProject}
+                    projects={[driftedProject]}
+                    onUpdateProject={onUpdateProjectMock}
+                />
+            </TooltipProvider>
+        );
+
+        // Auto-heal should trigger onUpdateProject aligning Verse 1 to 41.0s
+        await waitFor(() => {
+            expect(onUpdateProjectMock).toHaveBeenCalled();
+            const lastCall = onUpdateProjectMock.mock.calls[onUpdateProjectMock.mock.calls.length - 1];
+            const healedClips = lastCall[1].clips as VideoClip[];
+            const verseClip = healedClips.find(c => c.sectionName === 'Verse 1');
+            const introClip = healedClips.find(c => c.sectionName === 'Intro');
+            expect(introClip?.startTime).toBe(0);
+            expect(verseClip?.startTime).toBe(41.0);
+            expect(verseClip?.endTime).toBe(114.0);
+        });
+
+        unmount();
+    });
+
+    it('deleting a clip preserves downstream section start times', async () => {
+        const onUpdateProjectMock = vi.fn();
+        const projectWithMultiSections: BeatProject = {
+            id: 'p-multi',
+            name: 'Multi Section Project',
+            frameRate: 20,
+            sections: [
+                { id: 's-intro', name: 'Intro', type: 'intro', startTime: 0, endTime: 20.0, color: '#10b981' },
+                { id: 's-verse', name: 'Verse 1', type: 'verse', startTime: 20.0, endTime: 40.0, color: '#3b82f6' }
+            ],
+            clips: [
+                {
+                    id: 'intro-a',
+                    startTime: 0,
+                    duration: 10.0,
+                    endTime: 10.0,
+                    track: 1,
+                    status: 'pending',
+                    source: 'main',
+                    label: 'Intro A',
+                    sectionId: 's-intro',
+                    sectionName: 'Intro'
+                },
+                {
+                    id: 'intro-b',
+                    startTime: 10.0,
+                    duration: 10.0,
+                    endTime: 20.0,
+                    track: 1,
+                    status: 'pending',
+                    source: 'main',
+                    label: 'Intro B',
+                    sectionId: 's-intro',
+                    sectionName: 'Intro'
+                },
+                {
+                    id: 'verse-1',
+                    startTime: 20.0,
+                    duration: 20.0,
+                    endTime: 40.0,
+                    track: 1,
+                    status: 'pending',
+                    source: 'main',
+                    label: 'Verse 1',
+                    sectionId: 's-verse',
+                    sectionName: 'Verse 1'
+                }
+            ]
+        };
+
+        const { unmount } = render(
+            <TooltipProvider>
+                <StoryboardModule
+                    activeProject={projectWithMultiSections}
+                    projects={[projectWithMultiSections]}
+                    onUpdateProject={onUpdateProjectMock}
+                />
+            </TooltipProvider>
+        );
+
+        // Delete intro-a using the delete button
+        const deleteButtons = screen.getAllByRole('button', { name: '✕' });
+        fireEvent.click(deleteButtons[0]);
+
+        expect(onUpdateProjectMock).toHaveBeenCalled();
+        const callArgs = onUpdateProjectMock.mock.calls[0];
+        const remainingClips = callArgs[1].clips as VideoClip[];
+        
+        // intro-b should shift to 0s, but verse-1 must NEVER be pulled before 20s
+        const remainingIntro = remainingClips.find(c => c.id === 'intro-b');
+        const remainingVerse = remainingClips.find(c => c.id === 'verse-1');
+        expect(remainingIntro?.startTime).toBe(0);
+        expect(remainingVerse?.startTime).toBe(20.0);
+
+        unmount();
+    });
 });
 
 
