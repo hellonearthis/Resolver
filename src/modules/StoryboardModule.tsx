@@ -1255,7 +1255,8 @@ const StoryboardModule: React.FC<StoryboardModuleProps> = ({
                             </button>
                         )}
 
-                        {/* Toggle Generation Queue Panel */}
+                        {/* WHAT: Interactive toggle button for expanding or collapsing the generation queue sidebar. */}
+                        {/* WHY: Enables artists to tuck away the queue panel (div.w-80) to maximize canvas width for storyboard scenes. */}
                         {onToggleQueue && (
                             <button
                                 onClick={onToggleQueue}

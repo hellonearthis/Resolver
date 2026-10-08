@@ -557,45 +557,51 @@ describe('StoryboardModule', () => {
         unmount();
     });
 
+    // WHAT: Test the interactive visibility toggle button for the generation queue sidebar.
+    // WHY: Ensures the toolbar button displays "Hide Queue" when visible, triggers the toggle callback,
+    // and updates its label to "Show Queue" when collapsed, giving maximum workspace to storyboard cards.
     it('toggles the generation queue panel via toolbar Hide/Show Queue button', () => {
-        const handleUpdate = vi.fn();
-        const handleToggleQueue = vi.fn();
+        const mock_update_project_handler = vi.fn();
+        const mock_toggle_generation_queue_handler = vi.fn();
 
-        const { unmount, rerender } = render(
+        const { unmount: unmount_test_component, rerender: rerender_test_component } = render(
             <TooltipProvider>
                 <StoryboardModule
                     activeProject={mockProject}
                     projects={[mockProject]}
-                    onUpdateProject={handleUpdate}
+                    onUpdateProject={mock_update_project_handler}
                     showQueue={true}
-                    onToggleQueue={handleToggleQueue}
+                    onToggleQueue={mock_toggle_generation_queue_handler}
                 />
             </TooltipProvider>
         );
 
-        // When queue is shown, button should say Hide Queue
-        const hideQueueBtn = screen.getByRole('button', { name: /Hide Queue/i });
-        expect(hideQueueBtn).toBeTruthy();
+        // WHAT: Locate the queue toggle button in its expanded state.
+        // WHY: When the queue sidebar is open, the button should offer the user the ability to hide it.
+        const hide_queue_toolbar_button = screen.getByRole('button', { name: /Hide Queue/i });
+        expect(hide_queue_toolbar_button).toBeTruthy();
 
-        fireEvent.click(hideQueueBtn);
-        expect(handleToggleQueue).toHaveBeenCalledTimes(1);
+        fireEvent.click(hide_queue_toolbar_button);
+        expect(mock_toggle_generation_queue_handler).toHaveBeenCalledTimes(1);
 
-        // When queue is hidden, button should say Show Queue
-        rerender(
+        // WHAT: Re-render with the queue sidebar in its collapsed state.
+        // WHY: Verifies that the button state updates reactively to offer showing the sidebar.
+        rerender_test_component(
             <TooltipProvider>
                 <StoryboardModule
                     activeProject={mockProject}
                     projects={[mockProject]}
-                    onUpdateProject={handleUpdate}
+                    onUpdateProject={mock_update_project_handler}
                     showQueue={false}
-                    onToggleQueue={handleToggleQueue}
+                    onToggleQueue={mock_toggle_generation_queue_handler}
                 />
             </TooltipProvider>
         );
 
-        expect(screen.getByRole('button', { name: /Show Queue/i })).toBeTruthy();
+        const show_queue_toolbar_button = screen.getByRole('button', { name: /Show Queue/i });
+        expect(show_queue_toolbar_button).toBeTruthy();
 
-        unmount();
+        unmount_test_component();
     });
 });
 
