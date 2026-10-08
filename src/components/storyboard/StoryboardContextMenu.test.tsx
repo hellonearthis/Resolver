@@ -121,7 +121,7 @@ describe('StoryboardContextMenu', () => {
         );
 
         expect(screen.getByText('Divide Shot 2')).toBeTruthy();
-        expect(screen.getByText('⏱️ 4.00s')).toBeTruthy();
+        expect(screen.getByText('4.00s')).toBeTruthy();
         expect(screen.getByText(/96 frames @ 24fps/)).toBeTruthy();
     });
 

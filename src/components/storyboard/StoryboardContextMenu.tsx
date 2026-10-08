@@ -297,14 +297,19 @@ export const StoryboardContextMenu: React.FC<StoryboardContextMenuProps> = ({
                 <div className="flex items-start justify-between pb-2.5 border-b border-gray-800/80">
                     <div>
                         <div className="flex items-center gap-2">
-                            <span className="text-base text-indigo-400">➗</span>
+                            <svg className="w-4 h-4 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6h.01M12 18h.01M5 12h14" />
+                            </svg>
                             <h4 className="text-sm font-bold text-white tracking-wide truncate max-w-[200px]">
                                 Divide {card.label || 'Shot'}
                             </h4>
                         </div>
                         <div className="flex items-center gap-2 mt-1 text-[11px] font-mono text-gray-400">
-                            <span className="px-1.5 py-0.5 rounded bg-indigo-950/80 text-indigo-300 font-semibold border border-indigo-700/40">
-                                ⏱️ {totalDuration.toFixed(2)}s
+                            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-950/80 text-indigo-300 font-semibold border border-indigo-700/40">
+                                <svg className="w-3 h-3 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <span>{totalDuration.toFixed(2)}s</span>
                             </span>
                             <span>{totalFrames} frames @ {frameRate}fps</span>
                         </div>
@@ -347,7 +352,7 @@ export const StoryboardContextMenu: React.FC<StoryboardContextMenuProps> = ({
                         </span>
                         {snapToBeats && beatTimestamps.length > 0 && (
                             <span className="text-[9px] text-purple-300 font-medium">
-                                ✨ Snapping to beats
+                                Snapping to beats
                             </span>
                         )}
                     </div>
@@ -439,7 +444,10 @@ export const StoryboardContextMenu: React.FC<StoryboardContextMenuProps> = ({
                     <div className="flex flex-col gap-2 pt-1 border-t border-gray-800/60">
                         <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-purple-300">
                             <span className="flex items-center gap-1.5">
-                                <span>🎵</span> Divide by Beat Intervals
+                                <svg className="w-3.5 h-3.5 text-purple-400 shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                                </svg>
+                                <span>Divide by Beat Intervals</span>
                             </span>
                             <span className="text-gray-400 font-mono normal-case">
                                 {beatTimestamps.length} beats inside
@@ -494,7 +502,9 @@ export const StoryboardContextMenu: React.FC<StoryboardContextMenuProps> = ({
                             className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/40 hover:border-purple-400 text-purple-200 hover:text-white transition-all text-xs font-semibold group cursor-pointer"
                         >
                             <span className="flex items-center gap-2">
-                                <span className="group-hover:scale-110 transition-transform">🎵</span>
+                                <svg className="w-3.5 h-3.5 text-purple-300 group-hover:scale-110 transition-transform shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                                </svg>
                                 <span>Divide at Musical Beats</span>
                             </span>
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-900/60 text-purple-300 border border-purple-400/30">
@@ -516,7 +526,10 @@ export const StoryboardContextMenu: React.FC<StoryboardContextMenuProps> = ({
                             className="flex-1 py-1.5 px-2 rounded-lg bg-[#181829] hover:bg-gray-700/60 text-gray-300 hover:text-white border border-gray-700/50 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                             title="Duplicate this shot"
                         >
-                            <span>📋</span> Duplicate
+                            <svg className="w-3.5 h-3.5 text-gray-400 group-hover:text-white shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            <span>Duplicate</span>
                         </button>
                     )}
 
@@ -530,7 +543,17 @@ export const StoryboardContextMenu: React.FC<StoryboardContextMenuProps> = ({
                             className="flex-1 py-1.5 px-2 rounded-lg bg-[#181829] hover:bg-gray-700/60 text-gray-300 hover:text-white border border-gray-700/50 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                             title="Toggle Alternate/Mute take"
                         >
-                            <span>{card.isMuted ? '🔊' : '🔇'}</span> {card.isMuted ? 'Unmute' : 'Mute'}
+                            {card.isMuted ? (
+                                <svg className="w-3.5 h-3.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                                </svg>
+                            ) : (
+                                <svg className="w-3.5 h-3.5 text-gray-400 group-hover:text-white shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M17.95 6.05a8 8 0 010 11.9M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                </svg>
+                            )}
+                            <span>{card.isMuted ? 'Unmute' : 'Mute'}</span>
                         </button>
                     )}
 
@@ -544,7 +567,9 @@ export const StoryboardContextMenu: React.FC<StoryboardContextMenuProps> = ({
                             className="py-1.5 px-2.5 rounded-lg bg-red-950/40 hover:bg-red-900/60 text-red-300 hover:text-white border border-red-700/40 text-[11px] font-medium flex items-center justify-center gap-1 transition-all cursor-pointer"
                             title="Delete this shot"
                         >
-                            <span>🗑️</span>
+                            <svg className="w-3.5 h-3.5 text-red-400 group-hover:text-white shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
                         </button>
                     )}
                 </div>

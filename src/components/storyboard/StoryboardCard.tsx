@@ -352,7 +352,9 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                                 className="text-xs px-1.5 py-0.5 rounded transition-all text-indigo-400 hover:text-white bg-indigo-950/40 hover:bg-indigo-600/50 border border-indigo-500/30 hover:border-indigo-400 cursor-pointer flex items-center gap-1 font-bold"
                                 title="Divide shot into smaller sections"
                             >
-                                <span>➗</span>
+                                <svg className="w-3.5 h-3.5 text-indigo-400 group-hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6h.01M12 18h.01M5 12h14" />
+                                </svg>
                             </button>
                         </span>
                     </AppTooltip>
@@ -368,7 +370,16 @@ const StoryboardCardComponent: React.FC<CardProps> = ({
                                 }`}
                                 title={card.isMuted ? "Unmute take" : "Mute take"}
                             >
-                                {card.isMuted ? '🔇' : '🔊'}
+                                {card.isMuted ? (
+                                    <svg className="w-3.5 h-3.5 text-purple-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+                                    </svg>
+                                ) : (
+                                    <svg className="w-3.5 h-3.5 text-gray-400 hover:text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072M17.95 6.05a8 8 0 010 11.9M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                    </svg>
+                                )}
                             </button>
                         </span>
                     </AppTooltip>
