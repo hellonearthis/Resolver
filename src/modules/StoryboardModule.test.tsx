@@ -97,8 +97,8 @@ describe('StoryboardModule', () => {
         );
 
         // Verify Toolbar elements
-        expect(screen.getByText('📑 Outline')).toBeTruthy();
-        expect(screen.getByText('🔲 Grid')).toBeTruthy();
+        expect(screen.getByRole('button', { name: /Outline/i })).toBeTruthy();
+        expect(screen.getByRole('button', { name: /Grid/i })).toBeTruthy();
         expect(screen.getByRole('button', { name: /Import Fountain/ })).toBeTruthy();
 
         // Verify 3 section headers are displayed in Outline view
@@ -142,7 +142,7 @@ describe('StoryboardModule', () => {
             </TooltipProvider>
         );
 
-        const gridButton = screen.getByText('🔲 Grid');
+        const gridButton = screen.getByRole('button', { name: /Grid/i });
         fireEvent.click(gridButton);
 
         // In flat grid view, section outline headers are hidden
@@ -178,7 +178,7 @@ describe('StoryboardModule', () => {
             </TooltipProvider>
         );
 
-        const gridButton = screen.getByText('🔲 Grid');
+        const gridButton = screen.getByRole('button', { name: /Grid/i });
         fireEvent.click(gridButton);
 
         // Empty state is visible
@@ -217,7 +217,7 @@ describe('StoryboardModule', () => {
             </TooltipProvider>
         );
 
-        const gridButton = screen.getByText('🔲 Grid');
+        const gridButton = screen.getByRole('button', { name: /Grid/i });
         fireEvent.click(gridButton);
 
         // Section cards are visible in the flat grid
