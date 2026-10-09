@@ -1479,32 +1479,55 @@ async function ensureLlamaServerRunning(port = 8080): Promise<{ success: boolean
         ? loaded_config.selectedLlamaModelPath
         : '';
 
+    let mmproj_path: string | null = typeof loaded_config.selectedLlamaMmprojPath === 'string'
+        ? loaded_config.selectedLlamaMmprojPath
+        : null;
+
+    // WHAT: Locate an existing GGUF model file on disk to boot.
+    // WHY: If the user has not configured a specific model path or if the previously saved path was moved/deleted,
+    // we search standard model directories (prioritizing C:\llamaCPP\models) to auto-select Qwen 3.5 9B or a fallback.
     if (!model_path || !fs.existsSync(model_path)) {
-        const models_dir = typeof loaded_config.llamaModelsDir === 'string'
+        const candidate_model_storage_directories = [
+            'C:\\llamaCPP\\models',
+            path.join(process.env.USERPROFILE || '', 'llamaCPP', 'models'),
+            path.join(process.env.USERPROFILE || '', '.cache', 'lm-studio', 'models')
+        ];
+        const existing_default_models_directory = candidate_model_storage_directories.find(
+            candidate_folder_path => fs.existsSync(candidate_folder_path)
+        ) || candidate_model_storage_directories[0];
+
+        const active_models_search_directory_path = typeof loaded_config.llamaModelsDir === 'string' && fs.existsSync(loaded_config.llamaModelsDir)
             ? loaded_config.llamaModelsDir
-            : path.join(process.env.USERPROFILE || '', '.cache', 'lm-studio', 'models');
-        const discovered = scanLocalGgufModels(models_dir);
-        const qwen_match = discovered.find(m => m.model_name.toLowerCase().includes('qwen3.5-9b')) || discovered[0];
-        if (qwen_match) {
-            model_path = qwen_match.file_path;
+            : existing_default_models_directory;
+
+        const discovered_available_models_list = scanLocalGgufModels(active_models_search_directory_path);
+        const preferred_qwen_model_match = discovered_available_models_list.find(
+            discovered_model_item => discovered_model_item.model_name.toLowerCase().includes('qwen3.5-9b')
+        ) || discovered_available_models_list[0];
+
+        if (preferred_qwen_model_match) {
+            model_path = preferred_qwen_model_match.file_path;
+            if (preferred_qwen_model_match.paired_multimodal_projector_path) {
+                mmproj_path = preferred_qwen_model_match.paired_multimodal_projector_path;
+            }
         } else {
             return { success: false, error: 'No GGUF model found on disk to auto-launch.' };
         }
     }
 
-    let mmproj_path = typeof loaded_config.selectedLlamaMmprojPath === 'string'
-        ? loaded_config.selectedLlamaMmprojPath
-        : null;
-
+    // WHAT: Locate the paired multimodal vision projector (.gguf) for vision-language tasks.
+    // WHY: Enables Qwen/Gemma models to analyze input video storyboard frames and describe them in text.
     if (!mmproj_path || !fs.existsSync(mmproj_path)) {
-        const model_folder = path.dirname(model_path);
+        const parent_model_directory_folder = path.dirname(model_path);
         try {
-            const files_in_dir = fs.readdirSync(model_folder);
-            const mmproj_file = files_in_dir.find(f => f.toLowerCase().startsWith('mmproj-') && f.toLowerCase().endsWith('.gguf'));
-            if (mmproj_file) {
-                mmproj_path = path.join(model_folder, mmproj_file);
+            const files_in_model_directory = fs.readdirSync(parent_model_directory_folder);
+            const discovered_projector_filename = files_in_model_directory.find(
+                filename_entry => filename_entry.toLowerCase().startsWith('mmproj-') && filename_entry.toLowerCase().endsWith('.gguf')
+            );
+            if (discovered_projector_filename) {
+                mmproj_path = path.join(parent_model_directory_folder, discovered_projector_filename);
             }
-        } catch { /* ignore */ }
+        } catch { /* ignore directory read errors */ }
     }
 
     const llama_binary_path = findLlamaServerBinaryPath() || 'llama-server.exe';
@@ -1810,8 +1833,17 @@ ipcMain.handle('llm-scan-models', async (_event, custom_scan_path?: string) => {
             }
         }
 
-        if (!target_scan_path) {
-            target_scan_path = path.join(process.env.USERPROFILE || '', '.cache', 'lm-studio', 'models');
+        // WHAT: Resolve default directory if none provided or if the stored directory does not exist.
+        // WHY: Automatically discovers models in C:\llamaCPP\models or LM Studio cache without requiring manual path entry.
+        if (!target_scan_path || !fs.existsSync(target_scan_path)) {
+            const candidate_model_directories = [
+                'C:\\llamaCPP\\models',
+                path.join(process.env.USERPROFILE || '', 'llamaCPP', 'models'),
+                path.join(process.env.USERPROFILE || '', '.cache', 'lm-studio', 'models')
+            ];
+            target_scan_path = candidate_model_directories.find(
+                candidate_folder => fs.existsSync(candidate_folder)
+            ) || candidate_model_directories[0];
         }
 
         const discovered_models_list: DiscoveredGgufModel[] = scanLocalGgufModels(target_scan_path);
